@@ -13,9 +13,11 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import os
 import signal
 import sys
 import threading
+import time
 import webbrowser
 
 from facetrack import settings
@@ -164,11 +166,12 @@ def main(argv=None) -> int:
     pipeline.on_source_change = lambda spec: settings.save(source=spec)
 
     panel_url = None
+    web_server = None
     if not args.no_web:
         from facetrack.webui import create_app, start_in_thread
         app = create_app(pipeline, params,
                          on_params_change=settings.save_debounced)
-        start_in_thread(app, args.web_host, args.web_port)
+        web_server = start_in_thread(app, args.web_host, args.web_port)
         panel_url = f"http://localhost:{args.web_port}"
 
     print("\n  facetrack is running")
@@ -206,6 +209,19 @@ def main(argv=None) -> int:
     signal.signal(signal.SIGTERM, _stop)
 
     pipeline.run()
+
+    if pipeline.restart_requested:
+        # Relaunch ourselves with the same command line (panel "Restart").
+        print("[facetrack] restarting...", flush=True)
+        if web_server is not None:
+            web_server.should_exit = True  # release the panel port first
+            time.sleep(0.7)
+        argv_full = [sys.executable] + sys.argv
+        if sys.platform == "win32":
+            import subprocess
+            subprocess.Popen(argv_full)
+            return 0
+        os.execv(sys.executable, argv_full)
     return 0
 
 

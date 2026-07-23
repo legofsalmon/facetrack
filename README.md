@@ -59,6 +59,11 @@ names. That's it.
   machine) can be switched off during the show to save processing — the
   NDI/Syphon/Spout feeds keep running. With *Clean camera feed* on and
   previews off, the annotation pass is skipped entirely.
+- **Process card**: *Pause* keeps the feeds up with a STANDBY slate (the
+  overlay feed goes fully transparent, so keyed graphics vanish cleanly);
+  *Restart* relaunches the app in place with saved settings and the panel
+  reconnects itself; *Quit* shuts down — start again with the launcher on
+  the machine (the panel reconnects automatically when you do).
 - If the input dies or is missing, the app keeps running and shows a
   NO INPUT slate — fix the source from the panel.
 

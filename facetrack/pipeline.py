@@ -12,6 +12,7 @@ import threading
 import time
 
 import cv2
+import numpy as np
 
 from .capture import NullSource, open_source
 from .detectors import pick_backend
@@ -61,6 +62,10 @@ class Pipeline:
         self._conn_check_frame = -999
 
         self._stop = threading.Event()
+        self.paused = False
+        self.restart_requested = False
+        self._slate_cache: tuple | None = None
+        self._last_size: tuple[int, int] = (args.width or 1280, args.height or 720)
         self._stats_lock = threading.Lock()
         self._stats: dict = {}
         self._pending_source: str | None = None
@@ -81,6 +86,10 @@ class Pipeline:
     @property
     def stopped(self) -> bool:
         return self._stop.is_set()
+
+    def request_restart(self) -> None:
+        self.restart_requested = True
+        self._stop.set()
 
     def request_source(self, spec: str) -> None:
         spec = spec.strip()
@@ -149,6 +158,38 @@ class Pipeline:
             self._connections = (count(self.ndi), count(self.ndi_overlay))
         return self._connections
 
+    def _standby_frames(self) -> tuple[np.ndarray, np.ndarray]:
+        """(slate BGR, transparent BGRA) at the last known frame size."""
+        w, h = self._last_size
+        if self._slate_cache is None or self._slate_cache[0] != (w, h):
+            slate = np.full((h, w, 3), (28, 24, 20), dtype=np.uint8)
+            for i, (line, scale) in enumerate([("STANDBY", 1.6),
+                                               ("resume from the control panel", 0.7)]):
+                (tw, _), _ = cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, scale, 2)
+                cv2.putText(slate, line, ((w - tw) // 2, h // 2 + i * 54),
+                            cv2.FONT_HERSHEY_SIMPLEX, scale, (150, 150, 160), 2, cv2.LINE_AA)
+            transparent = np.zeros((h, w, 4), dtype=np.uint8)
+            self._slate_cache = ((w, h), slate, transparent)
+        return self._slate_cache[1], self._slate_cache[2]
+
+    def _run_paused_tick(self, p: dict) -> None:
+        """One loop iteration while paused: keep feeds up with a standby
+        slate (overlay goes fully transparent), keep the panel informed."""
+        self._sync_outputs(p)
+        slate, transparent = self._standby_frames()
+        if self.ndi is not None:
+            self.ndi.send(slate)
+        if self.ndi_overlay is not None:
+            self.ndi_overlay.send(transparent)
+        if self.texture is not None:
+            self.texture.send(transparent if p["texture_overlay"] else slate)
+        if self.web_enabled and p["panel_preview"]:
+            self._publish_preview(slate)
+        with self._stats_lock:
+            self._stats.update({"state": "paused", "fps": 0.0, "faces": 0,
+                                "error": self.last_error})
+        time.sleep(0.1)
+
     def _maybe_swap_source(self) -> None:
         with self._source_lock:
             spec, self._pending_source = self._pending_source, None
@@ -204,6 +245,10 @@ class Pipeline:
 
         try:
             while not self._stop.is_set():
+                if self.paused:
+                    self._run_paused_tick(self.params.snapshot())
+                    t_last = time.perf_counter()  # don't count the pause in fps
+                    continue
                 self._maybe_swap_source()
                 ok, frame = self.source.read()
                 if not ok:
@@ -212,6 +257,7 @@ class Pipeline:
                     break
                 p = self.params.snapshot()
                 self._sync_outputs(p)
+                self._last_size = (frame.shape[1], frame.shape[0])
                 if p["flip"]:
                     frame = cv2.flip(frame, 1)
 
@@ -303,6 +349,7 @@ class Pipeline:
                 oh = int(round(frame.shape[0] * ow / frame.shape[1]))
                 with self._stats_lock:
                     self._stats = {
+                        "state": "live",
                         "fps": round(fps_ema, 1),
                         "faces": len(tracks),
                         "proc_ms": round(proc_ema, 1),

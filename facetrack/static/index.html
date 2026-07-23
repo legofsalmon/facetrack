@@ -29,6 +29,10 @@
   }
   #onair.live { background: var(--onair); border-color: var(--onair); color: #fff;
                 animation: pulse 2s infinite; }
+  #onair.paused { background: var(--warn); border-color: var(--warn); color: #1a1206; }
+  button.danger { background: var(--panel2); color: var(--bad);
+                  border: 1px solid var(--line); font-weight: 500; }
+  button.danger:hover { border-color: var(--bad); }
   @keyframes pulse { 50% { opacity: .75; } }
   #saved { font-size: 11.5px; color: var(--good); opacity: 0; transition: opacity .4s; }
   #saved.show { opacity: 1; }
@@ -283,6 +287,20 @@
         <label class="switch"><input type="checkbox" id="texture_overlay"><span class="slider"></span></label>
       </div>
     </div>
+
+    <div class="card">
+      <h2>Process</h2>
+      <div class="row" style="gap: 8px">
+        <button id="btn-pause" class="ghost" style="flex:1">Pause</button>
+        <button id="btn-restart" class="ghost" style="flex:1">Restart</button>
+        <button id="btn-quit" class="danger" style="flex:1">Quit</button>
+      </div>
+      <div class="hint" style="padding: 0 14px 11px">
+        pause keeps the feeds up with a standby slate · restart relaunches
+        with saved settings · quit stops facetrack (start it again with the
+        launcher on the machine)
+      </div>
+    </div>
   </div>
 </div>
 
@@ -304,7 +322,7 @@
     eco:   { det_size: 480, det_threshold: 0.5,  min_face: 0,  detect_every: 2, emotion_budget: 2 },
   };
   let ws = null, sendTimer = null, pendingSets = {}, lastParams = {}, lastFps = 30;
-  let savedTimer = null;
+  let savedTimer = null, lastState = "live", sentQuit = false, sentRestart = false;
 
   function send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
 
@@ -448,12 +466,17 @@
     $("s-fps").textContent = s.fps ?? "–";
     $("s-faces").textContent = s.faces ?? "–";
     $("s-proc").textContent = s.proc_ms ?? "–";
-    if (s.ndi_display) {
+    lastState = s.state || "live";
+    $("btn-pause").textContent = lastState === "paused" ? "Resume" : "Pause";
+    onair.classList.remove("live", "paused");
+    if (lastState === "paused") {
+      onair.textContent = "PAUSED";
+      onair.classList.add("paused");
+    } else if (s.ndi_display) {
       onair.textContent = "ON AIR";
       onair.classList.add("live");
     } else {
       onair.textContent = "NDI OFF";
-      onair.classList.remove("live");
     }
     let info = "Input: <b>" + (s.no_input ? "none — pick a source above" : (s.source || "–")) + "</b>";
     if (s.out_res) info += " &nbsp;·&nbsp; out: <b>" + s.out_res + "</b>";
@@ -483,6 +506,22 @@
     else errBox.style.display = "none";
   }
 
+  // ---- process controls ----
+  $("btn-pause").addEventListener("click", () => {
+    send({ type: "control", data: lastState === "paused" ? "resume" : "pause" });
+  });
+  $("btn-restart").addEventListener("click", () => {
+    if (!confirm("Restart facetrack? Feeds drop for a few seconds.")) return;
+    sentRestart = true;
+    send({ type: "control", data: "restart" });
+  });
+  $("btn-quit").addEventListener("click", () => {
+    if (!confirm("Quit facetrack? The panel goes offline until you start it "
+                 + "again with the launcher on the machine.")) return;
+    sentQuit = true;
+    send({ type: "control", data: "quit" });
+  });
+
   // ---- preview stream health ----
   pv.addEventListener("load", () => pvMsg.classList.add("hide"));
   pv.addEventListener("error", () => {
@@ -495,11 +534,15 @@
     ws = new WebSocket(proto + "://" + location.host + "/ws");
     ws.onopen = () => {
       conn.classList.add("on");
+      sentQuit = false;
+      sentRestart = false;
       pv.src = "/preview.mjpg?t=" + Date.now();
     };
     ws.onclose = () => {
       conn.classList.remove("on");
-      pvMsg.textContent = "Reconnecting…";
+      pvMsg.textContent = sentQuit
+        ? "facetrack has quit — start it again with the launcher on the machine"
+        : sentRestart ? "Restarting…" : "Reconnecting…";
       pvMsg.classList.remove("hide");
       setTimeout(connect, 1500);
     };

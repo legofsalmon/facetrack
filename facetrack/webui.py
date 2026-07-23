@@ -115,6 +115,16 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None):
                             on_params_change(params.snapshot())
                     elif kind == "source":
                         pipeline.request_source(str(data.get("data", "")))
+                    elif kind == "control":
+                        action = data.get("data")
+                        if action == "pause":
+                            pipeline.paused = True
+                        elif action == "resume":
+                            pipeline.paused = False
+                        elif action == "restart":
+                            pipeline.request_restart()
+                        elif action == "quit":
+                            pipeline.stop()
                 except asyncio.TimeoutError:
                     pass
                 await sock.send_text(json.dumps({
