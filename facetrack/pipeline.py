@@ -38,6 +38,14 @@ class Pipeline:
         self.hostname = socket.gethostname().split(".")[0].upper()
         self.on_source_change = None  # optional callback(spec) after a successful swap
 
+        # Output names are fixed at launch; whether each output runs is a
+        # live param (_sync_outputs creates/destroys them mid-run).
+        self.ndi_name = args.ndi_name
+        self.overlay_name = args.ndi_overlay or f"{args.ndi_name} Overlay"
+        from . import texture_out
+        self.texture_kind, self.texture_error = texture_out.probe()
+        self.texture = None
+
         self.source_spec = args.source
         self.startup_error = ""
         try:
@@ -49,11 +57,8 @@ class Pipeline:
 
         self.ndi = None
         self.ndi_overlay = None
-        if not args.no_ndi:
-            from .ndi_io import NDIOutput
-            self.ndi = NDIOutput(args.ndi_name, fps=args.fps)
-            if args.ndi_overlay:
-                self.ndi_overlay = NDIOutput(args.ndi_overlay, fps=args.fps)
+        self._connections = (0, 0)
+        self._conn_check_frame = -999
 
         self._stop = threading.Event()
         self._stats_lock = threading.Lock()
@@ -98,6 +103,51 @@ class Pipeline:
             return self._pv_seq, self._pv_jpeg
 
     # ---- internals ----
+
+    def _sync_outputs(self, p: dict) -> None:
+        """Create/destroy NDI senders and the Syphon/Spout server to match
+        the live params. Cheap no-op when nothing changed."""
+        from .ndi_io import NDIOutput
+        try:
+            if p["ndi_main"] and self.ndi is None:
+                self.ndi = NDIOutput(self.ndi_name, fps=self.args.fps)
+            elif not p["ndi_main"] and self.ndi is not None:
+                self.ndi.close()
+                self.ndi = None
+            if p["ndi_overlay"] and self.ndi_overlay is None:
+                self.ndi_overlay = NDIOutput(self.overlay_name, fps=self.args.fps)
+            elif not p["ndi_overlay"] and self.ndi_overlay is not None:
+                self.ndi_overlay.close()
+                self.ndi_overlay = None
+        except Exception as exc:
+            self.last_error = f"NDI output: {exc}"
+            self._error_time = time.monotonic()
+
+        want_texture = p["texture_share"] and bool(self.texture_kind)
+        if want_texture and self.texture is None:
+            try:
+                from . import texture_out
+                self.texture = texture_out.create("facetrack")
+            except Exception as exc:
+                self.texture_error = str(exc)
+                self.texture_kind = ""  # don't retry every frame
+        elif not want_texture and self.texture is not None:
+            self.texture.close()
+            self.texture = None
+
+    def _receiver_counts(self, frame_idx: int) -> tuple[int, int]:
+        """Connected-receiver counts per NDI feed, refreshed ~3x/second."""
+        if frame_idx - self._conn_check_frame >= 10:
+            self._conn_check_frame = frame_idx
+            def count(out):
+                if out is None or out.sender is None:
+                    return 0
+                try:
+                    return int(out.sender.get_num_connections(0))
+                except Exception:
+                    return 0
+            self._connections = (count(self.ndi), count(self.ndi_overlay))
+        return self._connections
 
     def _maybe_swap_source(self) -> None:
         with self._source_lock:
@@ -161,6 +211,7 @@ class Pipeline:
                         continue
                     break
                 p = self.params.snapshot()
+                self._sync_outputs(p)
                 if p["flip"]:
                     frame = cv2.flip(frame, 1)
 
@@ -180,7 +231,9 @@ class Pipeline:
                 proc_ema = proc_ms if frame_idx == 0 else 0.9 * proc_ema + 0.1 * proc_ms
 
                 overlay_bgra = None
-                if self.ndi_overlay is not None:
+                need_overlay = (self.ndi_overlay is not None
+                                or (self.texture is not None and p["texture_overlay"]))
+                if need_overlay:
                     overlay_bgra = render_overlay_bgra(
                         frame.shape[:2], tracks,
                         show_emotion=p["emotion_enabled"], show_ids=p["show_ids"])
@@ -200,20 +253,28 @@ class Pipeline:
                         draw_stats(display, [
                             f"{fps_ema:5.1f} fps   faces {len(tracks):3d}   proc {proc_ema:5.1f} ms",
                             f"{self.detector.name}   NDI "
-                            f"{'off' if self.ndi is None else args.ndi_name}",
+                            f"{'off' if self.ndi is None else self.ndi_name}",
                         ])
 
+                out_width = p["out_width"]
+
                 def _scaled(img):
-                    if args.out_width and img.shape[1] != args.out_width:
-                        oh = int(round(img.shape[0] * args.out_width / img.shape[1]))
-                        return cv2.resize(img, (args.out_width, oh),
+                    if out_width and img.shape[1] != out_width:
+                        oh = int(round(img.shape[0] * out_width / img.shape[1]))
+                        return cv2.resize(img, (out_width, oh),
                                           interpolation=cv2.INTER_AREA)
                     return img
 
+                program = frame if p["clean_main"] else display
                 if self.ndi is not None:
-                    self.ndi.send(_scaled(frame if p["clean_main"] else display))
+                    self.ndi.send(_scaled(program))
                 if self.ndi_overlay is not None:
                     self.ndi_overlay.send(_scaled(overlay_bgra))
+                if self.texture is not None:
+                    tex_img = overlay_bgra if (p["texture_overlay"]
+                                               and overlay_bgra is not None) else program
+                    if tex_img is not None:
+                        self.texture.send(_scaled(tex_img))
                 if self.web_enabled and display is not None:
                     self._publish_preview(display)
                 if show_window:
@@ -223,6 +284,9 @@ class Pipeline:
 
                 if self.last_error and time.monotonic() - self._error_time > 20:
                     self.last_error = ""
+                conn_main, conn_ovl = self._receiver_counts(frame_idx)
+                ow = out_width or frame.shape[1]
+                oh = int(round(frame.shape[0] * ow / frame.shape[1]))
                 with self._stats_lock:
                     self._stats = {
                         "fps": round(fps_ema, 1),
@@ -231,12 +295,20 @@ class Pipeline:
                         "frame": frame_idx,
                         "backend": self.detector.name,
                         "source": self.source_spec,
-                        "ndi_name": "" if self.ndi is None else args.ndi_name,
-                        "ndi_overlay": "" if self.ndi_overlay is None else args.ndi_overlay,
+                        "ndi_name": "" if self.ndi is None else self.ndi_name,
+                        "ndi_overlay": "" if self.ndi_overlay is None else self.overlay_name,
                         "ndi_display": "" if self.ndi is None
-                                       else f"{self.hostname} ({args.ndi_name})",
+                                       else f"{self.hostname} ({self.ndi_name})",
                         "ndi_overlay_display": "" if self.ndi_overlay is None
-                                               else f"{self.hostname} ({args.ndi_overlay})",
+                                               else f"{self.hostname} ({self.overlay_name})",
+                        "ndi_connections": conn_main,
+                        "ndi_overlay_connections": conn_ovl,
+                        "out_res": f"{ow}x{oh}",
+                        "out_fps_target": args.fps,
+                        "texture_kind": self.texture_kind,
+                        "texture_on": self.texture is not None,
+                        "texture_error": self.texture_error
+                                         if p["texture_share"] and self.texture is None else "",
                         "no_input": isinstance(self.source, NullSource),
                         "error": self.last_error,
                     }
@@ -256,6 +328,8 @@ class Pipeline:
                 self.ndi.close()
             if self.ndi_overlay is not None:
                 self.ndi_overlay.close()
+            if self.texture is not None:
+                self.texture.close()
             if show_window:
                 cv2.destroyAllWindows()
 

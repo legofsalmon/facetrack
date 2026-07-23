@@ -230,9 +230,43 @@
     <div class="card">
       <h2>Output feeds</h2>
       <div class="row">
+        <div class="lbl"><label for="ndi_main">Main NDI feed</label>
+          <span class="hint" id="ndi-main-hint">the program picture</span></div>
+        <label class="switch"><input type="checkbox" id="ndi_main"><span class="slider"></span></label>
+      </div>
+      <div class="row">
+        <div class="lbl"><label for="ndi_overlay">Overlay NDI feed</label>
+          <span class="hint" id="ndi-ovl-hint">graphics on transparency, for keying</span></div>
+        <label class="switch"><input type="checkbox" id="ndi_overlay"><span class="slider"></span></label>
+      </div>
+      <div class="row">
         <div class="lbl"><label for="clean_main">Clean camera feed</label>
           <span class="hint">send camera untouched; graphics only on the overlay feed</span></div>
         <label class="switch"><input type="checkbox" id="clean_main"><span class="slider"></span></label>
+      </div>
+      <div class="row">
+        <div class="lbl"><label for="out_width">Output size</label>
+          <span class="hint">smaller = less network load</span></div>
+        <select id="out_width">
+          <option value="0">Match input</option>
+          <option value="1920">1920 wide</option>
+          <option value="1280">1280 wide</option>
+          <option value="960">960 wide</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 id="tex-title">Texture share</h2>
+      <div class="row">
+        <div class="lbl"><label for="texture_share" id="tex-label">Syphon / Spout output</label>
+          <span class="hint" id="tex-hint">direct to Resolume, VDMX, TouchDesigner… on this machine</span></div>
+        <label class="switch"><input type="checkbox" id="texture_share"><span class="slider"></span></label>
+      </div>
+      <div class="row">
+        <div class="lbl"><label for="texture_overlay">Share overlay only</label>
+          <span class="hint">graphics with alpha instead of the full picture</span></div>
+        <label class="switch"><input type="checkbox" id="texture_overlay"><span class="slider"></span></label>
       </div>
     </div>
   </div>
@@ -247,7 +281,8 @@
         savedBadge = $("saved"), pvMsg = $("pv-msg"), pv = $("preview");
   const params = ["det_threshold","det_size","detect_every","min_face","max_misses",
                   "emotion_enabled","emotion_budget","show_ids","show_stats",
-                  "clean_main","flip"];
+                  "clean_main","flip","ndi_main","ndi_overlay","out_width",
+                  "texture_share","texture_overlay"];
   const PRESETS = {
     wide:  { det_size: 960, det_threshold: 0.35, min_face: 0,  detect_every: 1 },
     mid:   { det_size: 640, det_threshold: 0.45, min_face: 0,  detect_every: 1 },
@@ -378,12 +413,29 @@
       onair.classList.remove("live");
     }
     let info = "Input: <b>" + (s.no_input ? "none — pick a source above" : (s.source || "–")) + "</b>";
+    if (s.out_res) info += " &nbsp;·&nbsp; out: <b>" + s.out_res + "</b>";
     if (s.ndi_display) {
-      info += " &nbsp;·&nbsp; NDI feed: <b>" + s.ndi_display + "</b>";
-      if (s.ndi_overlay_display) info += " &nbsp;+&nbsp; overlay: <b>" + s.ndi_overlay_display + "</b>";
-      info += " <span style='opacity:.7'>(pick these names in your mixer)</span>";
+      info += " &nbsp;·&nbsp; NDI: <b>" + s.ndi_display + "</b> (" + (s.ndi_connections ?? 0) + " watching)";
+      if (s.ndi_overlay_display)
+        info += " &nbsp;+&nbsp; <b>" + s.ndi_overlay_display + "</b> (" + (s.ndi_overlay_connections ?? 0) + ")";
     }
+    if (s.texture_on) info += " &nbsp;·&nbsp; <b>" + s.texture_kind + "</b>: live";
     $("feedinfo").innerHTML = info;
+    // texture-share card labels adapt to platform/availability
+    const kindName = s.texture_kind === "syphon" ? "Syphon"
+                   : s.texture_kind === "spout" ? "Spout" : "";
+    if (kindName) {
+      $("tex-title").textContent = "Texture share — " + kindName;
+      $("tex-label").textContent = kindName + " output";
+    }
+    if (s.texture_error) {
+      $("tex-hint").textContent = s.texture_error;
+      $("tex-hint").style.color = "var(--warn)";
+    } else {
+      $("tex-hint").style.color = "";
+      $("tex-hint").textContent =
+        "direct to Resolume, VDMX, TouchDesigner… on this machine";
+    }
     if (s.error) { errBox.textContent = s.error; errBox.style.display = "block"; }
     else errBox.style.display = "none";
   }

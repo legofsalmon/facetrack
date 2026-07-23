@@ -92,19 +92,32 @@ prints the fix for anything broken.
   compiles an engine (can take a minute). For capture cards try
   `--capture-backend dshow`, then `msmf`.
 
-### Two-feed keying workflow
+### Output feeds
 
-Send a **clean camera feed** plus a **graphics-only overlay with real
-alpha**, and key downstream in vMix / Resolume / TriCaster / OBS+DistroAV:
+Everything below is a live toggle in the panel's **Output feeds** card and
+persists across restarts:
 
-```bash
-python main.py --clean-main --ndi-overlay "FaceTracker Overlay"
-```
+| Output | What it carries | Notes |
+|---|---|---|
+| Main NDI feed | the program picture (annotated, or clean with *Clean camera feed* on) | panel shows connected-receiver count |
+| Overlay NDI feed | graphics only, real alpha (premultiplied) | key it in vMix / Resolume / TriCaster / OBS+DistroAV |
+| Syphon (macOS) / Spout (Windows) | program picture **or** overlay-with-alpha | zero-compression, GPU-to-GPU, same machine only |
+| Output size | Match input / 1920 / 1280 / 960 wide | applies to all feeds; lowers network load |
 
-(Or toggle *Clean camera feed* in the panel; the overlay feed needs the
-flag at launch.) NDI's codec is lossy, so keyed edges gain a pixel of soft
-fringe — normal for all NDI alpha sources. The two feeds are emitted
-together; your mixer's frame sync aligns them.
+Feed *names* are fixed at launch (`--ndi-name`, `--ndi-overlay`; the
+overlay defaults to "<name> Overlay") because renaming mid-show would drop
+receivers. NDI's codec is lossy, so keyed NDI graphics gain a pixel of
+soft fringe — normal for all NDI alpha sources; the Syphon/Spout path is
+uncompressed and keys perfectly. Feeds are emitted together; your mixer's
+frame sync aligns them.
+
+**Syphon/Spout notes:** the texture share appears as `facetrack` in
+Resolume / VDMX / MadMapper / TouchDesigner on the same machine. *Share
+overlay only* switches it to the graphics-with-alpha layer — VJ keying
+with no network hop. Python version matters: Syphon needs Python 3.12,
+Spout ≤ 3.13 — the Setup scripts pick a compatible Python automatically
+(on macOS they prefer a uv-managed 3.12; Homebrew's python@3.12 bottle is
+currently broken on macOS 26.1).
 
 ### CLI flags
 

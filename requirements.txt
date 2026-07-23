@@ -11,6 +11,12 @@ websockets
 # Real camera names in the source picker (Windows/DirectShow)
 pygrabber; sys_platform == "win32"
 
+# Texture-share output (optional but recommended):
+#   Syphon on macOS needs Python <= 3.12; Spout on Windows needs <= 3.13.
+#   The Setup scripts pick a compatible Python automatically.
+syphon-python; sys_platform == "darwin" and python_version < "3.13"
+SpoutGL; sys_platform == "win32" and python_version < "3.14"
+
 # Detector acceleration:
 #   macOS / CPU-only machines: the default YuNet backend needs nothing extra,
 #   but plain onnxruntime lets you test the SCRFD backend on CPU.

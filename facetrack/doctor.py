@@ -152,6 +152,19 @@ def check_ndi() -> None:
         _report("fail", "NDI output failed", str(exc))
 
 
+def check_texture_share() -> None:
+    try:
+        from .texture_out import probe
+        kind, err = probe()
+    except Exception as exc:
+        kind, err = "", str(exc)
+    if kind:
+        _report("ok", f"Texture share available ({kind.capitalize()})",
+                "Resolume / VDMX / TouchDesigner on this machine can take the feed directly.")
+    else:
+        _report("warn", "Texture share (Syphon/Spout) unavailable", err)
+
+
 def check_port(port: int = 8089) -> None:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
@@ -177,6 +190,7 @@ def main(argv=None) -> int:
     if not args.no_camera:
         check_camera()
     check_ndi()
+    check_texture_share()
     check_port()
     print("-" * 40)
 

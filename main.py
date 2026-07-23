@@ -24,7 +24,9 @@ from facetrack.pipeline import Pipeline
 
 DEFAULTS = dict(det_threshold=0.5, det_size=640, detect_every=1, min_face=0,
                 max_misses=15, emotion_enabled=True, emotion_budget=4,
-                show_ids=True, show_stats=True, clean_main=False, flip=False)
+                show_ids=True, show_stats=True, clean_main=False, flip=False,
+                ndi_main=True, ndi_overlay=False, out_width=0,
+                texture_share=False, texture_overlay=False)
 
 
 def parse_args(argv=None):
@@ -71,9 +73,11 @@ def parse_args(argv=None):
                           "on transparency (alpha), for keying downstream")
     out.add_argument("--clean-main", action="store_const", const=True, default=None,
                      help="keep the main NDI feed clean (no graphics burned in)")
-    out.add_argument("--no-ndi", action="store_true", help="disable NDI output")
-    out.add_argument("--out-width", type=int, default=0,
+    out.add_argument("--no-ndi", action="store_true", help="start with all NDI feeds off")
+    out.add_argument("--out-width", type=int, default=None,
                      help="scale output to this width before sending (0 = capture size)")
+    out.add_argument("--texture-share", action="store_const", const=True, default=None,
+                     help="also publish via Syphon (macOS) / Spout (Windows)")
     out.add_argument("--no-preview", action="store_true", help="disable the local preview window")
     out.add_argument("--no-ids", action="store_const", const=True, default=None,
                      help="hide track ID labels")
@@ -122,6 +126,13 @@ def build_params(args, saved_params: dict) -> LiveParams:
         show_stats=False if args.no_stats else saved_params.get("show_stats", True),
         clean_main=True if args.clean_main else saved_params.get("clean_main", False),
         flip=True if args.flip else saved_params.get("flip", False),
+        ndi_main=False if args.no_ndi else saved_params.get("ndi_main", True),
+        ndi_overlay=False if args.no_ndi
+                    else (True if args.ndi_overlay else saved_params.get("ndi_overlay", False)),
+        out_width=rv(args.out_width, "out_width"),
+        texture_share=True if args.texture_share
+                      else saved_params.get("texture_share", False),
+        texture_overlay=saved_params.get("texture_overlay", False),
     )
 
 
@@ -155,10 +166,14 @@ def main(argv=None) -> int:
         extra = f"   (from other devices: http://{lan}:{args.web_port})" \
             if lan and args.web_host == "0.0.0.0" else ""
         print(f"  Control panel : {panel_url}{extra}")
-    if pipeline.ndi is not None:
-        print(f"  NDI feed      : {pipeline.hostname} ({args.ndi_name})")
-    if pipeline.ndi_overlay is not None:
-        print(f"  Overlay feed  : {pipeline.hostname} ({args.ndi_overlay})  [graphics on alpha]")
+    p0 = params.snapshot()
+    if p0["ndi_main"]:
+        print(f"  NDI feed      : {pipeline.hostname} ({pipeline.ndi_name})")
+    if p0["ndi_overlay"]:
+        print(f"  Overlay feed  : {pipeline.hostname} ({pipeline.overlay_name})  [graphics on alpha]")
+    if pipeline.texture_kind:
+        state = "on" if p0["texture_share"] else "available (enable in the panel)"
+        print(f"  {pipeline.texture_kind.capitalize():<13} : {state}")
     print(f"  Input         : {args.source}   detector: {pipeline.detector.name}")
     if pipeline.startup_error:
         print(f"\n  ! {pipeline.startup_error}")

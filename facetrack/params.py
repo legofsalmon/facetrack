@@ -20,6 +20,11 @@ SPEC = {
     "show_stats": (bool, None, None),
     "clean_main": (bool, None, None),
     "flip": (bool, None, None),
+    "ndi_main": (bool, None, None),
+    "ndi_overlay": (bool, None, None),
+    "out_width": (int, 0, 3840),          # 0 = match input resolution
+    "texture_share": (bool, None, None),  # Syphon (macOS) / Spout (Windows)
+    "texture_overlay": (bool, None, None),  # share overlay-with-alpha instead of program
 }
 
 
