@@ -1,0 +1,14 @@
+# App environment — recreated by the Setup scripts
+.venv/
+
+# Machine-specific state
+settings.json
+.claude/
+.DS_Store
+
+# Model files — downloaded by Setup / `python -m facetrack.doctor --fix`
+models/*.onnx
+
+# Python
+__pycache__/
+*.pyc

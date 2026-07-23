@@ -1,0 +1,9 @@
+# Windows batch files must keep CRLF; everything else stays LF
+*.bat text eol=crlf
+*.command text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.html text eol=lf
+*.txt text eol=lf
+*.mp4 binary
+*.onnx binary

@@ -1,0 +1,21 @@
+# Core (all platforms)
+numpy
+opencv-python
+cyndilib          # NDI send/receive; bundles the NDI runtime, no SDK install needed
+
+# Web control panel
+fastapi
+uvicorn
+websockets
+
+# Real camera names in the source picker (Windows/DirectShow)
+pygrabber; sys_platform == "win32"
+
+# Detector acceleration:
+#   macOS / CPU-only machines: the default YuNet backend needs nothing extra,
+#   but plain onnxruntime lets you test the SCRFD backend on CPU.
+#   Windows + NVIDIA (RTX 5080): replace with `onnxruntime-gpu` for the
+#   CUDA/TensorRT-accelerated SCRFD backend. Requires a CUDA 12.8+ capable
+#   onnxruntime-gpu build (>= 1.21) for Blackwell cards.
+onnxruntime; sys_platform == "darwin"
+onnxruntime-gpu; sys_platform == "win32"

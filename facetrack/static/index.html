@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>facetrack control</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎯</text></svg>">
+<style>
+  :root {
+    --bg: #0e1014; --panel: #161a21; --panel2: #1d222c; --line: #262c38;
+    --text: #e8ebf0; --dim: #8b94a3; --accent: #4da3ff; --good: #3ddc84;
+    --bad: #ff5d5d; --warn: #ffc24d; --onair: #e5484d;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    min-height: 100vh; padding: 18px; max-width: 1280px; margin: 0 auto;
+  }
+  header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+  h1 { font-size: 18px; font-weight: 650; letter-spacing: .4px; }
+  h1 span { color: var(--accent); }
+  #conn { width: 10px; height: 10px; border-radius: 50%; background: var(--bad); flex-shrink: 0; }
+  #conn.on { background: var(--good); }
+  #onair {
+    font-size: 11px; font-weight: 700; letter-spacing: 1.2px; border-radius: 6px;
+    padding: 4px 10px; background: var(--panel2); color: var(--dim);
+    border: 1px solid var(--line);
+  }
+  #onair.live { background: var(--onair); border-color: var(--onair); color: #fff;
+                animation: pulse 2s infinite; }
+  @keyframes pulse { 50% { opacity: .75; } }
+  #saved { font-size: 11.5px; color: var(--good); opacity: 0; transition: opacity .4s; }
+  #saved.show { opacity: 1; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+  .chip { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+          padding: 5px 11px; font-size: 12.5px; color: var(--dim); white-space: nowrap; }
+  .chip b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  .presets { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+  .preset {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    color: var(--text); padding: 8px 14px; cursor: pointer; text-align: left;
+    font: inherit;
+  }
+  .preset small { display: block; color: var(--dim); font-size: 11px; }
+  .preset:hover { border-color: var(--accent); }
+  .preset.active { border-color: var(--accent); background: #17222f; }
+
+  .layout { display: grid; grid-template-columns: minmax(340px, 1fr) 400px; gap: 16px; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+          overflow: hidden; }
+  .card h2 { font-size: 11.5px; font-weight: 650; letter-spacing: 1.1px;
+             text-transform: uppercase; color: var(--dim);
+             padding: 11px 14px 9px; border-bottom: 1px solid var(--line); }
+  .pv-wrap { position: relative; background: #000; }
+  #preview { width: 100%; display: block; aspect-ratio: 16/9; object-fit: contain; }
+  #pv-msg { position: absolute; inset: 0; display: flex; align-items: center;
+            justify-content: center; color: var(--dim); font-size: 13px;
+            background: #000; }
+  #pv-msg.hide { display: none; }
+  #feedinfo { padding: 9px 14px; font-size: 12px; color: var(--dim);
+              border-top: 1px solid var(--line); line-height: 1.7; }
+  #feedinfo b { color: var(--text); font-weight: 600; }
+  #error { color: var(--warn); font-size: 12.5px; padding: 9px 14px; display: none;
+           border-top: 1px solid var(--line); }
+
+  .controls .card + .card { margin-top: 14px; }
+  .row { display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+         border-bottom: 1px solid var(--line); }
+  .row:last-child { border-bottom: 0; }
+  .lbl { flex: 0 0 158px; display: flex; flex-direction: column; gap: 1px; }
+  .lbl label { color: var(--text); font-size: 13px; }
+  .lbl .hint { color: var(--dim); font-size: 10.5px; line-height: 1.3; }
+  .row output { flex: 0 0 52px; text-align: right; font-variant-numeric: tabular-nums;
+                font-size: 12.5px; color: var(--dim); }
+  input[type=range] { flex: 1; accent-color: var(--accent); height: 22px; min-width: 60px; }
+  select, input[type=text] {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 7px; padding: 6px 9px; font-size: 13px; outline: none; flex: 1;
+  }
+  select:focus, input[type=text]:focus { border-color: var(--accent); }
+  .switch { position: relative; width: 38px; height: 21px; flex-shrink: 0; margin-left: auto; }
+  .row label.switch { flex: 0 0 38px; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .slider { position: absolute; inset: 0; background: var(--panel2);
+            border: 1px solid var(--line); border-radius: 21px; cursor: pointer;
+            transition: background .15s; }
+  .slider:before { content: ""; position: absolute; width: 15px; height: 15px;
+                   border-radius: 50%; left: 2px; top: 2px; background: var(--dim);
+                   transition: all .15s; }
+  .switch input:checked + .slider { background: var(--accent); border-color: var(--accent); }
+  .switch input:checked + .slider:before { background: #fff; transform: translateX(17px); }
+  button { background: var(--accent); color: #08111e; border: 0; border-radius: 7px;
+           padding: 7px 14px; font-size: 13px; font-weight: 650; cursor: pointer; }
+  button:hover { filter: brightness(1.12); }
+  button.ghost { background: var(--panel2); color: var(--dim); border: 1px solid var(--line);
+                 font-weight: 500; }
+  #src-custom-row { display: none; }
+  #src-custom-row.show { display: flex; }
+  footer { margin-top: 14px; color: var(--dim); font-size: 11.5px; }
+</style>
+</head>
+<body>
+<header>
+  <div id="conn" title="control connection"></div>
+  <h1>face<span>track</span></h1>
+  <div id="onair">NDI OFF</div>
+  <div id="saved">✓ saved</div>
+  <div class="chips">
+    <div class="chip">faces <b id="s-faces">–</b></div>
+    <div class="chip">fps <b id="s-fps">–</b></div>
+    <div class="chip">proc <b id="s-proc">–</b> ms</div>
+  </div>
+</header>
+
+<div class="presets" id="presets">
+  <button class="preset" data-preset="wide">Wide crowd<small>whole audience, small faces</small></button>
+  <button class="preset" data-preset="mid">Mid crowd<small>balanced — good default</small></button>
+  <button class="preset" data-preset="close">Stage close-up<small>near faces, fewer false hits</small></button>
+  <button class="preset" data-preset="eco">Power saver<small>if the machine struggles</small></button>
+</div>
+
+<div class="layout">
+  <div>
+    <div class="card">
+      <h2>Preview</h2>
+      <div class="pv-wrap">
+        <img id="preview" src="/preview.mjpg" alt="live preview">
+        <div id="pv-msg">Waiting for video…</div>
+      </div>
+      <div id="feedinfo">–</div>
+      <div id="error"></div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <div class="card">
+      <h2>Input</h2>
+      <div class="row">
+        <div class="lbl"><label for="src-select">Video source</label>
+          <span class="hint">cameras &amp; NDI feeds found nearby</span></div>
+        <select id="src-select"></select>
+        <button class="ghost" id="src-refresh" title="rescan">↻</button>
+      </div>
+      <div class="row" id="src-custom-row">
+        <div class="lbl"><label for="src-custom">Custom</label>
+          <span class="hint">file path, URL, or ndi:&lt;name&gt;</span></div>
+        <input type="text" id="src-custom" placeholder="/path/to/clip.mp4">
+      </div>
+      <div class="row">
+        <div class="lbl"><label>Switch input</label>
+          <span class="hint">takes effect instantly</span></div>
+        <button id="src-apply">Use this source</button>
+      </div>
+      <div class="row">
+        <div class="lbl"><label for="flip">Mirror image</label></div>
+        <label class="switch"><input type="checkbox" id="flip"><span class="slider"></span></label>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Face finding</h2>
+      <div class="row">
+        <div class="lbl"><label for="det_threshold">Confidence</label>
+          <span class="hint">lower = finds more faces (and more false ones)</span></div>
+        <input type="range" id="det_threshold" min="0.1" max="0.9" step="0.05">
+        <output for="det_threshold">–</output>
+      </div>
+      <div class="row">
+        <div class="lbl"><label for="det_size">Search detail</label>
+          <span class="hint">higher spots smaller faces, costs speed</span></div>
+        <select id="det_size">
+          <option value="480">Fast (480)</option>
+          <option value="640">Balanced (640)</option>
+          <option value="960">Fine (960)</option>
+          <option value="1280">Maximum (1280)</option>
+        </select>
+      </div>
+      <div class="row">
+        <div class="lbl"><label for="detect_every">Detector pace</label>
+          <span class="hint">skip frames only if fps drops</span></div>
+        <select id="detect_every">
+          <option value="1">Every frame (best)</option>
+          <option value="2">Every 2nd frame</option>
+          <option value="3">Every 3rd frame</option>
+          <option value="4">Every 4th frame</option>
+        </select>
+      </div>
+      <div class="row">
+        <div class="lbl"><label for="min_face">Ignore small faces</label>
+          <span class="hint">hides distant background faces</span></div>
+        <input type="range" id="min_face" min="0" max="120" step="4">
+        <output for="min_face">–</output>
+      </div>
+      <div class="row">
+        <div class="lbl"><label for="max_misses">Hold lost faces</label>
+          <span class="hint">how long a box survives a missed face</span></div>
+        <input type="range" id="max_misses" min="2" max="60" step="1">
+        <output for="max_misses">–</output>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>On-screen look</h2>
+      <div class="row">
+        <div class="lbl"><label for="emotion_enabled">Expressions</label>
+          <span class="hint">labels faces happy / surprised / …</span></div>
+        <label class="switch"><input type="checkbox" id="emotion_enabled"><span class="slider"></span></label>
+      </div>
+      <div class="row">
+        <div class="lbl"><label for="emotion_budget">Expression effort</label>
+          <span class="hint">faces re-checked per frame</span></div>
+        <input type="range" id="emotion_budget" min="1" max="12" step="1">
+        <output for="emotion_budget">–</output>
+      </div>
+      <div class="row">
+        <div class="lbl"><label for="show_ids">Number badges</label>
+          <span class="hint">#12 style tags on each face</span></div>
+        <label class="switch"><input type="checkbox" id="show_ids"><span class="slider"></span></label>
+      </div>
+      <div class="row">
+        <div class="lbl"><label for="show_stats">Stats readout</label>
+          <span class="hint">fps counter burned into the feed</span></div>
+        <label class="switch"><input type="checkbox" id="show_stats"><span class="slider"></span></label>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Output feeds</h2>
+      <div class="row">
+        <div class="lbl"><label for="clean_main">Clean camera feed</label>
+          <span class="hint">send camera untouched; graphics only on the overlay feed</span></div>
+        <label class="switch"><input type="checkbox" id="clean_main"><span class="slider"></span></label>
+      </div>
+    </div>
+  </div>
+</div>
+
+<footer>facetrack · finds and follows faces — does not identify people · settings save automatically</footer>
+
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const conn = $("conn"), errBox = $("error"), onair = $("onair"),
+        savedBadge = $("saved"), pvMsg = $("pv-msg"), pv = $("preview");
+  const params = ["det_threshold","det_size","detect_every","min_face","max_misses",
+                  "emotion_enabled","emotion_budget","show_ids","show_stats",
+                  "clean_main","flip"];
+  const PRESETS = {
+    wide:  { det_size: 960, det_threshold: 0.35, min_face: 0,  detect_every: 1 },
+    mid:   { det_size: 640, det_threshold: 0.45, min_face: 0,  detect_every: 1 },
+    close: { det_size: 640, det_threshold: 0.6,  min_face: 40, detect_every: 1 },
+    eco:   { det_size: 480, det_threshold: 0.5,  min_face: 0,  detect_every: 2, emotion_budget: 2 },
+  };
+  let ws = null, sendTimer = null, pendingSets = {}, lastParams = {}, lastFps = 30;
+  let savedTimer = null;
+
+  function send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
+
+  function flashSaved() {
+    savedBadge.classList.add("show");
+    clearTimeout(savedTimer);
+    savedTimer = setTimeout(() => savedBadge.classList.remove("show"), 1400);
+  }
+
+  function queueSet(key, value) {
+    pendingSets[key] = value;
+    clearTimeout(sendTimer);
+    sendTimer = setTimeout(() => {
+      send({ type: "set", data: pendingSets });
+      pendingSets = {};
+      flashSaved();
+    }, 120);
+  }
+
+  function fmtOutput(el) {
+    const out = el.parentElement.querySelector("output");
+    if (!out) return;
+    if (el.id === "max_misses") out.textContent = "~" + (el.value / lastFps).toFixed(1) + "s";
+    else if (el.id === "min_face") out.textContent = el.value + "px";
+    else out.textContent = el.value;
+  }
+
+  params.forEach((key) => {
+    const el = $(key);
+    if (!el) return;
+    el.addEventListener(el.type === "range" ? "input" : "change", () => {
+      const v = el.type === "checkbox" ? el.checked : parseFloat(el.value);
+      if (el.type === "range") fmtOutput(el);
+      queueSet(key, v);
+    });
+  });
+
+  // ---- presets ----
+  document.querySelectorAll(".preset").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const p = PRESETS[btn.dataset.preset];
+      Object.entries(p).forEach(([k, v]) => queueSet(k, v));
+    });
+  });
+  function markActivePreset(p) {
+    document.querySelectorAll(".preset").forEach((btn) => {
+      const def = PRESETS[btn.dataset.preset];
+      const active = Object.entries(def).every(([k, v]) => Math.abs(p[k] - v) < 1e-6);
+      btn.classList.toggle("active", active);
+    });
+  }
+
+  // ---- sources ----
+  const srcSelect = $("src-select"), srcCustomRow = $("src-custom-row"),
+        srcCustom = $("src-custom");
+  async function loadSources() {
+    srcSelect.innerHTML = "<option value=''>scanning…</option>";
+    try {
+      const r = await fetch("/sources");
+      const d = await r.json();
+      srcSelect.innerHTML = "";
+      const addGroup = (label, items) => {
+        if (!items.length) return;
+        const g = document.createElement("optgroup");
+        g.label = label;
+        items.forEach(([value, text]) => {
+          const o = document.createElement("option");
+          o.value = value; o.textContent = text;
+          g.appendChild(o);
+        });
+        srcSelect.appendChild(g);
+      };
+      addGroup("Cameras", d.cameras.map((c) => [String(c.index), c.label]));
+      addGroup("NDI sources on the network", d.ndi.map((n) => ["ndi:" + n, n]));
+      const o = document.createElement("option");
+      o.value = "__custom__"; o.textContent = "Custom (file / URL / NDI name)…";
+      srcSelect.appendChild(o);
+      const cur = [...srcSelect.options].find((op) => op.value === d.current);
+      if (cur) cur.selected = true;
+      else { o.selected = true; srcCustom.value = d.current || ""; }
+      srcCustomRow.classList.toggle("show", srcSelect.value === "__custom__");
+    } catch (e) {
+      srcSelect.innerHTML = "<option value='__custom__'>Custom…</option>";
+      srcCustomRow.classList.add("show");
+    }
+  }
+  srcSelect.addEventListener("change", () =>
+    srcCustomRow.classList.toggle("show", srcSelect.value === "__custom__"));
+  $("src-refresh").addEventListener("click", loadSources);
+  $("src-apply").addEventListener("click", () => {
+    const spec = srcSelect.value === "__custom__" ? srcCustom.value : srcSelect.value;
+    if (spec) send({ type: "source", data: spec });
+  });
+  srcCustom.addEventListener("keydown", (e) => { if (e.key === "Enter") $("src-apply").click(); });
+  loadSources();
+
+  // ---- state from server ----
+  function applyParams(p) {
+    lastParams = p;
+    params.forEach((key) => {
+      const el = $(key);
+      if (!el || document.activeElement === el) return;
+      if (el.type === "checkbox") el.checked = !!p[key];
+      else el.value = p[key];
+      if (el.type === "range") fmtOutput(el);
+    });
+    markActivePreset(p);
+  }
+
+  function applyStats(s) {
+    if (s.fps) lastFps = s.fps;
+    $("s-fps").textContent = s.fps ?? "–";
+    $("s-faces").textContent = s.faces ?? "–";
+    $("s-proc").textContent = s.proc_ms ?? "–";
+    if (s.ndi_display) {
+      onair.textContent = "ON AIR";
+      onair.classList.add("live");
+    } else {
+      onair.textContent = "NDI OFF";
+      onair.classList.remove("live");
+    }
+    let info = "Input: <b>" + (s.no_input ? "none — pick a source above" : (s.source || "–")) + "</b>";
+    if (s.ndi_display) {
+      info += " &nbsp;·&nbsp; NDI feed: <b>" + s.ndi_display + "</b>";
+      if (s.ndi_overlay_display) info += " &nbsp;+&nbsp; overlay: <b>" + s.ndi_overlay_display + "</b>";
+      info += " <span style='opacity:.7'>(pick these names in your mixer)</span>";
+    }
+    $("feedinfo").innerHTML = info;
+    if (s.error) { errBox.textContent = s.error; errBox.style.display = "block"; }
+    else errBox.style.display = "none";
+  }
+
+  // ---- preview stream health ----
+  pv.addEventListener("load", () => pvMsg.classList.add("hide"));
+  pv.addEventListener("error", () => {
+    pvMsg.classList.remove("hide");
+    setTimeout(() => { pv.src = "/preview.mjpg?t=" + Date.now(); }, 2000);
+  });
+
+  function connect() {
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    ws = new WebSocket(proto + "://" + location.host + "/ws");
+    ws.onopen = () => {
+      conn.classList.add("on");
+      pv.src = "/preview.mjpg?t=" + Date.now();
+    };
+    ws.onclose = () => {
+      conn.classList.remove("on");
+      pvMsg.textContent = "Reconnecting…";
+      pvMsg.classList.remove("hide");
+      setTimeout(connect, 1500);
+    };
+    ws.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      if (msg.type === "tick") { applyStats(msg.stats || {}); applyParams(msg.params || {}); }
+    };
+  }
+  connect();
+})();
+</script>
+</body>
+</html>
