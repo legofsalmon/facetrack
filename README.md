@@ -35,9 +35,10 @@ Double-click **`Facetrack Mac.command`** (Mac) or **`Facetrack Windows.bat`**
 - **After an update** (`git pull` / re-download) it notices and re-runs
   just the setup steps that are needed.
 
-Windows first: install Python 3.13 from python.org (tick *"Add python.exe
-to PATH"*). Mac: nothing to pre-install (having Homebrew's `uv` gives the
-most reliable setup: `brew install uv`).
+**Nothing to pre-install on either platform.** If no suitable Python is
+found, the launcher downloads `uv` (official installer, into your user
+folder, no admin password) which fetches a self-contained Python — 3.12
+on Mac, 3.13 on Windows. First run needs internet.
 
 The **control panel opens in your browser** automatically. Your mixer will
 see NDI sources named like `MAC (FaceTracker)` — the panel shows the exact
