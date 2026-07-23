@@ -25,8 +25,12 @@ To update later: `git pull` (or re-download), then run Setup again.
 
 ### Run it
 
-Double-click **`Facetrack Mac.command`** (Mac) or **`Facetrack Windows.bat`**
-(Windows). One file does everything:
+- **Mac** — double-click **`Facetrack.app`** (drag it to your Dock for
+  one-click starts). It opens Terminal running the launcher.
+- **Windows** — double-click **`Facetrack Windows.bat`**, or run
+  **`Create Desktop Icon.bat`** once to get a proper desktop icon.
+
+One launcher does everything:
 
 - **First launch** sets itself up — installs components, downloads the
   model files, runs a self-check (a few minutes; on Mac, if macOS blocks
