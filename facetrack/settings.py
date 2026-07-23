@@ -21,24 +21,33 @@ _timer: threading.Timer | None = None
 _pending: dict = {}
 
 
-def load() -> dict:
-    """Returns {"params": {...only known keys...}, "source": str|None}."""
+def _read_raw() -> dict:
     try:
         data = json.loads(SETTINGS_PATH.read_text())
+        return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
-        return {"params": {}, "source": None}
+        return {}
+
+
+def load() -> dict:
+    """Returns {"params": {...only known keys...}, "source": str|None,
+    "pin": str}. Unknown top-level keys are preserved by writes."""
+    data = _read_raw()
     params = data.get("params", {})
     return {
         "params": {k: v for k, v in params.items() if k in SPEC},
         "source": data.get("source") or None,
+        "pin": str(data.get("pin") or ""),
     }
 
 
 def _write(update: dict) -> None:
     with _lock:
-        current = load()
+        current = _read_raw()  # keep unknown keys (e.g. a hand-added "pin")
         if "params" in update:
-            current["params"].update(update["params"])
+            merged = current.get("params", {})
+            merged.update(update["params"])
+            current["params"] = merged
         if "source" in update:
             current["source"] = update["source"]
         tmp = SETTINGS_PATH.with_suffix(".json.tmp")

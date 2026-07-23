@@ -109,11 +109,15 @@ setup() {
 ready || setup
 ready || { echo "Setup did not complete cleanly — see messages above."; pause_exit; }
 
-./.venv/bin/python main.py "$@"
-status=$?
-if [ $status -ne 0 ]; then
+# Run, and auto-restart on crashes (clean quits — Ctrl-C, panel Quit,
+# pressing q — end the loop). Ctrl-C during the countdown also stops.
+while true; do
+  ./.venv/bin/python main.py "$@"
+  status=$?
+  [ $status -eq 0 ] && break
   echo ""
-  echo "facetrack stopped with an error (see messages above)."
-  echo "Tip: delete the .venv folder and double-click this again to repair."
-  read -n 1 -s -r -p "Press any key to close..."
-fi
+  echo "facetrack crashed (exit $status) — restarting in 3 seconds. Ctrl-C to stop."
+  echo "Details are in logs/facetrack.log. If it keeps crashing, delete the"
+  echo ".venv folder and double-click this again to repair."
+  sleep 3 || break
+done

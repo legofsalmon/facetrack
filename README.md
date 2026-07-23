@@ -8,6 +8,8 @@ everything. Built for live events.
 stable numbers, optional expression labels. It does **not** identify
 people and stores nothing.
 
+![sample output](assets/sample_output.png)
+
 ---
 
 ## Quick start
@@ -68,13 +70,20 @@ names. That's it.
   *Restart* relaunches the app in place with saved settings and the panel
   reconnects itself; *Quit* shuts down — start again with the launcher on
   the machine (the panel reconnects automatically when you do).
+- **PIN protection**: on a shared production network, launch with
+  `--pin 4721` (or add `"pin": "4721"` to `settings.json`). The panel then
+  asks once per browser; without it, controls, preview and source listing
+  are locked. No PIN set = open panel (fine at home).
 - If the input dies or is missing, the app keeps running and shows a
   NO INPUT slate — fix the source from the panel.
 
 ### If something's wrong
 
-Delete the `.venv` folder and double-click the Facetrack file again — it
-rebuilds everything. Or, from a terminal:
+- **It crashed?** The launcher restarts it automatically after 3 seconds
+  (clean quits don't restart). Everything the app printed is also in
+  `logs/facetrack.log` for after-the-fact diagnosis.
+- **It's wedged?** Delete the `.venv` folder and double-click the
+  Facetrack file again — it rebuilds everything. Or, from a terminal:
 
 ```bash
 .venv/bin/python main.py --doctor
@@ -171,6 +180,26 @@ facetrack/
   doctor.py              self-check (python -m facetrack.doctor)
 models/                  ONNX models (doctor --fix re-downloads)
 ```
+
+### Running two instances (e.g. two cameras)
+
+Each instance needs its own panel port and NDI name:
+
+```bash
+python main.py --source 0 --ndi-name "FaceTracker A" --web-port 8089
+python main.py --source 1 --ndi-name "FaceTracker B" --web-port 8090
+```
+
+Settings are shared per folder — for fully independent settings, keep a
+second clone of the repo.
+
+### Privacy
+
+facetrack detects and follows faces; it performs no identity recognition,
+no matching against any database, and records nothing — frames are
+processed and discarded in memory. Expression labels are a cosmetic
+overlay estimate. For public events, follow your usual venue practice on
+camera signage, and keep this paragraph handy for client conversations.
 
 ### Known quirks
 

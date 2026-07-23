@@ -1,7 +1,8 @@
 # Model files
 
-The three ONNX models live here but are not stored in git. The Setup
-scripts download them automatically; to fetch them manually:
+The three ONNX models are committed to the repo, so a clone (or release
+ZIP) is complete with no external downloads. If one is ever deleted or
+corrupted, the launcher restores it automatically, or manually:
 
 ```bash
 .venv/bin/python -m facetrack.doctor --fix

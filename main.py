@@ -95,6 +95,9 @@ def parse_args(argv=None):
     web.add_argument("--web-host", default="0.0.0.0",
                      help="control panel bind address (default: all interfaces)")
     web.add_argument("--web-port", type=int, default=8089, help="control panel port")
+    web.add_argument("--pin", default="",
+                     help="require this PIN in the control panel (also settable as "
+                          '"pin" in settings.json)')
 
     p.add_argument("--doctor", action="store_true", help="run the self-check and exit")
     p.add_argument("--max-frames", type=int, default=0, help="stop after N frames (0 = run forever)")
@@ -149,6 +152,9 @@ def main(argv=None) -> int:
         from facetrack.doctor import main as doctor_main
         return doctor_main([])
 
+    from facetrack.logging_setup import setup as setup_logging
+    setup_logging(os.path.dirname(os.path.abspath(__file__)))
+
     saved = settings.load()
     params = build_params(args, saved["params"])
     if args.source is None:
@@ -167,10 +173,12 @@ def main(argv=None) -> int:
 
     panel_url = None
     web_server = None
+    panel_pin = args.pin or saved["pin"]
     if not args.no_web:
         from facetrack.webui import create_app, start_in_thread
         app = create_app(pipeline, params,
-                         on_params_change=settings.save_debounced)
+                         on_params_change=settings.save_debounced,
+                         pin=panel_pin)
         web_server = start_in_thread(app, args.web_host, args.web_port)
         panel_url = f"http://localhost:{args.web_port}"
 
@@ -180,6 +188,8 @@ def main(argv=None) -> int:
         extra = f"   (from other devices: http://{lan}:{args.web_port})" \
             if lan and args.web_host == "0.0.0.0" else ""
         print(f"  Control panel : {panel_url}{extra}")
+        if panel_pin:
+            print("  Panel PIN     : required (set via --pin / settings.json)")
     p0 = params.snapshot()
     if p0["ndi_main"]:
         print(f"  NDI feed      : {pipeline.hostname} ({pipeline.ndi_name})")

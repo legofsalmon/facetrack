@@ -6,8 +6,8 @@ settings.json
 .claude/
 .DS_Store
 
-# Model files — downloaded by Setup / `python -m facetrack.doctor --fix`
-models/*.onnx
+# Logs
+logs/
 
 # Python
 __pycache__/

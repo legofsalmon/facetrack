@@ -23,14 +23,16 @@ if defined NEEDSETUP (
   if errorlevel 1 ( pause & exit /b 1 )
 )
 
+rem Run, and auto-restart on crashes (clean quits end the loop).
+:runapp
 .venv\Scripts\python main.py %*
-if errorlevel 1 (
-  echo.
-  echo facetrack stopped with an error - see messages above.
-  echo Tip: delete the .venv folder and double-click this again to repair.
-  pause
-)
-exit /b 0
+if %errorlevel%==0 exit /b 0
+echo.
+echo facetrack crashed (exit %errorlevel%) - restarting in 3 seconds. Close this
+echo window to stop. Details are in logs\facetrack.log. If it keeps crashing,
+echo delete the .venv folder and double-click this again to repair.
+timeout /t 3 /nobreak >nul
+goto :runapp
 
 :setup
 echo.

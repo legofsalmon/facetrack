@@ -22,21 +22,32 @@ from .pipeline import Pipeline
 STATIC_DIR = Path(__file__).parent / "static"
 
 
-def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None):
-    from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-    from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None,
+               pin: str = ""):
+    import hmac
+
+    from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+    from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse
 
     from .capture import _camera_names, camera_authorization, probe_cameras
 
     app = FastAPI(title="facetrack")
     index_html = (STATIC_DIR / "index.html").read_text()
 
+    def _pin_ok(request: Request) -> bool:
+        if not pin:
+            return True
+        supplied = request.query_params.get("pin", "")
+        return hmac.compare_digest(supplied, pin)
+
     @app.get("/")
     def index():
         return HTMLResponse(index_html)
 
     @app.get("/sources")
-    def sources():
+    def sources(request: Request):
+        if not _pin_ok(request):
+            return PlainTextResponse("PIN required", status_code=401)
         """Selectable inputs for the panel, scanned live on each call:
         connected cameras/system video devices (with real names where the
         OS provides them) + NDI sources on the network (minus our own
@@ -78,7 +89,9 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None):
                              "blocked_cameras": blocked})
 
     @app.get("/preview.mjpg")
-    def preview():
+    def preview(request: Request):
+        if not _pin_ok(request):
+            return PlainTextResponse("PIN required", status_code=401)
         boundary = b"--frame"
 
         def gen():
@@ -97,6 +110,17 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None):
     @app.websocket("/ws")
     async def ws(sock: WebSocket):
         await sock.accept()
+        if pin:
+            await sock.send_text(json.dumps({"type": "auth_required"}))
+            try:
+                msg = json.loads(await asyncio.wait_for(sock.receive_text(), timeout=60))
+            except (asyncio.TimeoutError, ValueError, WebSocketDisconnect):
+                await sock.close(code=4001)
+                return
+            if msg.get("type") != "auth" or not hmac.compare_digest(
+                    str(msg.get("data", "")), pin):
+                await sock.close(code=4001)
+                return
         try:
             while not pipeline.stopped:
                 try:
