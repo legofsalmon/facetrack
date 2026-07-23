@@ -118,19 +118,27 @@ def check_models(fix: bool) -> None:
 
 def check_camera() -> None:
     try:
-        from .capture import probe_cameras
+        from .capture import camera_authorization, probe_cameras, request_camera_access
+        request_camera_access()  # first run: pop the macOS prompt now
         cams = probe_cameras(max_index=4)
     except Exception as exc:
         _report("warn", "Camera check errored", str(exc))
         return
     if cams:
         _report("ok", f"Camera(s) found: {', '.join(c['label'] for c in cams)}")
+        return
+    auth = camera_authorization()
+    if auth == "denied":
+        _report("warn", "macOS is blocking camera access for this app",
+                "System Settings > Privacy & Security > Camera — allow your "
+                "terminal app, then run this check again.")
+    elif auth in ("undetermined", "restricted"):
+        _report("warn", "Camera permission not granted yet",
+                "macOS should be showing a permission prompt — click Allow, "
+                "then run this check again.")
     else:
-        detail = ("No camera opened. If this machine has one, grant camera permission: "
-                  "System Settings > Privacy & Security > Camera (macOS) — the app asks "
-                  "on first start." if sys.platform == "darwin"
-                  else "No camera opened — check it is connected and not in use.")
-        _report("warn", "No cameras detected", detail)
+        _report("warn", "No cameras detected",
+                "Check the camera is connected and not in use by another app.")
 
 
 def check_ndi() -> None:

@@ -26,7 +26,7 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None):
     from fastapi import FastAPI, WebSocket, WebSocketDisconnect
     from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
-    from .capture import probe_cameras
+    from .capture import _camera_names, camera_authorization, probe_cameras
 
     app = FastAPI(title="facetrack")
     index_html = (STATIC_DIR / "index.html").read_text()
@@ -50,6 +50,15 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None):
                 skip=in_use)
         except Exception:
             cameras = []
+        # If nothing opened because macOS blocks this process, still list
+        # the devices the OS knows about so the picker can explain itself.
+        camera_auth = camera_authorization()
+        blocked = []
+        if not cameras and camera_auth in ("denied", "undetermined", "restricted"):
+            try:
+                blocked = [n for n in _camera_names() if n]
+            except Exception:
+                blocked = []
         ndi_names = []
         try:
             from cyndilib.finder import Finder
@@ -64,7 +73,9 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None):
         except Exception:
             pass
         return JSONResponse({"cameras": cameras, "ndi": ndi_names,
-                             "current": current})
+                             "current": current,
+                             "camera_auth": camera_auth,
+                             "blocked_cameras": blocked})
 
     @app.get("/preview.mjpg")
     def preview():

@@ -364,6 +364,17 @@
         srcSelect.appendChild(g);
       };
       addGroup("Cameras", d.cameras.map((c) => [String(c.index), c.label]));
+      if (d.blocked_cameras && d.blocked_cameras.length) {
+        const g = document.createElement("optgroup");
+        g.label = "Cameras (blocked by macOS)";
+        d.blocked_cameras.forEach((n) => {
+          const o = document.createElement("option");
+          o.textContent = n + " — needs permission";
+          o.disabled = true;
+          g.appendChild(o);
+        });
+        srcSelect.appendChild(g);
+      }
       addGroup("NDI sources on the network", d.ndi.map((n) => ["ndi:" + n, n]));
       const o = document.createElement("option");
       o.value = "__custom__"; o.textContent = "Custom (file / URL / NDI name)…";
@@ -372,6 +383,18 @@
       if (cur) cur.selected = true;
       else { o.selected = true; srcCustom.value = d.current || ""; }
       srcCustomRow.classList.toggle("show", srcSelect.value === "__custom__");
+      // Explain a blocked camera instead of showing an empty list.
+      const srcHint = document.querySelector("#src-select")
+        .closest(".row").querySelector(".hint");
+      if (d.blocked_cameras && d.blocked_cameras.length) {
+        srcHint.style.color = "var(--warn)";
+        srcHint.textContent = d.camera_auth === "denied"
+          ? "macOS blocks the camera for this app: System Settings › Privacy & Security › Camera → allow the app that starts facetrack, restart, then rescan"
+          : "macOS is asking for camera permission — click Allow on the prompt, then rescan";
+      } else {
+        srcHint.style.color = "";
+        srcHint.textContent = "cameras & NDI feeds found nearby";
+      }
     } catch (e) {
       srcSelect.innerHTML = "<option value='__custom__'>Custom…</option>";
       srcCustomRow.classList.add("show");

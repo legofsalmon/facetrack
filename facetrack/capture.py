@@ -129,6 +129,42 @@ class NullSource:
         pass
 
 
+def camera_authorization() -> str:
+    """macOS camera permission for THIS process: 'authorized', 'denied',
+    'undetermined', 'restricted', or 'unknown'. Other platforms have no
+    such gate and report 'authorized'."""
+    import sys
+    if sys.platform != "darwin":
+        return "authorized"
+    try:
+        import objc
+        objc.loadBundle("AVFoundation", {},
+                        bundle_path="/System/Library/Frameworks/AVFoundation.framework")
+        dev = objc.lookUpClass("AVCaptureDevice")
+        status = int(dev.authorizationStatusForMediaType_("vide"))
+        return {0: "undetermined", 1: "restricted",
+                2: "denied", 3: "authorized"}.get(status, "unknown")
+    except Exception:
+        return "unknown"
+
+
+def request_camera_access() -> None:
+    """Triggers the macOS camera-permission prompt (no-op elsewhere or if
+    already decided). The prompt is attributed to the app that launched us
+    — normally the user's terminal."""
+    import sys
+    if sys.platform != "darwin" or camera_authorization() != "undetermined":
+        return
+    try:
+        import objc
+        objc.loadBundle("AVFoundation", {},
+                        bundle_path="/System/Library/Frameworks/AVFoundation.framework")
+        dev = objc.lookUpClass("AVCaptureDevice")
+        dev.requestAccessForMediaType_completionHandler_("vide", lambda ok: None)
+    except Exception:
+        pass
+
+
 def _camera_names() -> list[str]:
     """Best-effort device names in index order (macOS: system_profiler,
     Windows: DirectShow via pygrabber). Virtual cameras that the OS doesn't

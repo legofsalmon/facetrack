@@ -149,6 +149,12 @@ def main(argv=None) -> int:
         if not args.source.isdigit() and not args.source.lower().startswith("ndi:"):
             args.loop = True  # a saved file source loops; the app must not just stop
 
+    if sys.platform == "darwin":
+        # First-ever run: pop the macOS camera prompt right away (attributed
+        # to the terminal that launched us) instead of failing silently.
+        from facetrack.capture import request_camera_access
+        request_camera_access()
+
     pipeline = Pipeline(args, params, web_enabled=not args.no_web)
     pipeline.on_source_change = lambda spec: settings.save(source=spec)
 
