@@ -200,7 +200,7 @@ class Pipeline:
         fps_ema = None
         proc_ema = 0.0
         t_last = time.perf_counter()
-        show_window = not args.no_preview
+        window_open = False
 
         try:
             while not self._stop.is_set():
@@ -244,8 +244,11 @@ class Pipeline:
                 inst = 1.0 / dt if dt > 0 else 0.0
                 fps_ema = inst if fps_ema is None else 0.9 * fps_ema + 0.1 * inst
 
+                # Skip annotation entirely when nothing consumes it (previews
+                # off + clean main feed): detection -> tracking -> outputs only.
                 display = None
-                if show_window or self.web_enabled or not p["clean_main"]:
+                if (p["local_preview"] or (self.web_enabled and p["panel_preview"])
+                        or not p["clean_main"]):
                     display = frame.copy() if p["clean_main"] else frame
                     draw_tracks(display, tracks, show_emotion=p["emotion_enabled"],
                                 show_ids=p["show_ids"])
@@ -275,12 +278,23 @@ class Pipeline:
                                                and overlay_bgra is not None) else program
                     if tex_img is not None:
                         self.texture.send(_scaled(tex_img))
-                if self.web_enabled and display is not None:
+                if self.web_enabled and p["panel_preview"] and display is not None:
                     self._publish_preview(display)
-                if show_window:
-                    cv2.imshow("facetrack (q to quit)", _scaled(display))
-                    if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
-                        break
+                if p["local_preview"] and display is not None:
+                    try:
+                        cv2.imshow("facetrack (q to quit)", _scaled(display))
+                        window_open = True
+                        if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
+                            break
+                    except cv2.error:
+                        self.params.set("local_preview", False)
+                        self.last_error = ("Preview window unavailable on this "
+                                           "machine (running headless?)")
+                        self._error_time = time.monotonic()
+                        window_open = False
+                elif window_open:
+                    cv2.destroyAllWindows()
+                    window_open = False
 
                 if self.last_error and time.monotonic() - self._error_time > 20:
                     self.last_error = ""
@@ -330,7 +344,7 @@ class Pipeline:
                 self.ndi_overlay.close()
             if self.texture is not None:
                 self.texture.close()
-            if show_window:
+            if window_open:
                 cv2.destroyAllWindows()
 
         if fps_ema is not None:

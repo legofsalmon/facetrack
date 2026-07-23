@@ -133,6 +133,20 @@
       <div id="feedinfo">–</div>
       <div id="error"></div>
     </div>
+
+    <div class="card" style="margin-top: 14px">
+      <h2>Previews</h2>
+      <div class="row">
+        <div class="lbl"><label for="panel_preview">Panel preview</label>
+          <span class="hint">the thumbnail above — off saves processing; feeds keep running</span></div>
+        <label class="switch"><input type="checkbox" id="panel_preview"><span class="slider"></span></label>
+      </div>
+      <div class="row">
+        <div class="lbl"><label for="local_preview">Window on the machine</label>
+          <span class="hint">the preview window on the facetrack computer itself</span></div>
+        <label class="switch"><input type="checkbox" id="local_preview"><span class="slider"></span></label>
+      </div>
+    </div>
   </div>
 
   <div class="controls">
@@ -282,7 +296,7 @@
   const params = ["det_threshold","det_size","detect_every","min_face","max_misses",
                   "emotion_enabled","emotion_budget","show_ids","show_stats",
                   "clean_main","flip","ndi_main","ndi_overlay","out_width",
-                  "texture_share","texture_overlay"];
+                  "texture_share","texture_overlay","panel_preview","local_preview"];
   const PRESETS = {
     wide:  { det_size: 960, det_threshold: 0.35, min_face: 0,  detect_every: 1 },
     mid:   { det_size: 640, det_threshold: 0.45, min_face: 0,  detect_every: 1 },
@@ -421,6 +435,12 @@
       if (el.type === "range") fmtOutput(el);
     });
     markActivePreset(p);
+    if (!p.panel_preview) {
+      pvMsg.textContent = "Panel preview off — saving processing";
+      pvMsg.classList.remove("hide");
+    } else if (pvMsg.textContent.startsWith("Panel preview off")) {
+      pvMsg.classList.add("hide");
+    }
   }
 
   function applyStats(s) {

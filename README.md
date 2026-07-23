@@ -55,6 +55,10 @@ names. That's it.
   instant, no restart. Plug in a device and hit the ↻ rescan button; the
   camera currently in use is shown as "(in use)" and left undisturbed.
 - Every change applies live **and is remembered for next launch**.
+- **Previews** (the panel thumbnail and the window on the facetrack
+  machine) can be switched off during the show to save processing — the
+  NDI/Syphon/Spout feeds keep running. With *Clean camera feed* on and
+  previews off, the annotation pass is skipped entirely.
 - If the input dies or is missing, the app keeps running and shows a
   NO INPUT slate — fix the source from the panel.
 

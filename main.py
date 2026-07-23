@@ -26,7 +26,8 @@ DEFAULTS = dict(det_threshold=0.5, det_size=640, detect_every=1, min_face=0,
                 max_misses=15, emotion_enabled=True, emotion_budget=4,
                 show_ids=True, show_stats=True, clean_main=False, flip=False,
                 ndi_main=True, ndi_overlay=False, out_width=0,
-                texture_share=False, texture_overlay=False)
+                texture_share=False, texture_overlay=False,
+                panel_preview=True, local_preview=True)
 
 
 def parse_args(argv=None):
@@ -78,7 +79,8 @@ def parse_args(argv=None):
                      help="scale output to this width before sending (0 = capture size)")
     out.add_argument("--texture-share", action="store_const", const=True, default=None,
                      help="also publish via Syphon (macOS) / Spout (Windows)")
-    out.add_argument("--no-preview", action="store_true", help="disable the local preview window")
+    out.add_argument("--no-preview", action="store_true",
+                     help="start with the local preview window off (also a live panel toggle)")
     out.add_argument("--no-ids", action="store_const", const=True, default=None,
                      help="hide track ID labels")
     out.add_argument("--no-stats", action="store_const", const=True, default=None,
@@ -133,6 +135,9 @@ def build_params(args, saved_params: dict) -> LiveParams:
         texture_share=True if args.texture_share
                       else saved_params.get("texture_share", False),
         texture_overlay=saved_params.get("texture_overlay", False),
+        panel_preview=saved_params.get("panel_preview", True),
+        local_preview=False if args.no_preview
+                      else saved_params.get("local_preview", True),
     )
 
 

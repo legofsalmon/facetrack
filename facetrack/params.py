@@ -25,6 +25,8 @@ SPEC = {
     "out_width": (int, 0, 3840),          # 0 = match input resolution
     "texture_share": (bool, None, None),  # Syphon (macOS) / Spout (Windows)
     "texture_overlay": (bool, None, None),  # share overlay-with-alpha instead of program
+    "panel_preview": (bool, None, None),  # MJPEG thumbnail in the web panel
+    "local_preview": (bool, None, None),  # preview window on the machine
 }
 
 
