@@ -135,6 +135,8 @@ def main(argv=None) -> int:
     params = build_params(args, saved["params"])
     if args.source is None:
         args.source = saved["source"] or "0"
+        if not args.source.isdigit() and not args.source.lower().startswith("ndi:"):
+            args.loop = True  # a saved file source loops; the app must not just stop
 
     pipeline = Pipeline(args, params, web_enabled=not args.no_web)
     pipeline.on_source_change = lambda spec: settings.save(source=spec)
