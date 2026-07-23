@@ -23,23 +23,25 @@ git clone https://github.com/legofsalmon/facetrack.git
 …or on GitHub click **Code → Download ZIP** and unzip it anywhere.
 To update later: `git pull` (or re-download), then run Setup again.
 
-### First time (once per machine)
+### Run it
 
-- **Mac** — double-click **`Setup Mac.command`**. If macOS blocks it,
-  right-click → Open. When it asks for camera access, click **Allow**.
-- **Windows** — install Python 3.10+ from python.org (tick *"Add python.exe
-  to PATH"*), then double-click **`Setup Windows.bat`**.
+Double-click **`Facetrack Mac.command`** (Mac) or **`Facetrack Windows.bat`**
+(Windows). One file does everything:
 
-Setup installs everything, downloads any missing model files, and runs a
-self-check that tells you in plain language if something needs fixing.
+- **First launch** sets itself up — installs components, downloads the
+  model files, runs a self-check (a few minutes; on Mac, if macOS blocks
+  the file, right-click → Open). Click **Allow** on the camera prompt.
+- **Every launch after that** starts in seconds.
+- **After an update** (`git pull` / re-download) it notices and re-runs
+  just the setup steps that are needed.
 
-### Every show
-
-Double-click **`Start Mac.command`** / **`Start Windows.bat`**.
+Windows first: install Python 3.13 from python.org (tick *"Add python.exe
+to PATH"*). Mac: nothing to pre-install (having Homebrew's `uv` gives the
+most reliable setup: `brew install uv`).
 
 The **control panel opens in your browser** automatically. Your mixer will
-see two NDI sources named like `MAC (FaceTracker)` — the panel shows the
-exact names. That's it.
+see NDI sources named like `MAC (FaceTracker)` — the panel shows the exact
+names. That's it.
 
 ### The control panel
 
@@ -57,14 +59,15 @@ exact names. That's it.
 
 ### If something's wrong
 
-Run the Setup script again (safe any time), or from a terminal:
+Delete the `.venv` folder and double-click the Facetrack file again — it
+rebuilds everything. Or, from a terminal:
 
 ```bash
 .venv/bin/python main.py --doctor
 ```
 
-It checks Python, packages, models, camera, NDI and the panel port, and
-prints the fix for anything broken.
+It checks Python, packages, models, camera, NDI, Syphon/Spout and the
+panel port, and prints the fix for anything broken.
 
 ---
 
