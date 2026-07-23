@@ -21,33 +21,53 @@ ready() {
   models_ok
 }
 
+have_uv() {
+  command -v uv >/dev/null 2>&1 && return 0
+  for d in "$HOME/.local/bin" "$HOME/.cargo/bin"; do
+    if [ -x "$d/uv" ]; then export PATH="$d:$PATH"; return 0; fi
+  done
+  return 1
+}
+
+install_uv() {
+  echo "Downloading uv (a small tool that fetches Python for this app —"
+  echo "installs into your user folder, no password needed)..."
+  curl -LsSf https://astral.sh/uv/install.sh | sh || return 1
+  export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+  command -v uv >/dev/null 2>&1
+}
+
 setup() {
   echo ""
   echo "=== facetrack setup (first run / after an update) ==="
   echo ""
 
-  # Environment strategy: `uv` (if installed) provides a self-contained
-  # Python 3.12 — most reliable, and enables the Syphon output. Otherwise
-  # use the newest suitable system python (3.12 preferred, for Syphon).
+  # Environment strategy: `uv` provides a self-contained Python 3.12 —
+  # most reliable, and enables the Syphon output. Fall back to a suitable
+  # system python (3.10–3.13); if neither exists, download uv automatically.
   local USE_UV="" PY=""
-  if command -v uv >/dev/null 2>&1; then
+  if have_uv; then
     USE_UV=1
     echo "Using uv-managed Python 3.12"
   else
     for cand in python3.12 python3.13 python3; do
-      if command -v "$cand" >/dev/null 2>&1 && "$cand" -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)' 2>/dev/null; then
+      if command -v "$cand" >/dev/null 2>&1 && "$cand" -c 'import sys; sys.exit(0 if (3,10) <= sys.version_info[:2] <= (3,13) else 1)' 2>/dev/null; then
         PY="$cand"; break
       fi
     done
-    if [ -z "$PY" ]; then
-      echo "Python 3.10+ was not found. Easiest fix: install Homebrew's uv"
-      echo "(brew install uv) or Python 3.12 from python.org, then re-run this."
+    if [ -n "$PY" ]; then
+      echo "Using $($PY --version)"
+      if ! "$PY" -c 'import sys; sys.exit(0 if sys.version_info < (3,13) else 1)' 2>/dev/null; then
+        echo "Note: Syphon output needs Python 3.12 (easiest: brew install uv, then"
+        echo "delete the .venv folder and re-run this). Everything else works."
+      fi
+    elif install_uv; then
+      USE_UV=1
+      echo "Using uv-managed Python 3.12"
+    else
+      echo "Could not download uv automatically. Check your internet connection,"
+      echo "or install Python 3.12 from python.org, then re-run this."
       pause_exit
-    fi
-    echo "Using $($PY --version)"
-    if ! "$PY" -c 'import sys; sys.exit(0 if sys.version_info < (3,13) else 1)' 2>/dev/null; then
-      echo "Note: Syphon output needs Python 3.12 (easiest: brew install uv, then"
-      echo "re-run this). Everything else will work fine."
     fi
   fi
 

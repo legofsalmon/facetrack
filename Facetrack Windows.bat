@@ -37,32 +37,49 @@ echo.
 echo === facetrack setup (first run / after an update) ===
 echo.
 
-rem Prefer Python 3.13 (needed for the Spout output), then 3.12, then default.
+rem Environment strategy: uv (if present) provides a self-contained
+rem Python 3.13 - most reliable, and enables the Spout output. Fall back
+rem to a suitable system python (3.10-3.13); if neither exists, download
+rem uv automatically (user folder, no admin needed).
+set "UVCMD="
 set "PYCMD="
+where uv >nul 2>nul && set "UVCMD=uv"
+if not defined UVCMD if exist "%USERPROFILE%\.local\bin\uv.exe" set "UVCMD=%USERPROFILE%\.local\bin\uv.exe"
+if defined UVCMD goto :have_env
+
 py -3.13 -c "" >nul 2>nul && set "PYCMD=py -3.13"
 if not defined PYCMD py -3.12 -c "" >nul 2>nul && set "PYCMD=py -3.12"
-if not defined PYCMD (
-  where python >nul 2>nul && set "PYCMD=python"
-)
-if not defined PYCMD (
-  echo Python was not found. Install Python 3.13 from https://www.python.org/downloads/
-  echo IMPORTANT: tick "Add python.exe to PATH" in the installer, then run this again.
-  exit /b 1
-)
-%PYCMD% -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)" >nul 2>nul
-if errorlevel 1 (
-  echo Your Python is too old - need 3.10 or newer. Install 3.13 from python.org.
-  exit /b 1
-)
-%PYCMD% -c "import sys; sys.exit(0 if sys.version_info < (3,14) else 1)" >nul 2>nul
-if errorlevel 1 (
-  echo Note: Spout output needs Python 3.13 or older - install 3.13 from python.org
-  echo and re-run this. Everything else will work fine.
-)
-for /f "delims=" %%v in ('%PYCMD% --version') do echo Using %%v
+if not defined PYCMD where python >nul 2>nul && set "PYCMD=python"
+if not defined PYCMD goto :get_uv
+%PYCMD% -c "import sys; sys.exit(0 if (3,10) <= sys.version_info[:2] <= (3,13) else 1)" >nul 2>nul
+if not errorlevel 1 goto :have_env
+set "PYCMD="
 
+:get_uv
+echo No suitable Python found - downloading uv, a small tool that fetches
+echo Python for this app (installs into your user folder, no admin needed)...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://astral.sh/uv/install.ps1 | iex"
+if exist "%USERPROFILE%\.local\bin\uv.exe" set "UVCMD=%USERPROFILE%\.local\bin\uv.exe"
+if not defined UVCMD where uv >nul 2>nul && set "UVCMD=uv"
+if not defined UVCMD (
+  echo Automatic download failed. Check your internet connection, or install
+  echo Python 3.13 from python.org ^(tick "Add python.exe to PATH"^) and re-run.
+  exit /b 1
+)
+
+:have_env
 echo 1/3 Creating the app environment...
-if not exist .venv %PYCMD% -m venv .venv
+if defined UVCMD (
+  echo Using uv-managed Python 3.13
+  if not exist .venv %UVCMD% venv --seed --python 3.13 .venv
+) else (
+  for /f "delims=" %%v in ('%PYCMD% --version') do echo Using %%v
+  if not exist .venv %PYCMD% -m venv .venv
+)
+if not exist .venv\Scripts\python.exe (
+  echo Could not create environment.
+  exit /b 1
+)
 
 echo 2/3 Installing components (can take a few minutes)...
 .venv\Scripts\python -m pip install --upgrade pip --quiet
