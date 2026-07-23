@@ -163,10 +163,28 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None,
 
 
 def start_in_thread(app, host: str, port: int):
+    import socket
+    import time
+
     import uvicorn
 
     config = uvicorn.Config(app, host=host, port=port, log_level="warning")
     server = uvicorn.Server(config)
-    thread = threading.Thread(target=server.run, daemon=True, name="facetrack-web")
+
+    def run():
+        # After an in-place Restart the previous process may still be
+        # releasing the port; wait for it briefly instead of losing the
+        # panel to a bind race.
+        for _ in range(40):
+            try:
+                probe = socket.socket()
+                probe.bind(("" if host == "0.0.0.0" else host, port))
+                probe.close()
+                break
+            except OSError:
+                time.sleep(0.25)
+        server.run()
+
+    thread = threading.Thread(target=run, daemon=True, name="facetrack-web")
     thread.start()
     return server

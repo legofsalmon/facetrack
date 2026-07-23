@@ -70,6 +70,12 @@ names. That's it.
   *Restart* relaunches the app in place with saved settings and the panel
   reconnects itself; *Quit* shuts down — start again with the launcher on
   the machine (the panel reconnects automatically when you do).
+- **If the input dies mid-show** (unplugged camera, dead NDI feed) the
+  outputs cut to a NO SIGNAL slate, the header shows a red pill, and
+  facetrack reconnects automatically the moment the source returns.
+- **Stat chips change colour** when things get tight: processing time
+  turns amber past 20 ms and red past the 30fps frame budget (33 ms);
+  fps warns below 27 and alarms below 20.
 - **PIN protection**: on a shared production network, launch with
   `--pin 4721` (or add `"pin": "4721"` to `settings.json`). The panel then
   asks once per browser; without it, controls, preview and source listing

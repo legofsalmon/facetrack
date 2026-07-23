@@ -15,6 +15,12 @@ PALETTE = [
 ]
 
 
+def _col(frame: np.ndarray, bgr: tuple) -> tuple:
+    """Drawing color for a 3- or 4-channel target: on BGRA canvases the
+    alpha rides along in the color, so transparency needs no post-pass."""
+    return (*bgr, 255) if frame.shape[2] == 4 else bgr
+
+
 def draw_tracks(frame: np.ndarray, tracks: list[Track], show_emotion: bool = True,
                 show_ids: bool = True) -> None:
     H, W = frame.shape[:2]
@@ -26,7 +32,7 @@ def draw_tracks(frame: np.ndarray, tracks: list[Track], show_emotion: bool = Tru
         x2, y2 = int(min(W - 1, x + w)), int(min(H - 1, y + h))
         if x2 <= x1 or y2 <= y1:
             continue
-        color = PALETTE[t.id % len(PALETTE)]
+        color = _col(frame, PALETTE[t.id % len(PALETTE)])
         L = max(4, int(min(x2 - x1, y2 - y1) * 0.28))
         for cx, cy, dx, dy in ((x1, y1, 1, 1), (x2, y1, -1, 1),
                                (x1, y2, 1, -1), (x2, y2, -1, -1)):
@@ -45,19 +51,19 @@ def draw_tracks(frame: np.ndarray, tracks: list[Track], show_emotion: bool = Tru
             ly = y1 - 6 if y1 - tht - 10 > 0 else y2 + tht + 8
             cv2.rectangle(frame, (x1, ly - tht - 4), (x1 + tw + 6, ly + 4), color, -1)
             cv2.putText(frame, label, (x1 + 3, ly), cv2.FONT_HERSHEY_SIMPLEX,
-                        fscale, (20, 20, 20), th, cv2.LINE_AA)
+                        fscale, _col(frame, (20, 20, 20)), th, cv2.LINE_AA)
 
 
 def render_overlay_bgra(shape_hw: tuple[int, int], tracks: list[Track],
                         show_emotion: bool = True, show_ids: bool = True) -> np.ndarray:
     """Graphics-only frame on transparency for keying: BGRA where undrawn
-    pixels are (0,0,0,0). Drawn-on-black with full alpha satisfies NDI's
-    premultiplied-alpha convention, and stays correct through downscaling."""
+    pixels are (0,0,0,0). Alpha is drawn directly with the graphics (no
+    full-frame post-pass — that cost 12-28 ms). Drawn-on-black with alpha
+    satisfies NDI's premultiplied convention and survives downscaling."""
     H, W = shape_hw
-    canvas = np.zeros((H, W, 3), dtype=np.uint8)
+    canvas = np.zeros((H, W, 4), dtype=np.uint8)
     draw_tracks(canvas, tracks, show_emotion=show_emotion, show_ids=show_ids)
-    alpha = (canvas.max(axis=2) > 0).astype(np.uint8) * 255
-    return np.dstack([canvas, alpha])
+    return canvas
 
 
 def draw_stats(frame: np.ndarray, lines: list[str]) -> None:

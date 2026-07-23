@@ -118,6 +118,66 @@ def _():
     assert bgra[alpha == 0][:, :3].max() == 0, "transparent pixels must be black"
 
 
+@run("pipeline: NO SIGNAL slate and recovery on dead live source")
+def _():
+    import threading
+    import time
+
+    from main import DEFAULTS, parse_args
+    from facetrack.params import LiveParams
+    from facetrack.pipeline import Pipeline
+
+    class FlakySource:
+        is_live = True
+        fps = 30.0
+
+        def __init__(self):
+            self.dead = False
+            self._frame = np.zeros((120, 160, 3), dtype=np.uint8)
+
+        def read(self, timeout: float = 0.0):
+            time.sleep(0.01)
+            if self.dead:
+                time.sleep(min(timeout, 0.05))
+                return False, None
+            return True, self._frame.copy()
+
+        def close(self):
+            pass
+
+    args = parse_args(["--source", os.path.join(ROOT, "test_media", "synth.mp4"),
+                       "--no-ndi", "--no-preview", "--no-web", "--no-browser",
+                       "--quiet", "--backend", "yunet"])
+    params = LiveParams(**{**DEFAULTS, "ndi_main": False, "panel_preview": False,
+                           "local_preview": False, "emotion_enabled": False})
+    pipe = Pipeline(args, params, web_enabled=False)
+    pipe.source.close()
+    flaky = FlakySource()
+    pipe.source = flaky
+    pipe.source_spec = "/nonexistent/dead-input"  # reopen attempts must fail
+    t = threading.Thread(target=pipe.run, daemon=True)
+    t.start()
+    try:
+        def wait_state(want, timeout):
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                if pipe.get_stats().get("state") == want:
+                    return True
+                time.sleep(0.05)
+            return False
+
+        assert wait_state("live", 5), "pipeline never went live"
+        flaky.dead = True
+        assert wait_state("no-signal", 8), "signal loss not detected"
+        assert "Signal lost" in pipe.get_stats().get("error", "")
+        flaky.dead = False
+        assert wait_state("live", 5), "did not recover when source returned"
+        assert "Signal lost" not in pipe.get_stats().get("error", "")
+    finally:
+        pipe.stop()
+        t.join(timeout=5)
+
+
 @run("emotion: FER+ labels a face")
 def _():
     from facetrack.detectors import YuNetDetector

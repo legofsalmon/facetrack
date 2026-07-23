@@ -64,7 +64,9 @@ class Pipeline:
         self._stop = threading.Event()
         self.paused = False
         self.restart_requested = False
-        self._slate_cache: tuple | None = None
+        self._signal_lost_at: float | None = None
+        self._reopen_at = 0.0
+        self._slate_cache: dict = {}
         self._last_size: tuple[int, int] = (args.width or 1280, args.height or 720)
         self._stats_lock = threading.Lock()
         self._stats: dict = {}
@@ -115,15 +117,18 @@ class Pipeline:
 
     def _sync_outputs(self, p: dict) -> None:
         """Create/destroy NDI senders and the Syphon/Spout server to match
-        the live params. Cheap no-op when nothing changed."""
-        from .ndi_io import NDIOutput
+        the live params. Cheap no-op when nothing changed. NDI is imported
+        only when actually turning a feed on, so NDI-less environments
+        (CI) can still run the pipeline with feeds off."""
         try:
             if p["ndi_main"] and self.ndi is None:
+                from .ndi_io import NDIOutput
                 self.ndi = NDIOutput(self.ndi_name, fps=self.args.fps)
             elif not p["ndi_main"] and self.ndi is not None:
                 self.ndi.close()
                 self.ndi = None
             if p["ndi_overlay"] and self.ndi_overlay is None:
+                from .ndi_io import NDIOutput
                 self.ndi_overlay = NDIOutput(self.overlay_name, fps=self.args.fps)
             elif not p["ndi_overlay"] and self.ndi_overlay is not None:
                 self.ndi_overlay.close()
@@ -158,19 +163,20 @@ class Pipeline:
             self._connections = (count(self.ndi), count(self.ndi_overlay))
         return self._connections
 
-    def _standby_frames(self) -> tuple[np.ndarray, np.ndarray]:
+    def _standby_frames(self, title: str = "STANDBY",
+                        sub: str = "resume from the control panel"):
         """(slate BGR, transparent BGRA) at the last known frame size."""
         w, h = self._last_size
-        if self._slate_cache is None or self._slate_cache[0] != (w, h):
+        key = (w, h, title)
+        if key not in self._slate_cache:
             slate = np.full((h, w, 3), (28, 24, 20), dtype=np.uint8)
-            for i, (line, scale) in enumerate([("STANDBY", 1.6),
-                                               ("resume from the control panel", 0.7)]):
+            for i, (line, scale) in enumerate([(title, 1.6), (sub, 0.7)]):
                 (tw, _), _ = cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, scale, 2)
                 cv2.putText(slate, line, ((w - tw) // 2, h // 2 + i * 54),
                             cv2.FONT_HERSHEY_SIMPLEX, scale, (150, 150, 160), 2, cv2.LINE_AA)
             transparent = np.zeros((h, w, 4), dtype=np.uint8)
-            self._slate_cache = ((w, h), slate, transparent)
-        return self._slate_cache[1], self._slate_cache[2]
+            self._slate_cache = {key: (slate, transparent)}  # keep newest only
+        return self._slate_cache[key]
 
     def _run_paused_tick(self, p: dict) -> None:
         """One loop iteration while paused: keep feeds up with a standby
@@ -189,6 +195,42 @@ class Pipeline:
             self._stats.update({"state": "paused", "fps": 0.0, "faces": 0,
                                 "error": self.last_error})
         time.sleep(0.1)
+
+    def _run_signal_lost_tick(self) -> None:
+        """Input died mid-run (unplugged camera, dead NDI feed): keep the
+        feeds up with a NO SIGNAL slate, tell the panel, and try to reopen
+        the source every few seconds until it comes back."""
+        now = time.monotonic()
+        p = self.params.snapshot()
+        self._sync_outputs(p)
+        slate, transparent = self._standby_frames(
+            "NO SIGNAL", f"input '{self.source_spec}' lost - reconnecting")
+        if self.ndi is not None:
+            self.ndi.send(slate)
+        if self.ndi_overlay is not None:
+            self.ndi_overlay.send(transparent)
+        if self.texture is not None:
+            self.texture.send(transparent if p["texture_overlay"] else slate)
+        if self.web_enabled and p["panel_preview"]:
+            self._publish_preview(slate)
+        self.last_error = f"Signal lost on '{self.source_spec}' — reconnecting…"
+        self._error_time = now  # keep the message alive until recovery
+        with self._stats_lock:
+            self._stats.update({"state": "no-signal", "fps": 0.0, "faces": 0,
+                                "error": self.last_error})
+        if now >= self._reopen_at:
+            self._reopen_at = now + 3.0
+            a = self.args
+            try:
+                fresh = open_source(self.source_spec, a.width, a.height, a.fps,
+                                    a.capture_backend, loop=True)
+            except Exception:
+                return  # still gone; keep the slate up
+            try:
+                self.source.close()
+            except Exception:
+                pass
+            self.source = fresh
 
     def _maybe_swap_source(self) -> None:
         with self._source_lock:
@@ -242,6 +284,7 @@ class Pipeline:
         proc_ema = 0.0
         t_last = time.perf_counter()
         window_open = False
+        pace_next = None  # file playback pacing (real-time unless benchmarking)
 
         try:
             while not self._stop.is_set():
@@ -250,11 +293,23 @@ class Pipeline:
                     t_last = time.perf_counter()  # don't count the pause in fps
                     continue
                 self._maybe_swap_source()
-                ok, frame = self.source.read()
+                in_loss = self._signal_lost_at is not None
+                ok, frame = self.source.read(timeout=0.25 if in_loss else 2.0)
                 if not ok:
-                    if self.source.is_live:
-                        continue
-                    break
+                    if not self.source.is_live:
+                        break  # file finished
+                    now = time.monotonic()
+                    if self._signal_lost_at is None:
+                        self._signal_lost_at = now       # brief glitch: just retry
+                        self._reopen_at = now + 3.0
+                    elif now - self._signal_lost_at > 2.0:
+                        self._run_signal_lost_tick()     # it's really gone
+                    continue
+                if in_loss:
+                    self._signal_lost_at = None
+                    if self.last_error.startswith("Signal lost"):
+                        self.last_error = ""
+                    t_last = time.perf_counter()  # don't count the outage in fps
                 p = self.params.snapshot()
                 self._sync_outputs(p)
                 self._last_size = (frame.shape[1], frame.shape[0])
@@ -373,6 +428,21 @@ class Pipeline:
                         "no_input": isinstance(self.source, NullSource),
                         "error": self.last_error,
                     }
+
+                # Pace file sources to their native fps so tests behave like
+                # a real feed (fans stay quiet, NDI rates stay sane). Runs
+                # unpaced when --max-frames is set (benchmark mode).
+                if not self.source.is_live and not args.max_frames:
+                    fps_native = min(getattr(self.source, "fps", 0) or 30.0, 120.0)
+                    period = 1.0 / fps_native
+                    now2 = time.perf_counter()
+                    pace_next = (pace_next if pace_next is not None else now2) + period
+                    if pace_next > now2:
+                        time.sleep(pace_next - now2)
+                    elif now2 - pace_next > 0.5:
+                        pace_next = now2  # fell behind; don't try to catch up
+                else:
+                    pace_next = None
 
                 frame_idx += 1
                 if not args.quiet and frame_idx % 150 == 0:

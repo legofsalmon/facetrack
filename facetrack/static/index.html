@@ -30,6 +30,10 @@
   #onair.live { background: var(--onair); border-color: var(--onair); color: #fff;
                 animation: pulse 2s infinite; }
   #onair.paused { background: var(--warn); border-color: var(--warn); color: #1a1206; }
+  #onair.nosignal { background: var(--bad); border-color: var(--bad); color: #fff;
+                    animation: pulse 1s infinite; }
+  .chip b.warn { color: var(--warn); }
+  .chip b.bad { color: var(--bad); }
   button.danger { background: var(--panel2); color: var(--bad);
                   border: 1px solid var(--line); font-weight: 500; }
   button.danger:hover { border-color: var(--bad); }
@@ -438,9 +442,15 @@
   srcSelect.addEventListener("change", () =>
     srcCustomRow.classList.toggle("show", srcSelect.value === "__custom__"));
   $("src-refresh").addEventListener("click", loadSources);
+  let switching = null;
   $("src-apply").addEventListener("click", () => {
     const spec = srcSelect.value === "__custom__" ? srcCustom.value : srcSelect.value;
-    if (spec) send({ type: "source", data: spec });
+    if (!spec) return;
+    send({ type: "source", data: spec });
+    const b = $("src-apply");
+    b.disabled = true;
+    b.textContent = "Switching…";
+    switching = { spec, until: Date.now() + 8000 };
   });
   srcCustom.addEventListener("keydown", (e) => { if (e.key === "Enter") $("src-apply").click(); });
   loadSources();
@@ -471,15 +481,37 @@
     $("s-proc").textContent = s.proc_ms ?? "–";
     lastState = s.state || "live";
     $("btn-pause").textContent = lastState === "paused" ? "Resume" : "Pause";
-    onair.classList.remove("live", "paused");
+    onair.classList.remove("live", "paused", "nosignal");
     if (lastState === "paused") {
       onair.textContent = "PAUSED";
       onair.classList.add("paused");
+    } else if (lastState === "no-signal") {
+      onair.textContent = "NO SIGNAL";
+      onair.classList.add("nosignal");
     } else if (s.ndi_display) {
       onair.textContent = "ON AIR";
       onair.classList.add("live");
     } else {
       onair.textContent = "NDI OFF";
+    }
+
+    // health colouring: proc vs the 30fps frame budget, fps vs camera rate
+    const procEl = $("s-proc");
+    procEl.classList.remove("warn", "bad");
+    if (s.proc_ms > 33) procEl.classList.add("bad");
+    else if (s.proc_ms > 20) procEl.classList.add("warn");
+    const fpsEl = $("s-fps");
+    fpsEl.classList.remove("warn", "bad");
+    if (lastState === "live" && s.fps) {
+      if (s.fps < 20) fpsEl.classList.add("bad");
+      else if (s.fps < 27) fpsEl.classList.add("warn");
+    }
+
+    if (switching && (s.source === switching.spec || Date.now() > switching.until)) {
+      const b = $("src-apply");
+      b.disabled = false;
+      b.textContent = "Use this source";
+      switching = null;
     }
     let info = "Input: <b>" + (s.no_input ? "none — pick a source above" : (s.source || "–")) + "</b>";
     if (s.out_res) info += " &nbsp;·&nbsp; out: <b>" + s.out_res + "</b>";
