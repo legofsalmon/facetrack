@@ -88,6 +88,17 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None,
                              "camera_auth": camera_auth,
                              "blocked_cameras": blocked})
 
+    @app.get("/logs")
+    def logs(request: Request):
+        if not _pin_ok(request):
+            return PlainTextResponse("PIN required", status_code=401)
+        log_path = STATIC_DIR.parent.parent / "logs" / "facetrack.log"
+        try:
+            lines = log_path.read_text(errors="replace").splitlines()[-200:]
+            return PlainTextResponse("\n".join(lines) or "log is empty")
+        except OSError:
+            return PlainTextResponse("no log file yet")
+
     @app.get("/preview.mjpg")
     def preview(request: Request):
         if not _pin_ok(request):
@@ -96,14 +107,18 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None,
 
         def gen():
             last = -1
-            while not pipeline.stopped:
-                item = pipeline.wait_preview(last, timeout=1.0)
-                if item is None:
-                    continue
-                last, jpg = item
-                yield (boundary + b"\r\nContent-Type: image/jpeg\r\n"
-                       b"Content-Length: " + str(len(jpg)).encode() + b"\r\n\r\n"
-                       + jpg + b"\r\n")
+            pipeline.preview_clients += 1  # JPEG encoding pauses at zero viewers
+            try:
+                while not pipeline.stopped:
+                    item = pipeline.wait_preview(last, timeout=1.0)
+                    if item is None:
+                        continue
+                    last, jpg = item
+                    yield (boundary + b"\r\nContent-Type: image/jpeg\r\n"
+                           b"Content-Length: " + str(len(jpg)).encode() + b"\r\n\r\n"
+                           + jpg + b"\r\n")
+            finally:
+                pipeline.preview_clients -= 1
 
         return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")
 

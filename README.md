@@ -78,6 +78,12 @@ names. That's it.
   outputs cut to plain black — graceful on a live screen — while the
   panel preview shows a NO SIGNAL slate and the header a red pill.
   facetrack reconnects automatically the moment the source returns.
+- **Number badges / expressions** draw in a per-person colour palette, or
+  flip on **Brand colour** to draw every box in one colour that matches
+  the event's look.
+- **Click the preview** to open it full-size in its own tab; the *view
+  log* link in the Process card shows the app's recent log lines from
+  any device — no need to walk to the machine.
 - **Stat chips change colour** when things get tight: processing time
   turns amber past 60% of the frame budget and red past the whole budget;
   fps warns below 90% of the target rate and alarms below two-thirds.
@@ -91,8 +97,13 @@ names. That's it.
 ### If something's wrong
 
 - **It crashed?** The launcher restarts it automatically after 3 seconds
-  (clean quits don't restart). Everything the app printed is also in
-  `logs/facetrack.log` for after-the-fact diagnosis.
+  (clean quits don't restart). A watchdog also force-restarts the app if
+  the pipeline wedges for 30 seconds (stalled driver, blocked I/O).
+  Everything the app printed is also in `logs/facetrack.log` for
+  after-the-fact diagnosis — or the *view log* link in the panel.
+- **The machine can't sleep** while facetrack runs (caffeinate on macOS,
+  the equivalent power override on Windows) — no dead feed because a
+  screensaver kicked in.
 - **It's wedged?** Delete the `.venv` folder and double-click the
   Facetrack file again — it rebuilds everything. Or, from a terminal:
 
@@ -216,6 +227,18 @@ no matching against any database, and records nothing — frames are
 processed and discarded in memory. Expression labels are a cosmetic
 overlay estimate. For public events, follow your usual venue practice on
 camera signage, and keep this paragraph handy for client conversations.
+
+### Start on boot (show machines)
+
+- **macOS**: System Settings → General → Login Items → add
+  `Facetrack.app` from the project folder.
+- **Windows**: run `Create Desktop Icon.bat` once, press Win+R, type
+  `shell:startup`, Enter, and copy the desktop's Facetrack shortcut into
+  the folder that opens.
+
+The machine then boots straight into facetrack: the launcher self-heals,
+the watchdog and crash-restart keep it alive, and the panel reconnects
+from any browser.
 
 ### Known quirks
 

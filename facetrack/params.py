@@ -19,6 +19,7 @@ SPEC = {
     "emotion_budget": (int, 0, 16),
     "show_ids": (bool, None, None),
     "show_stats": (bool, None, None),
+    "overlay_color": (str, None, None),   # "#rrggbb" brand colour; "" = palette
     "clean_main": (bool, None, None),
     "flip": (bool, None, None),
     "ndi_main": (bool, None, None),
@@ -53,6 +54,8 @@ class LiveParams:
         if typ is bool:
             return bool(value)
         if typ is str:
+            if lo is None:  # free-form string (e.g. a colour), length-capped
+                return str(value).strip()[:32]
             v = str(value)
             return v if v in lo else lo[0]
         v = typ(value)

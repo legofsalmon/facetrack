@@ -22,7 +22,8 @@ def _col(frame: np.ndarray, bgr: tuple) -> tuple:
 
 
 def draw_tracks(frame: np.ndarray, tracks: list[Track], show_emotion: bool = True,
-                show_ids: bool = True) -> None:
+                show_ids: bool = True, color: tuple | None = None) -> None:
+    """color: BGR override for every box (brand colour); None = palette."""
     H, W = frame.shape[:2]
     th = max(1, round(W / 1100))
     fscale = max(0.4, W / 2600)
@@ -32,13 +33,13 @@ def draw_tracks(frame: np.ndarray, tracks: list[Track], show_emotion: bool = Tru
         x2, y2 = int(min(W - 1, x + w)), int(min(H - 1, y + h))
         if x2 <= x1 or y2 <= y1:
             continue
-        color = _col(frame, PALETTE[t.id % len(PALETTE)])
+        color_t = _col(frame, color or PALETTE[t.id % len(PALETTE)])
         L = max(4, int(min(x2 - x1, y2 - y1) * 0.28))
         for cx, cy, dx, dy in ((x1, y1, 1, 1), (x2, y1, -1, 1),
                                (x1, y2, 1, -1), (x2, y2, -1, -1)):
-            cv2.line(frame, (cx, cy), (cx + dx * L, cy), color, th + 1, cv2.LINE_AA)
-            cv2.line(frame, (cx, cy), (cx, cy + dy * L), color, th + 1, cv2.LINE_AA)
-        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 1, cv2.LINE_AA)
+            cv2.line(frame, (cx, cy), (cx + dx * L, cy), color_t, th + 1, cv2.LINE_AA)
+            cv2.line(frame, (cx, cy), (cx, cy + dy * L), color_t, th + 1, cv2.LINE_AA)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color_t, 1, cv2.LINE_AA)
 
         parts = []
         if show_ids:
@@ -49,20 +50,22 @@ def draw_tracks(frame: np.ndarray, tracks: list[Track], show_emotion: bool = Tru
             label = " ".join(parts)
             (tw, tht), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fscale, th)
             ly = y1 - 6 if y1 - tht - 10 > 0 else y2 + tht + 8
-            cv2.rectangle(frame, (x1, ly - tht - 4), (x1 + tw + 6, ly + 4), color, -1)
+            cv2.rectangle(frame, (x1, ly - tht - 4), (x1 + tw + 6, ly + 4), color_t, -1)
             cv2.putText(frame, label, (x1 + 3, ly), cv2.FONT_HERSHEY_SIMPLEX,
                         fscale, _col(frame, (20, 20, 20)), th, cv2.LINE_AA)
 
 
 def render_overlay_bgra(shape_hw: tuple[int, int], tracks: list[Track],
-                        show_emotion: bool = True, show_ids: bool = True) -> np.ndarray:
+                        show_emotion: bool = True, show_ids: bool = True,
+                        color: tuple | None = None) -> np.ndarray:
     """Graphics-only frame on transparency for keying: BGRA where undrawn
     pixels are (0,0,0,0). Alpha is drawn directly with the graphics (no
     full-frame post-pass — that cost 12-28 ms). Drawn-on-black with alpha
     satisfies NDI's premultiplied convention and survives downscaling."""
     H, W = shape_hw
     canvas = np.zeros((H, W, 4), dtype=np.uint8)
-    draw_tracks(canvas, tracks, show_emotion=show_emotion, show_ids=show_ids)
+    draw_tracks(canvas, tracks, show_emotion=show_emotion, show_ids=show_ids,
+                color=color)
     return canvas
 
 

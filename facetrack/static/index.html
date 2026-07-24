@@ -71,7 +71,10 @@
              text-transform: uppercase; color: var(--dim);
              padding: 11px 14px 9px; border-bottom: 1px solid var(--line); }
   .pv-wrap { position: relative; background: #000; }
-  #preview { width: 100%; display: block; aspect-ratio: 16/9; object-fit: contain; }
+  #preview { width: 100%; display: block; aspect-ratio: 16/9; object-fit: contain;
+             cursor: zoom-in; }
+  input[type=color] { width: 42px; height: 26px; padding: 0; border: 1px solid var(--line);
+                      border-radius: 6px; background: var(--panel2); cursor: pointer; }
   #pv-msg { position: absolute; inset: 0; display: flex; align-items: center;
             justify-content: center; color: var(--dim); font-size: 13px;
             background: #000; }
@@ -276,6 +279,12 @@
           <span class="hint">fps counter burned into the feed</span></div>
         <label class="switch"><input type="checkbox" id="show_stats"><span class="slider"></span></label>
       </div>
+      <div class="row">
+        <div class="lbl"><label for="overlay-brand">Brand colour</label>
+          <span class="hint">one colour for all boxes — off = a colour per person</span></div>
+        <input type="color" id="overlay_color_pick" value="#50dc50">
+        <label class="switch"><input type="checkbox" id="overlay-brand"><span class="slider"></span></label>
+      </div>
     </div>
 
     <div class="card">
@@ -373,13 +382,15 @@
       <div class="hint" style="padding: 0 14px 11px">
         pause keeps the feeds up with a standby slate · restart relaunches
         with saved settings · quit stops facetrack (start it again with the
-        launcher on the machine)
+        launcher on the machine) ·
+        <a id="log-link" href="/logs" target="_blank"
+           style="color: var(--accent); text-decoration: none">view log</a>
       </div>
     </div>
   </div>
 </div>
 
-<footer>facetrack · finds and follows faces — does not identify people · settings save automatically</footer>
+<footer>facetrack · finds and follows faces — does not identify people · settings save automatically<span id="uptime"></span></footer>
 
 <script>
 (function () {
@@ -559,6 +570,10 @@
     const steadyOn = cutActive && p.cutout_shape === "people";
     $("cutout-steady-row").classList.toggle("dimmed", !steadyOn);
     $("cutout_steady").disabled = !steadyOn;
+    if (document.activeElement !== brandPick) {
+      brandChk.checked = !!p.overlay_color;
+      if (p.overlay_color) brandPick.value = p.overlay_color;
+    }
     if (!p.panel_preview) {
       pvMsg.textContent = "Panel preview off — saving processing";
       pvMsg.classList.remove("hide");
@@ -640,7 +655,24 @@
     }
     if (s.error) { errBox.textContent = s.error; errBox.style.display = "block"; }
     else errBox.style.display = "none";
+    if (s.uptime_s != null) {
+      const h = Math.floor(s.uptime_s / 3600), m = Math.floor((s.uptime_s % 3600) / 60);
+      $("uptime").textContent = " · up " + (h ? h + "h " : "") + m + "m";
+    }
   }
+
+  // ---- brand colour (custom wiring: one param, two controls) ----
+  const brandChk = $("overlay-brand"), brandPick = $("overlay_color_pick");
+  brandChk.addEventListener("change", () =>
+    queueSet("overlay_color", brandChk.checked ? brandPick.value : ""));
+  brandPick.addEventListener("input", () => {
+    if (brandChk.checked) queueSet("overlay_color", brandPick.value);
+  });
+
+  // ---- preview click = full-size view in its own tab ----
+  pv.title = "click to open full-size";
+  pv.addEventListener("click", () =>
+    window.open("/preview.mjpg?t=" + Date.now() + pinQ(), "_blank"));
 
   // ---- preview view tabs ----
   document.querySelectorAll("#pv-tabs button").forEach((b) => {
@@ -683,6 +715,7 @@
       sentQuit = false;
       sentRestart = false;
       pv.src = "/preview.mjpg?t=" + Date.now() + pinQ();
+      $("log-link").href = "/logs?x=1" + pinQ();
     };
     ws.onclose = (e) => {
       conn.classList.remove("on");

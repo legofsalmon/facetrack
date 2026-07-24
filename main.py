@@ -26,7 +26,8 @@ from facetrack.pipeline import Pipeline
 
 DEFAULTS = dict(det_threshold=0.5, det_size=640, detect_every=1, min_face=0,
                 max_misses=15, emotion_enabled=True, emotion_budget=4,
-                show_ids=True, show_stats=True, clean_main=False, flip=False,
+                show_ids=True, show_stats=True, overlay_color="",
+                clean_main=False, flip=False,
                 ndi_main=True, ndi_overlay=False, ndi_faces=False, out_width=0,
                 texture_share=False, texture_source="program", cutout_margin=0.15,
                 cutout_shape="rectangle", cutout_feather=0, cutout_steady=0.55,
@@ -147,12 +148,43 @@ def build_params(args, saved_params: dict) -> LiveParams:
         cutout_shape=saved_params.get("cutout_shape", "rectangle"),
         cutout_feather=saved_params.get("cutout_feather", 0),
         cutout_steady=saved_params.get("cutout_steady", 0.55),
+        overlay_color=saved_params.get("overlay_color", ""),
         test_card=saved_params.get("test_card", False),
         panel_preview=saved_params.get("panel_preview", True),
         preview_source=saved_params.get("preview_source", "annotated"),
         local_preview=False if args.no_preview
                       else saved_params.get("local_preview", True),
     )
+
+
+def _keep_awake() -> None:
+    """Stop the machine sleeping mid-show. macOS: caffeinate tied to our
+    pid (dies with us). Windows: SetThreadExecutionState on this thread."""
+    try:
+        if sys.platform == "darwin":
+            import subprocess
+            subprocess.Popen(["caffeinate", "-dimsu", "-w", str(os.getpid())],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        elif sys.platform == "win32":
+            import ctypes
+            es = 0x80000000 | 0x00000001 | 0x00000002  # CONTINUOUS|SYSTEM|DISPLAY
+            ctypes.windll.kernel32.SetThreadExecutionState(es)
+    except Exception:
+        pass  # nice-to-have, never fatal
+
+
+def _start_watchdog(pipeline) -> None:
+    """If the pipeline loop wedges (driver stall, blocked I/O) for 30s,
+    exit non-zero so the launcher's crash-restart brings us back."""
+    def watch():
+        while not pipeline.stopped:
+            time.sleep(5)
+            if (not pipeline.stopped
+                    and time.monotonic() - pipeline.heartbeat > 30):
+                print("[facetrack] watchdog: pipeline stalled for 30s — "
+                      "exiting so the launcher can restart", flush=True)
+                os._exit(3)
+    threading.Thread(target=watch, daemon=True, name="facetrack-watchdog").start()
 
 
 def _already_running(port: int) -> bool:
@@ -249,6 +281,10 @@ def main(argv=None) -> int:
 
     signal.signal(signal.SIGINT, _stop)
     signal.signal(signal.SIGTERM, _stop)
+
+    if not args.max_frames:  # not for benchmarks/tests
+        _keep_awake()
+        _start_watchdog(pipeline)
 
     pipeline.run()
 

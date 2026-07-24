@@ -89,6 +89,10 @@ class Pipeline:
         self._pv_jpeg: bytes | None = None
         self._pv_time = 0.0
         self._checker: np.ndarray | None = None  # alpha-preview backdrop
+        self.preview_clients = 0        # MJPEG viewers (maintained by webui)
+        self.heartbeat = time.monotonic()  # watchdog liveness signal
+        self._t0 = time.time()
+        self._color_cache: tuple[str, tuple | None] = ("", None)
         self._people_seg = None  # lazy: loads when 'people' cutout is picked
         self._people_cache: np.ndarray | None = None
         self._people_roi: tuple[float, float, float, float] | None = None
@@ -396,9 +400,25 @@ class Pipeline:
             except Exception:
                 pass
 
+    def _brand_color(self, spec: str):
+        """'#rrggbb' -> BGR tuple, else None (per-ID palette). Cached."""
+        if self._color_cache[0] != spec:
+            color = None
+            s = spec.strip().lstrip("#")
+            if len(s) == 6:
+                try:
+                    color = (int(s[4:6], 16), int(s[2:4], 16), int(s[0:2], 16))
+                except ValueError:
+                    color = None
+            self._color_cache = (spec, color)
+        return self._color_cache[1]
+
     def _publish_preview(self, display) -> None:
         """Publish a frame to the panel. BGRA input is composited over a
-        checkerboard so transparency is visible in the (opaque) JPEG."""
+        checkerboard so transparency is visible in the (opaque) JPEG.
+        Skipped entirely when no browser is streaming the preview."""
+        if self.preview_clients < 1:
+            return
         now = time.monotonic()
         if now - self._pv_time < PREVIEW_INTERVAL:
             return
@@ -435,6 +455,7 @@ class Pipeline:
 
         try:
             while not self._stop.is_set():
+                self.heartbeat = time.monotonic()
                 if self.paused:
                     self._run_paused_tick(self.params.snapshot())
                     t_last = time.perf_counter()  # don't count the pause in fps
@@ -477,8 +498,13 @@ class Pipeline:
                         dets = dets[(dets[:, 2] >= p["min_face"]) & (dets[:, 3] >= p["min_face"])]
                 tracks = self.tracker.step(dets)
                 if p["emotion_enabled"] and p["emotion_budget"] > 0:
-                    self.emotion.budget = p["emotion_budget"]
-                    self.emotion.update(frame, tracks, frame_idx)
+                    try:
+                        self.emotion.budget = p["emotion_budget"]
+                        self.emotion.update(frame, tracks, frame_idx)
+                    except Exception as exc:
+                        self.params.set("emotion_enabled", False)
+                        self.last_error = f"Expressions disabled: {exc}"
+                        self._error_time = time.monotonic()
                 proc_ms = (time.perf_counter() - t0) * 1000.0
                 proc_ema = proc_ms if frame_idx == 0 else 0.9 * proc_ema + 0.1 * proc_ms
 
@@ -492,7 +518,8 @@ class Pipeline:
                 if need_overlay:
                     overlay_bgra = render_overlay_bgra(
                         frame.shape[:2], tracks,
-                        show_emotion=p["emotion_enabled"], show_ids=p["show_ids"])
+                        show_emotion=p["emotion_enabled"], show_ids=p["show_ids"],
+                        color=self._brand_color(p["overlay_color"]))
                 faces_bgra = None
                 need_faces = (self.ndi_faces is not None
                               or (self.texture is not None
@@ -530,12 +557,13 @@ class Pipeline:
                 clean_frame = frame
                 if pv_on and pv_src == "clean" and not p["clean_main"]:
                     clean_frame = frame.copy()
+                brand = self._brand_color(p["overlay_color"])
                 display = None
                 if (p["local_preview"] or (pv_on and pv_src == "annotated")
                         or not p["clean_main"]):
                     display = frame.copy() if p["clean_main"] else frame
                     draw_tracks(display, tracks, show_emotion=p["emotion_enabled"],
-                                show_ids=p["show_ids"])
+                                show_ids=p["show_ids"], color=brand)
                     if p["show_stats"]:
                         draw_stats(display, [
                             f"{fps_ema:5.1f} fps   faces {len(tracks):3d}   proc {proc_ema:5.1f} ms",
@@ -552,20 +580,35 @@ class Pipeline:
                                           interpolation=cv2.INTER_AREA)
                     return img
 
+                def _safe_send(out, img, label):
+                    """Send, and on failure tear the output down with a
+                    panel error — _sync_outputs recreates it next frame,
+                    so a transient NDI/texture hiccup can't kill the show."""
+                    if out is None or img is None:
+                        return out
+                    try:
+                        out.send(_scaled(img))
+                        return out
+                    except Exception as exc:
+                        self.last_error = f"{label} output error: {exc} — restarting feed"
+                        self._error_time = time.monotonic()
+                        try:
+                            out.close()
+                        except Exception:
+                            pass
+                        return None
+
                 program = frame if p["clean_main"] else display
-                if self.ndi is not None:
-                    self.ndi.send(_scaled(program))
-                if self.ndi_overlay is not None:
-                    self.ndi_overlay.send(_scaled(overlay_bgra))
-                if self.ndi_faces is not None:
-                    self.ndi_faces.send(_scaled(faces_bgra))
+                self.ndi = _safe_send(self.ndi, program, "Main NDI")
+                self.ndi_overlay = _safe_send(self.ndi_overlay, overlay_bgra, "Overlay NDI")
+                self.ndi_faces = _safe_send(self.ndi_faces, faces_bgra, "Faces NDI")
                 if self.texture is not None:
                     tex_img = {"overlay": overlay_bgra,
                                "faces": faces_bgra}.get(p["texture_source"])
                     if tex_img is None:
                         tex_img = program
-                    if tex_img is not None:
-                        self.texture.send(_scaled(tex_img))
+                    self.texture = _safe_send(self.texture, tex_img,
+                                              self.texture_kind.capitalize())
                 if pv_on:
                     pv_img = {"annotated": display, "clean": clean_frame,
                               "overlay": overlay_bgra, "faces": faces_bgra}[pv_src]
@@ -619,6 +662,7 @@ class Pipeline:
                         "texture_error": self.texture_error
                                          if p["texture_share"] and self.texture is None else "",
                         "no_input": isinstance(self.source, NullSource),
+                        "uptime_s": int(time.time() - self._t0),
                         "error": self.last_error,
                     }
 

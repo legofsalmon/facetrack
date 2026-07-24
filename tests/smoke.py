@@ -118,6 +118,26 @@ def _():
     assert bgra[alpha == 0][:, :3].max() == 0, "transparent pixels must be black"
 
 
+@run("overlay: brand colour overrides the palette")
+def _():
+    from facetrack.overlay import render_overlay_bgra
+    from facetrack.tracker import Track
+    tracks = []
+    for i in range(3):
+        t = Track.__new__(Track)
+        t.id = i
+        t.bbox = (50 + i * 150, 60, 80, 80)
+        t.emotion = None
+        tracks.append(t)
+    bgra = render_overlay_bgra((360, 640), tracks, color=(0, 0, 255))  # pure red
+    drawn = bgra[bgra[:, :, 3] > 200]
+    assert len(drawn), "nothing drawn"
+    assert (drawn[:, 2].astype(int) >= drawn[:, 0].astype(int)).all(), \
+        "brand colour must replace the palette (found blue-dominant pixels)"
+    assert (drawn[:, 2].astype(int) >= drawn[:, 1].astype(int)).all(), \
+        "brand colour must replace the palette (found green-dominant pixels)"
+
+
 @run("faces cutout: picture inside boxes, transparent outside")
 def _():
     from facetrack.detectors import YuNetDetector
@@ -243,10 +263,17 @@ def _():
     from facetrack.params import LiveParams, SPEC
     vals = {}
     for k, (typ, lo, _hi) in SPEC.items():
-        vals[k] = False if typ is bool else (lo[0] if typ is str else 1)
+        if typ is bool:
+            vals[k] = False
+        elif typ is str:
+            vals[k] = lo[0] if lo else ""  # free-form strings have no choices
+        else:
+            vals[k] = 1
     p = LiveParams(**vals)
     assert p.set("texture_source", "faces") == "faces"
     assert p.set("texture_source", "garbage") == "program"  # falls back
+    assert p.set("overlay_color", "#ff8800") == "#ff8800"   # free string passes
+    assert p.set("overlay_color", "") == ""
 
 
 @run("pipeline: NO SIGNAL slate and recovery on dead live source")
