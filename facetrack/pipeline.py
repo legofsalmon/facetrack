@@ -91,6 +91,7 @@ class Pipeline:
         self._checker: np.ndarray | None = None  # alpha-preview backdrop
         self._people_seg = None  # lazy: loads when 'people' cutout is picked
         self._people_cache: np.ndarray | None = None
+        self._people_roi: tuple[float, float, float, float] | None = None
 
     # ---- control surface (called from web threads) ----
 
@@ -311,10 +312,41 @@ class Pipeline:
                 pass
             self.source = fresh
 
-    def _people_mask(self, frame, steady: float = 0.55):
-        """Segmenter mask, loading the model on first use. On any failure
-        the cutout shape reverts to ovals with a panel-visible error, so
-        picking a broken mode can't take the feed down."""
+    def _people_roi_for(self, frame, tracks):
+        """Body-shaped region around the tracked faces: the portrait
+        segmenter works far better when people fill its input. Faces are
+        heads, so expand sideways and well downward; smooth the box over
+        time so the crop doesn't breathe. None = no faces, full frame."""
+        H, W = frame.shape[:2]
+        if not tracks:
+            self._people_roi = None
+            return None
+        # generous body proportions: exclude the irrelevant, don't hug —
+        # a cropped-off limb shows as a hard mask edge
+        x1 = min(t.bbox[0] - t.bbox[2] * 3.5 for t in tracks)
+        x2 = max(t.bbox[0] + t.bbox[2] * 4.5 for t in tracks)
+        y1 = min(t.bbox[1] - t.bbox[3] * 2.0 for t in tracks)
+        y2 = max(t.bbox[1] + t.bbox[3] * 8.0 for t in tracks)
+        # keep context: never crop tighter than 60% of each dimension
+        if x2 - x1 < W * 0.6:
+            cx = (x1 + x2) / 2
+            x1, x2 = cx - W * 0.3, cx + W * 0.3
+        if y2 - y1 < H * 0.6:
+            cy = (y1 + y2) / 2
+            y1, y2 = cy - H * 0.3, cy + H * 0.3
+        box = (max(0.0, x1), max(0.0, y1), min(float(W), x2), min(float(H), y2))
+        if self._people_roi is not None:
+            a = 0.8  # ROI easing
+            box = tuple(a * o + (1 - a) * n for o, n in zip(self._people_roi, box))
+        self._people_roi = box
+        return tuple(int(round(v)) for v in box)
+
+    def _people_mask(self, frame, tracks, steady: float):
+        """Segmenter mask, loading the model on first use. Temporal
+        smoothing happens here in full-frame space (correct even while
+        the ROI follows the subject). On any failure the cutout shape
+        reverts to ovals with a panel-visible error, so picking a broken
+        mode can't take the feed down."""
         if self._people_seg is None:
             try:
                 from .segmenter import PeopleSegmenter
@@ -324,14 +356,17 @@ class Pipeline:
                 self.last_error = f"People cutout unavailable: {exc}"
                 self._error_time = time.monotonic()
                 return None
-        self._people_seg.smoothing = steady
         try:
-            return self._people_seg.mask(frame)
+            mask = self._people_seg.mask(frame, roi=self._people_roi_for(frame, tracks))
         except Exception as exc:
             self.params.set("cutout_shape", "oval")
             self.last_error = f"People cutout failed: {exc}"
             self._error_time = time.monotonic()
             return None
+        prev = self._people_cache
+        if steady > 0 and prev is not None and prev.shape == mask.shape:
+            mask = cv2.addWeighted(prev, steady, mask, 1 - steady, 0)
+        return mask
 
     def _maybe_swap_source(self) -> None:
         with self._source_lock:
@@ -471,7 +506,8 @@ class Pipeline:
                         stale = (self._people_cache is None
                                  or self._people_cache.shape != frame.shape[:2])
                         if stale or frame_idx % 2 == 0:
-                            fresh = self._people_mask(frame, p["cutout_steady"])
+                            fresh = self._people_mask(frame, tracks,
+                                                      p["cutout_steady"])
                             if fresh is not None:
                                 self._people_cache = fresh
                         people = self._people_cache

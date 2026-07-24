@@ -206,28 +206,21 @@ def _():
         "people cutout must be premultiplied"
 
 
-@run("people segmenter: temporal smoothing steadies noisy edges")
+@run("people segmenter: ROI keeps the matte inside the region")
 def _():
     from facetrack.segmenter import PeopleSegmenter
     frame = _first_frame()
-    rng = np.random.default_rng(7)
-
-    def jitter(seg, n=6):
-        """mean frame-to-frame mask change under simulated sensor noise"""
-        prev, diffs = None, []
-        for _ in range(n):
-            noisy = cv2.add(frame, rng.integers(-12, 13, frame.shape,
-                                                dtype=np.int16).astype(np.int16),
-                            dtype=cv2.CV_8U)
-            m = seg.mask(noisy).astype(np.int16)
-            if prev is not None:
-                diffs.append(np.abs(m - prev).mean())
-            prev = m
-        return float(np.mean(diffs))
-
-    raw = jitter(PeopleSegmenter(smoothing=0.0))
-    smooth = jitter(PeopleSegmenter(smoothing=0.55))
-    assert smooth < raw * 0.75, f"EMA must reduce jitter (raw {raw:.3f}, smooth {smooth:.3f})"
+    seg = PeopleSegmenter()
+    H, W = frame.shape[:2]
+    roi = (W // 4, H // 4, 3 * W // 4, 3 * H // 4)
+    m = seg.mask(frame, roi=roi)
+    assert m.shape == frame.shape[:2]
+    outside = m.copy()
+    outside[roi[1]:roi[3], roi[0]:roi[2]] = 0
+    assert outside.max() == 0, "mask must be empty outside the ROI"
+    # degenerate ROI falls back to full frame without crashing
+    m2 = seg.mask(frame, roi=(0, 0, 4, 4))
+    assert m2.shape == frame.shape[:2]
 
 
 @run("test card: bars on program, markers on alpha")
