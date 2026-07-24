@@ -206,6 +206,30 @@ def _():
         "people cutout must be premultiplied"
 
 
+@run("people segmenter: temporal smoothing steadies noisy edges")
+def _():
+    from facetrack.segmenter import PeopleSegmenter
+    frame = _first_frame()
+    rng = np.random.default_rng(7)
+
+    def jitter(seg, n=6):
+        """mean frame-to-frame mask change under simulated sensor noise"""
+        prev, diffs = None, []
+        for _ in range(n):
+            noisy = cv2.add(frame, rng.integers(-12, 13, frame.shape,
+                                                dtype=np.int16).astype(np.int16),
+                            dtype=cv2.CV_8U)
+            m = seg.mask(noisy).astype(np.int16)
+            if prev is not None:
+                diffs.append(np.abs(m - prev).mean())
+            prev = m
+        return float(np.mean(diffs))
+
+    raw = jitter(PeopleSegmenter(smoothing=0.0))
+    smooth = jitter(PeopleSegmenter(smoothing=0.55))
+    assert smooth < raw * 0.75, f"EMA must reduce jitter (raw {raw:.3f}, smooth {smooth:.3f})"
+
+
 @run("test card: bars on program, markers on alpha")
 def _():
     from facetrack.overlay import render_test_card
