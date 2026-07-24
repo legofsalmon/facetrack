@@ -66,6 +66,26 @@ def render_overlay_bgra(shape_hw: tuple[int, int], tracks: list[Track],
     return canvas
 
 
+def render_faces_cutout(frame: np.ndarray, tracks: list[Track],
+                        margin: float = 0.15) -> np.ndarray:
+    """The picture only inside the detected face boxes; everything else is
+    transparent (BGRA, alpha 0). `margin` grows each box by that fraction
+    of its size on every side. Full alpha inside the boxes keeps NDI's
+    premultiplied convention trivially satisfied."""
+    H, W = frame.shape[:2]
+    out = np.zeros((H, W, 4), dtype=np.uint8)
+    for t in tracks:
+        x, y, w, h = t.bbox
+        mx, my = w * margin, h * margin
+        x1, y1 = int(max(0, x - mx)), int(max(0, y - my))
+        x2, y2 = int(min(W, x + w + mx)), int(min(H, y + h + my))
+        if x2 <= x1 or y2 <= y1:
+            continue
+        out[y1:y2, x1:x2, :3] = frame[y1:y2, x1:x2]
+        out[y1:y2, x1:x2, 3] = 255
+    return out
+
+
 def draw_stats(frame: np.ndarray, lines: list[str]) -> None:
     W = frame.shape[1]
     fscale = max(0.45, W / 2400)

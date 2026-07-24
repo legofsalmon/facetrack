@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import threading
 
-# name -> (type, min, max); None bounds for bools
+# name -> (type, min, max); None bounds for bools; for str params the
+# second slot is the tuple of allowed choices (first = fallback).
 SPEC = {
     "det_threshold": (float, 0.05, 0.95),
     "det_size": (int, 160, 1920),
@@ -24,7 +25,9 @@ SPEC = {
     "ndi_overlay": (bool, None, None),
     "out_width": (int, 0, 3840),          # 0 = match input resolution
     "texture_share": (bool, None, None),  # Syphon (macOS) / Spout (Windows)
-    "texture_overlay": (bool, None, None),  # share overlay-with-alpha instead of program
+    "texture_source": (str, ("program", "overlay", "faces"), None),  # what it carries
+    "ndi_faces": (bool, None, None),      # faces-cutout NDI feed
+    "cutout_margin": (float, 0.0, 0.5),   # extra room around each face box
     "panel_preview": (bool, None, None),  # MJPEG thumbnail in the web panel
     "local_preview": (bool, None, None),  # preview window on the machine
 }
@@ -44,6 +47,9 @@ class LiveParams:
         typ, lo, hi = SPEC[key]
         if typ is bool:
             return bool(value)
+        if typ is str:
+            v = str(value)
+            return v if v in lo else lo[0]
         v = typ(value)
         return max(lo, min(hi, v))
 

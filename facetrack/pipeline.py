@@ -17,7 +17,7 @@ import numpy as np
 from .capture import NullSource, open_source
 from .detectors import pick_backend
 from .emotion import EmotionEstimator
-from .overlay import draw_stats, draw_tracks, render_overlay_bgra
+from .overlay import draw_stats, draw_tracks, render_faces_cutout, render_overlay_bgra
 from .params import LiveParams
 from .tracker import FaceTracker
 
@@ -43,6 +43,7 @@ class Pipeline:
         # live param (_sync_outputs creates/destroys them mid-run).
         self.ndi_name = args.ndi_name
         self.overlay_name = args.ndi_overlay or f"{args.ndi_name} Overlay"
+        self.faces_name = f"{args.ndi_name} Faces"
         from . import texture_out
         self.texture_kind, self.texture_error = texture_out.probe()
         self.texture = None
@@ -58,7 +59,8 @@ class Pipeline:
 
         self.ndi = None
         self.ndi_overlay = None
-        self._connections = (0, 0)
+        self.ndi_faces = None
+        self._connections = (0, 0, 0)
         self._conn_check_frame = -999
 
         self._stop = threading.Event()
@@ -133,6 +135,12 @@ class Pipeline:
             elif not p["ndi_overlay"] and self.ndi_overlay is not None:
                 self.ndi_overlay.close()
                 self.ndi_overlay = None
+            if p["ndi_faces"] and self.ndi_faces is None:
+                from .ndi_io import NDIOutput
+                self.ndi_faces = NDIOutput(self.faces_name, fps=self.args.fps)
+            elif not p["ndi_faces"] and self.ndi_faces is not None:
+                self.ndi_faces.close()
+                self.ndi_faces = None
         except Exception as exc:
             self.last_error = f"NDI output: {exc}"
             self._error_time = time.monotonic()
@@ -149,7 +157,7 @@ class Pipeline:
             self.texture.close()
             self.texture = None
 
-    def _receiver_counts(self, frame_idx: int) -> tuple[int, int]:
+    def _receiver_counts(self, frame_idx: int) -> tuple[int, int, int]:
         """Connected-receiver counts per NDI feed, refreshed ~3x/second."""
         if frame_idx - self._conn_check_frame >= 10:
             self._conn_check_frame = frame_idx
@@ -160,7 +168,8 @@ class Pipeline:
                     return int(out.sender.get_num_connections(0))
                 except Exception:
                     return 0
-            self._connections = (count(self.ndi), count(self.ndi_overlay))
+            self._connections = (count(self.ndi), count(self.ndi_overlay),
+                                 count(self.ndi_faces))
         return self._connections
 
     def _standby_frames(self, title: str = "STANDBY",
@@ -187,8 +196,10 @@ class Pipeline:
             self.ndi.send(slate)
         if self.ndi_overlay is not None:
             self.ndi_overlay.send(transparent)
+        if self.ndi_faces is not None:
+            self.ndi_faces.send(transparent)
         if self.texture is not None:
-            self.texture.send(transparent if p["texture_overlay"] else slate)
+            self.texture.send(slate if p["texture_source"] == "program" else transparent)
         if self.web_enabled and p["panel_preview"]:
             self._publish_preview(slate)
         with self._stats_lock:
@@ -209,8 +220,10 @@ class Pipeline:
             self.ndi.send(slate)
         if self.ndi_overlay is not None:
             self.ndi_overlay.send(transparent)
+        if self.ndi_faces is not None:
+            self.ndi_faces.send(transparent)
         if self.texture is not None:
-            self.texture.send(transparent if p["texture_overlay"] else slate)
+            self.texture.send(slate if p["texture_source"] == "program" else transparent)
         if self.web_enabled and p["panel_preview"]:
             self._publish_preview(slate)
         self.last_error = f"Signal lost on '{self.source_spec}' — reconnecting…"
@@ -333,11 +346,19 @@ class Pipeline:
 
                 overlay_bgra = None
                 need_overlay = (self.ndi_overlay is not None
-                                or (self.texture is not None and p["texture_overlay"]))
+                                or (self.texture is not None
+                                    and p["texture_source"] == "overlay"))
                 if need_overlay:
                     overlay_bgra = render_overlay_bgra(
                         frame.shape[:2], tracks,
                         show_emotion=p["emotion_enabled"], show_ids=p["show_ids"])
+                faces_bgra = None
+                need_faces = (self.ndi_faces is not None
+                              or (self.texture is not None
+                                  and p["texture_source"] == "faces"))
+                if need_faces:
+                    faces_bgra = render_faces_cutout(frame, tracks,
+                                                     margin=p["cutout_margin"])
 
                 now = time.perf_counter()
                 dt = now - t_last
@@ -374,9 +395,13 @@ class Pipeline:
                     self.ndi.send(_scaled(program))
                 if self.ndi_overlay is not None:
                     self.ndi_overlay.send(_scaled(overlay_bgra))
+                if self.ndi_faces is not None:
+                    self.ndi_faces.send(_scaled(faces_bgra))
                 if self.texture is not None:
-                    tex_img = overlay_bgra if (p["texture_overlay"]
-                                               and overlay_bgra is not None) else program
+                    tex_img = {"overlay": overlay_bgra,
+                               "faces": faces_bgra}.get(p["texture_source"])
+                    if tex_img is None:
+                        tex_img = program
                     if tex_img is not None:
                         self.texture.send(_scaled(tex_img))
                 if self.web_enabled and p["panel_preview"] and display is not None:
@@ -399,7 +424,7 @@ class Pipeline:
 
                 if self.last_error and time.monotonic() - self._error_time > 20:
                     self.last_error = ""
-                conn_main, conn_ovl = self._receiver_counts(frame_idx)
+                conn_main, conn_ovl, conn_faces = self._receiver_counts(frame_idx)
                 ow = out_width or frame.shape[1]
                 oh = int(round(frame.shape[0] * ow / frame.shape[1]))
                 with self._stats_lock:
@@ -417,8 +442,11 @@ class Pipeline:
                                        else f"{self.hostname} ({self.ndi_name})",
                         "ndi_overlay_display": "" if self.ndi_overlay is None
                                                else f"{self.hostname} ({self.overlay_name})",
+                        "ndi_faces_display": "" if self.ndi_faces is None
+                                             else f"{self.hostname} ({self.faces_name})",
                         "ndi_connections": conn_main,
                         "ndi_overlay_connections": conn_ovl,
+                        "ndi_faces_connections": conn_faces,
                         "out_res": f"{ow}x{oh}",
                         "out_fps_target": args.fps,
                         "texture_kind": self.texture_kind,
@@ -459,6 +487,8 @@ class Pipeline:
                 self.ndi.close()
             if self.ndi_overlay is not None:
                 self.ndi_overlay.close()
+            if self.ndi_faces is not None:
+                self.ndi_faces.close()
             if self.texture is not None:
                 self.texture.close()
             if window_open:

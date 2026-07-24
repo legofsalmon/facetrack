@@ -27,8 +27,8 @@ from facetrack.pipeline import Pipeline
 DEFAULTS = dict(det_threshold=0.5, det_size=640, detect_every=1, min_face=0,
                 max_misses=15, emotion_enabled=True, emotion_budget=4,
                 show_ids=True, show_stats=True, clean_main=False, flip=False,
-                ndi_main=True, ndi_overlay=False, out_width=0,
-                texture_share=False, texture_overlay=False,
+                ndi_main=True, ndi_overlay=False, ndi_faces=False, out_width=0,
+                texture_share=False, texture_source="program", cutout_margin=0.15,
                 panel_preview=True, local_preview=True)
 
 
@@ -139,7 +139,9 @@ def build_params(args, saved_params: dict) -> LiveParams:
         out_width=rv(args.out_width, "out_width"),
         texture_share=True if args.texture_share
                       else saved_params.get("texture_share", False),
-        texture_overlay=saved_params.get("texture_overlay", False),
+        texture_source=saved_params.get("texture_source", "program"),
+        ndi_faces=saved_params.get("ndi_faces", False),
+        cutout_margin=saved_params.get("cutout_margin", 0.15),
         panel_preview=saved_params.get("panel_preview", True),
         local_preview=False if args.no_preview
                       else saved_params.get("local_preview", True),
@@ -195,6 +197,8 @@ def main(argv=None) -> int:
         print(f"  NDI feed      : {pipeline.hostname} ({pipeline.ndi_name})")
     if p0["ndi_overlay"]:
         print(f"  Overlay feed  : {pipeline.hostname} ({pipeline.overlay_name})  [graphics on alpha]")
+    if p0["ndi_faces"]:
+        print(f"  Faces feed    : {pipeline.hostname} ({pipeline.faces_name})  [faces cutout on alpha]")
     if pipeline.texture_kind:
         state = "on" if p0["texture_share"] else "available (enable in the panel)"
         print(f"  {pipeline.texture_kind.capitalize():<13} : {state}")

@@ -262,6 +262,17 @@
         <label class="switch"><input type="checkbox" id="ndi_overlay"><span class="slider"></span></label>
       </div>
       <div class="row">
+        <div class="lbl"><label for="ndi_faces">Faces cutout feed</label>
+          <span class="hint">only the detected faces show; everything else transparent</span></div>
+        <label class="switch"><input type="checkbox" id="ndi_faces"><span class="slider"></span></label>
+      </div>
+      <div class="row">
+        <div class="lbl"><label for="cutout_margin">Cutout margin</label>
+          <span class="hint">extra room around each face box</span></div>
+        <input type="range" id="cutout_margin" min="0" max="0.5" step="0.05" value="0.15">
+        <output>15%</output>
+      </div>
+      <div class="row">
         <div class="lbl"><label for="clean_main">Clean camera feed</label>
           <span class="hint">send camera untouched; graphics only on the overlay feed</span></div>
         <label class="switch"><input type="checkbox" id="clean_main"><span class="slider"></span></label>
@@ -286,9 +297,13 @@
         <label class="switch"><input type="checkbox" id="texture_share"><span class="slider"></span></label>
       </div>
       <div class="row">
-        <div class="lbl"><label for="texture_overlay">Share overlay only</label>
-          <span class="hint">graphics with alpha instead of the full picture</span></div>
-        <label class="switch"><input type="checkbox" id="texture_overlay"><span class="slider"></span></label>
+        <div class="lbl"><label for="texture_source">What it carries</label>
+          <span class="hint">overlay &amp; faces come with alpha for keying</span></div>
+        <select id="texture_source">
+          <option value="program">Full picture</option>
+          <option value="overlay">Graphics overlay</option>
+          <option value="faces">Faces cutout</option>
+        </select>
       </div>
     </div>
 
@@ -317,8 +332,9 @@
         savedBadge = $("saved"), pvMsg = $("pv-msg"), pv = $("preview");
   const params = ["det_threshold","det_size","detect_every","min_face","max_misses",
                   "emotion_enabled","emotion_budget","show_ids","show_stats",
-                  "clean_main","flip","ndi_main","ndi_overlay","out_width",
-                  "texture_share","texture_overlay","panel_preview","local_preview"];
+                  "clean_main","flip","ndi_main","ndi_overlay","ndi_faces",
+                  "cutout_margin","out_width","texture_share","texture_source",
+                  "panel_preview","local_preview"];
   const PRESETS = {
     wide:  { det_size: 960, det_threshold: 0.35, min_face: 0,  detect_every: 1 },
     mid:   { det_size: 640, det_threshold: 0.45, min_face: 0,  detect_every: 1 },
@@ -353,6 +369,7 @@
     if (!out) return;
     if (el.id === "max_misses") out.textContent = "~" + (el.value / lastFps).toFixed(1) + "s";
     else if (el.id === "min_face") out.textContent = el.value + "px";
+    else if (el.id === "cutout_margin") out.textContent = Math.round(el.value * 100) + "%";
     else out.textContent = el.value;
   }
 
@@ -360,7 +377,9 @@
     const el = $(key);
     if (!el) return;
     el.addEventListener(el.type === "range" ? "input" : "change", () => {
-      const v = el.type === "checkbox" ? el.checked : parseFloat(el.value);
+      const num = parseFloat(el.value);
+      const v = el.type === "checkbox" ? el.checked
+              : Number.isNaN(num) ? el.value : num;  // string params pass through
       if (el.type === "range") fmtOutput(el);
       queueSet(key, v);
     });
@@ -519,6 +538,8 @@
       info += " &nbsp;·&nbsp; NDI: <b>" + s.ndi_display + "</b> (" + (s.ndi_connections ?? 0) + " watching)";
       if (s.ndi_overlay_display)
         info += " &nbsp;+&nbsp; <b>" + s.ndi_overlay_display + "</b> (" + (s.ndi_overlay_connections ?? 0) + ")";
+      if (s.ndi_faces_display)
+        info += " &nbsp;+&nbsp; <b>" + s.ndi_faces_display + "</b> (" + (s.ndi_faces_connections ?? 0) + ")";
     }
     if (s.texture_on) info += " &nbsp;·&nbsp; <b>" + s.texture_kind + "</b>: live";
     $("feedinfo").innerHTML = info;

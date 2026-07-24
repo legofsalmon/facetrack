@@ -34,8 +34,12 @@ def load() -> dict:
     "pin": str}. Unknown top-level keys are preserved by writes."""
     data = _read_raw()
     params = data.get("params", {})
+    known = {k: v for k, v in params.items() if k in SPEC}
+    # migration: "texture_overlay" (bool, pre-faces-cutout) -> "texture_source"
+    if "texture_source" not in known and params.get("texture_overlay"):
+        known["texture_source"] = "overlay"
     return {
-        "params": {k: v for k, v in params.items() if k in SPEC},
+        "params": known,
         "source": data.get("source") or None,
         "pin": str(data.get("pin") or ""),
     }

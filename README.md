@@ -133,12 +133,13 @@ persists across restarts:
 |---|---|---|
 | Main NDI feed | the program picture (annotated, or clean with *Clean camera feed* on) | panel shows connected-receiver count |
 | Overlay NDI feed | graphics only, real alpha (premultiplied) | key it in vMix / Resolume / TriCaster / OBS+DistroAV |
-| Syphon (macOS) / Spout (Windows) | program picture **or** overlay-with-alpha | zero-compression, GPU-to-GPU, same machine only |
+| Faces cutout feed | the picture **only inside detected face boxes**, transparent everywhere else | *Cutout margin* slider adds headroom around each box |
+| Syphon (macOS) / Spout (Windows) | full picture, graphics overlay, **or** faces cutout — pick in the panel | zero-compression, GPU-to-GPU, same machine only |
 | Output size | Match input / 1920 / 1280 / 960 wide | applies to all feeds; lowers network load |
 
 Feed *names* are fixed at launch (`--ndi-name`, `--ndi-overlay`; the
-overlay defaults to "<name> Overlay") because renaming mid-show would drop
-receivers. NDI's codec is lossy, so keyed NDI graphics gain a pixel of
+overlay defaults to "<name> Overlay", the cutout to "<name> Faces")
+because renaming mid-show would drop receivers. NDI's codec is lossy, so keyed NDI graphics gain a pixel of
 soft fringe — normal for all NDI alpha sources; the Syphon/Spout path is
 uncompressed and keys perfectly. Feeds are emitted together; your mixer's
 frame sync aligns them.

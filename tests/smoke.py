@@ -118,6 +118,41 @@ def _():
     assert bgra[alpha == 0][:, :3].max() == 0, "transparent pixels must be black"
 
 
+@run("faces cutout: picture inside boxes, transparent outside")
+def _():
+    from facetrack.detectors import YuNetDetector
+    from facetrack.overlay import render_faces_cutout
+    from facetrack.tracker import FaceTracker
+    frame = _first_frame()
+    trk = FaceTracker(min_hits=1)
+    tracks = trk.step(YuNetDetector(score_threshold=0.4).detect(frame))
+    assert tracks, "need tracks for the cutout test"
+    cut = render_faces_cutout(frame, tracks, margin=0.0)
+    alpha = cut[:, :, 3]
+    frac = (alpha > 0).mean()
+    assert 0.005 < frac < 0.6, f"odd cutout coverage {frac:.3f}"
+    for t in tracks:
+        x, y, w, h = t.bbox
+        cy, cx = int(y + h / 2), int(x + w / 2)
+        assert alpha[cy, cx] == 255
+        assert (cut[cy, cx, :3] == frame[cy, cx]).all(), "pixels must pass through"
+    assert cut[alpha == 0].max() == 0, "transparent area must be empty"
+    # margin grows the boxes
+    grown = (render_faces_cutout(frame, tracks, margin=0.3)[:, :, 3] > 0).mean()
+    assert grown > frac
+
+
+@run("params: string choices validate")
+def _():
+    from facetrack.params import LiveParams, SPEC
+    vals = {}
+    for k, (typ, lo, _hi) in SPEC.items():
+        vals[k] = False if typ is bool else (lo[0] if typ is str else 1)
+    p = LiveParams(**vals)
+    assert p.set("texture_source", "faces") == "faces"
+    assert p.set("texture_source", "garbage") == "program"  # falls back
+
+
 @run("pipeline: NO SIGNAL slate and recovery on dead live source")
 def _():
     import threading
