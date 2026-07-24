@@ -169,6 +169,28 @@ def _():
         "premultiplied: no channel may exceed alpha"
 
 
+@run("people cutout: feather slider actually controls edge width")
+def _():
+    from facetrack.overlay import render_faces_cutout
+    frame = np.full((360, 640, 3), 200, dtype=np.uint8)
+    disc = np.zeros((360, 640), dtype=np.uint8)
+    cv2.circle(disc, (320, 180), 100, 255, -1)
+
+    def soft_pixels(feather):
+        a = render_faces_cutout(frame, [], shape="people", feather=feather,
+                                people_mask=disc)[:, :, 3]
+        return ((a > 32) & (a < 224)).sum()
+
+    crisp, soft = soft_pixels(0), soft_pixels(40)
+    assert soft > crisp * 4, f"feather 40 must widen the edge (crisp {crisp}, soft {soft})"
+    # a mushy pre-blurred mask must still come out crisp at feather 0
+    mush = cv2.GaussianBlur(disc, (31, 31), 0)
+    a0 = render_faces_cutout(frame, [], shape="people", feather=0,
+                             people_mask=mush)[:, :, 3]
+    band = ((a0 > 32) & (a0 < 224)).sum()
+    assert band < crisp * 3, f"feather 0 must re-harden a mushy mask (band {band})"
+
+
 @run("people segmenter: loads and produces a full-frame mask")
 def _():
     from facetrack.overlay import render_faces_cutout

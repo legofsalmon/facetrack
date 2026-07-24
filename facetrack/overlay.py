@@ -84,10 +84,14 @@ def render_faces_cutout(frame: np.ndarray, tracks: list[Track],
     H, W = frame.shape[:2]
 
     if shape == "people" and people_mask is not None:
-        alpha = people_mask
-        if feather > 0:
-            k = feather | 1
-            alpha = cv2.GaussianBlur(alpha, (k, k), 0)
+        # The segmenter's mask is upscaled from 192px, which bakes a mushy
+        # ~15px ramp into the edge — feathering on top of that was barely
+        # visible. Re-harden at 50% first (the isoline of the upscaled
+        # field is smooth), then feather by the requested amount; the
+        # 3px minimum anti-aliases the re-hardened contour.
+        _, alpha = cv2.threshold(people_mask, 127, 255, cv2.THRESH_BINARY)
+        k = max(feather, 3) | 1
+        alpha = cv2.GaussianBlur(alpha, (k, k), 0)
         a3 = cv2.cvtColor(alpha, cv2.COLOR_GRAY2BGR)
         b, g, r = cv2.split(cv2.multiply(frame, a3, scale=1 / 255.0))
         return cv2.merge((b, g, r, alpha))
