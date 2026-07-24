@@ -63,7 +63,7 @@ names. That's it.
 - Every change applies live **and is remembered for next launch**.
 - **Previews** (the panel thumbnail and the window on the facetrack
   machine) can be switched off during the show to save processing — the
-  NDI/Syphon/Spout feeds keep running. With *Clean camera feed* on and
+  NDI/Syphon/Spout feeds keep running. With *Keep main feed clean* on and
   previews off, the annotation pass is skipped entirely.
 - **Process card**: *Pause* keeps the feeds up with a STANDBY slate (the
   overlay feed goes fully transparent, so keyed graphics vanish cleanly);
@@ -75,8 +75,8 @@ names. That's it.
   panel preview shows a NO SIGNAL slate and the header a red pill.
   facetrack reconnects automatically the moment the source returns.
 - **Stat chips change colour** when things get tight: processing time
-  turns amber past 20 ms and red past the 30fps frame budget (33 ms);
-  fps warns below 27 and alarms below 20.
+  turns amber past 60% of the frame budget and red past the whole budget;
+  fps warns below 90% of the target rate and alarms below two-thirds.
 - **PIN protection**: on a shared production network, launch with
   `--pin 4721` (or add `"pin": "4721"` to `settings.json`). The panel then
   asks once per browser; without it, controls, preview and source listing
@@ -132,12 +132,12 @@ persists across restarts:
 
 | Output | What it carries | Notes |
 |---|---|---|
-| Main NDI feed | the program picture (annotated, or clean with *Clean camera feed* on) | panel shows connected-receiver count |
+| Main NDI feed | the program picture (annotated, or clean with *Keep main feed clean* on) | panel shows connected-receiver count |
 | Overlay NDI feed | graphics only, real alpha (premultiplied) | key it in vMix / Resolume / TriCaster / OBS+DistroAV |
 | Faces cutout feed | the picture **only inside detected face boxes**, transparent everywhere else | *Cutout margin* slider adds headroom around each box |
 | Syphon (macOS) / Spout (Windows) | full picture, graphics overlay, **or** faces cutout — pick in the panel | zero-compression, GPU-to-GPU, same machine only |
 | Output size | Match input / 1920 / 1280 / 960 wide | applies to all feeds; lowers network load |
-| Test card | SMPTE-style bars, ramp, feed identity, clock + moving block | motion proves the chain is live, not frozen; alpha feeds get a bracket/crosshair pattern instead; works with no input connected |
+| Test card | SMPTE-style bars, ramp, feed identity, clock + moving block | lives in the Process card; motion proves the chain is live, not frozen; alpha feeds get a bracket/crosshair pattern instead; works with no input connected |
 
 Feed *names* are fixed at launch (`--ndi-name`, `--ndi-overlay`; the
 overlay defaults to "<name> Overlay", the cutout to "<name> Faces")
@@ -147,9 +147,9 @@ uncompressed and keys perfectly. Feeds are emitted together; your mixer's
 frame sync aligns them.
 
 **Syphon/Spout notes:** the texture share appears as `facetrack` in
-Resolume / VDMX / MadMapper / TouchDesigner on the same machine. *Share
-overlay only* switches it to the graphics-with-alpha layer — VJ keying
-with no network hop. Python version matters: Syphon needs Python 3.12,
+Resolume / VDMX / MadMapper / TouchDesigner on the same machine. *What
+it carries* switches it between the full picture, the graphics-with-alpha
+layer, and the faces cutout — VJ keying with no network hop. Python version matters: Syphon needs Python 3.12,
 Spout ≤ 3.13 — the Setup scripts pick a compatible Python automatically
 (on macOS they prefer a uv-managed 3.12; Homebrew's python@3.12 bottle is
 currently broken on macOS 26.1).
@@ -200,7 +200,8 @@ python main.py --source 1 --ndi-name "FaceTracker B" --web-port 8090
 ```
 
 Settings are shared per folder — for fully independent settings, keep a
-second clone of the repo.
+second clone of the repo. Launching a second instance *without* those
+flags doesn't start a duplicate: it just opens the existing panel.
 
 ### Privacy
 

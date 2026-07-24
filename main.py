@@ -149,11 +149,32 @@ def build_params(args, saved_params: dict) -> LiveParams:
     )
 
 
+def _already_running(port: int) -> bool:
+    """True if another facetrack instance already serves the panel port."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=0.8) as r:
+            return b"facetrack" in r.read(2048)
+    except Exception:
+        return False
+
+
 def main(argv=None) -> int:
     args = parse_args(argv)
     if args.doctor:
         from facetrack.doctor import main as doctor_main
         return doctor_main([])
+
+    # Double-launch guard: a second instance with the same feed names can
+    # crash inside the NDI library, so if facetrack already serves the
+    # panel port, just show the existing panel instead of starting again.
+    # (Deliberate multi-instance setups use --web-port / --ndi-name.)
+    if not args.no_web and _already_running(args.web_port):
+        url = f"http://localhost:{args.web_port}"
+        print(f"facetrack is already running on this machine — control panel: {url}")
+        if not args.no_browser:
+            webbrowser.open(url)
+        return 0
 
     from facetrack.logging_setup import setup as setup_logging
     setup_logging(os.path.dirname(os.path.abspath(__file__)))
