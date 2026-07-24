@@ -71,7 +71,8 @@ names. That's it.
   reconnects itself; *Quit* shuts down — start again with the launcher on
   the machine (the panel reconnects automatically when you do).
 - **If the input dies mid-show** (unplugged camera, dead NDI feed) the
-  outputs cut to a NO SIGNAL slate, the header shows a red pill, and
+  outputs cut to plain black — graceful on a live screen — while the
+  panel preview shows a NO SIGNAL slate and the header a red pill.
   facetrack reconnects automatically the moment the source returns.
 - **Stat chips change colour** when things get tight: processing time
   turns amber past 20 ms and red past the 30fps frame budget (33 ms);

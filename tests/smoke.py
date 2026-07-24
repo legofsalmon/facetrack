@@ -205,6 +205,8 @@ def _():
         flaky.dead = True
         assert wait_state("no-signal", 8), "signal loss not detected"
         assert "Signal lost" in pipe.get_stats().get("error", "")
+        black, _ = pipe._standby_frames("")  # what outputs carry during loss
+        assert black.max() == 0, "live outputs must show plain black on signal loss"
         flaky.dead = False
         assert wait_state("live", 5), "did not recover when source returned"
         assert "Signal lost" not in pipe.get_stats().get("error", "")

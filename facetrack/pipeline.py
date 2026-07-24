@@ -174,17 +174,26 @@ class Pipeline:
 
     def _standby_frames(self, title: str = "STANDBY",
                         sub: str = "resume from the control panel"):
-        """(slate BGR, transparent BGRA) at the last known frame size."""
+        """(slate BGR, transparent BGRA) at the last known frame size.
+        An empty title gives plain black — what live outputs should show
+        on a fault (messages are for the panel, not the LED wall)."""
         w, h = self._last_size
         key = (w, h, title)
         if key not in self._slate_cache:
-            slate = np.full((h, w, 3), (28, 24, 20), dtype=np.uint8)
-            for i, (line, scale) in enumerate([(title, 1.6), (sub, 0.7)]):
-                (tw, _), _ = cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, scale, 2)
-                cv2.putText(slate, line, ((w - tw) // 2, h // 2 + i * 54),
-                            cv2.FONT_HERSHEY_SIMPLEX, scale, (150, 150, 160), 2, cv2.LINE_AA)
+            if title:
+                slate = np.full((h, w, 3), (28, 24, 20), dtype=np.uint8)
+                for i, (line, scale) in enumerate([(title, 1.6), (sub, 0.7)]):
+                    (tw, _), _ = cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, scale, 2)
+                    cv2.putText(slate, line, ((w - tw) // 2, h // 2 + i * 54),
+                                cv2.FONT_HERSHEY_SIMPLEX, scale, (150, 150, 160), 2,
+                                cv2.LINE_AA)
+            else:
+                slate = np.zeros((h, w, 3), dtype=np.uint8)
             transparent = np.zeros((h, w, 4), dtype=np.uint8)
-            self._slate_cache = {key: (slate, transparent)}  # keep newest only
+            # keep only slates for the current frame size
+            self._slate_cache = {k: v for k, v in self._slate_cache.items()
+                                 if k[:2] == (w, h)}
+            self._slate_cache[key] = (slate, transparent)
         return self._slate_cache[key]
 
     def _run_paused_tick(self, p: dict) -> None:
@@ -214,17 +223,20 @@ class Pipeline:
         now = time.monotonic()
         p = self.params.snapshot()
         self._sync_outputs(p)
-        slate, transparent = self._standby_frames(
-            "NO SIGNAL", f"input '{self.source_spec}' lost - reconnecting")
+        # Outputs get plain black — graceful on a live screen. The panel
+        # preview keeps the diagnostic slate for the operator.
+        black, transparent = self._standby_frames("")
         if self.ndi is not None:
-            self.ndi.send(slate)
+            self.ndi.send(black)
         if self.ndi_overlay is not None:
             self.ndi_overlay.send(transparent)
         if self.ndi_faces is not None:
             self.ndi_faces.send(transparent)
         if self.texture is not None:
-            self.texture.send(slate if p["texture_source"] == "program" else transparent)
+            self.texture.send(black if p["texture_source"] == "program" else transparent)
         if self.web_enabled and p["panel_preview"]:
+            slate, _ = self._standby_frames(
+                "NO SIGNAL", f"input '{self.source_spec}' lost - reconnecting")
             self._publish_preview(slate)
         self.last_error = f"Signal lost on '{self.source_spec}' — reconnecting…"
         self._error_time = now  # keep the message alive until recovery
