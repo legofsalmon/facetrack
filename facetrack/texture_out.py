@@ -65,7 +65,10 @@ class SyphonOutput:
             self._texture = self._create_texture(self.server.device, w, h)
             self._size = (w, h)
         self._copy(rgba, self._texture)
-        self.server.publish_frame_texture(self._texture)
+        # is_flipped: our frames are top-down (OpenCV) while Syphon's
+        # convention is GL bottom-up — without this flag receivers show
+        # the picture upside down.
+        self.server.publish_frame_texture(self._texture, is_flipped=True)
         # Service the run loop so Syphon's discovery handshake (distributed
         # notifications) works — otherwise apps started after us never see
         # the server.
@@ -92,7 +95,9 @@ class SpoutOutput:
         h, w = rgba.shape[:2]
         if not rgba.flags["C_CONTIGUOUS"]:
             rgba = np.ascontiguousarray(rgba)
-        self.sender.sendImage(rgba.tobytes(), w, h, GL_RGBA, False, 0)
+        # bInvert=True for the same reason as Syphon's is_flipped: the
+        # buffer is top-down, GL/Spout convention is bottom-up.
+        self.sender.sendImage(rgba.tobytes(), w, h, GL_RGBA, True, 0)
 
     def close(self) -> None:
         try:
