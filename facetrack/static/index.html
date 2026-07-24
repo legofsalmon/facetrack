@@ -68,6 +68,14 @@
             justify-content: center; color: var(--dim); font-size: 13px;
             background: #000; }
   #pv-msg.hide { display: none; }
+  .pv-tabs { display: flex; border-top: 1px solid var(--line); }
+  .pv-tabs button { flex: 1; background: var(--panel); color: var(--dim); border: 0;
+                    border-right: 1px solid var(--line); border-radius: 0;
+                    padding: 8px 4px; font-size: 11.5px; font-weight: 500; }
+  .pv-tabs button:last-child { border-right: 0; }
+  .pv-tabs button:hover { color: var(--text); filter: none; }
+  .pv-tabs button.active { color: var(--text); background: var(--panel2);
+                           box-shadow: inset 0 -2px 0 var(--accent); }
   #feedinfo { padding: 9px 14px; font-size: 12px; color: var(--dim);
               border-top: 1px solid var(--line); line-height: 1.7; }
   #feedinfo b { color: var(--text); font-weight: 600; }
@@ -148,6 +156,12 @@
       <div class="pv-wrap">
         <img id="preview" src="/preview.mjpg" alt="live preview">
         <div id="pv-msg">Waiting for video…</div>
+      </div>
+      <div class="pv-tabs" id="pv-tabs">
+        <button data-v="annotated" title="the picture with tracking graphics">Camera + graphics</button>
+        <button data-v="clean" title="the picture exactly as the camera sees it">Clean camera</button>
+        <button data-v="overlay" title="graphics layer on transparency (checkerboard = transparent)">Overlay only</button>
+        <button data-v="faces" title="faces cutout on transparency (checkerboard = transparent)">Faces cutout</button>
       </div>
       <div id="feedinfo">–</div>
       <div id="error"></div>
@@ -498,6 +512,8 @@
       if (el.type === "range") fmtOutput(el);
     });
     markActivePreset(p);
+    document.querySelectorAll("#pv-tabs button").forEach((b) =>
+      b.classList.toggle("active", b.dataset.v === p.preview_source));
     const cutActive = p.ndi_faces || p.texture_source === "faces";
     $("cutout-margin-row").classList.toggle("dimmed", !cutActive);
     $("cutout_margin").disabled = !cutActive;
@@ -583,6 +599,15 @@
     if (s.error) { errBox.textContent = s.error; errBox.style.display = "block"; }
     else errBox.style.display = "none";
   }
+
+  // ---- preview view tabs ----
+  document.querySelectorAll("#pv-tabs button").forEach((b) => {
+    b.addEventListener("click", () => {
+      queueSet("preview_source", b.dataset.v);
+      b.parentElement.querySelectorAll("button").forEach((x) =>
+        x.classList.toggle("active", x === b));  // instant feedback
+    });
+  });
 
   // ---- process controls ----
   $("btn-pause").addEventListener("click", () => {

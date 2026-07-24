@@ -30,6 +30,7 @@ SPEC = {
     "cutout_margin": (float, 0.0, 0.5),   # extra room around each face box
     "test_card": (bool, None, None),      # bars + motion on all feeds
     "panel_preview": (bool, None, None),  # MJPEG thumbnail in the web panel
+    "preview_source": (str, ("annotated", "clean", "overlay", "faces"), None),
     "local_preview": (bool, None, None),  # preview window on the machine
 }
 

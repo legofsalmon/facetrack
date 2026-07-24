@@ -61,6 +61,10 @@ names. That's it.
   instant, no restart. Plug in a device and hit the ↻ rescan button; the
   camera currently in use is shown as "(in use)" and left undisturbed.
 - Every change applies live **and is remembered for next launch**.
+- **The preview is switchable** — tabs under the image show *Camera +
+  graphics*, *Clean camera*, *Overlay only* or *Faces cutout*, so you can
+  check exactly what each feed carries; transparency shows as a
+  checkerboard.
 - **Previews** (the panel thumbnail and the window on the facetrack
   machine) can be switched off during the show to save processing — the
   NDI/Syphon/Spout feeds keep running. With *Keep main feed clean* on and
@@ -146,7 +150,9 @@ soft fringe — normal for all NDI alpha sources; the Syphon/Spout path is
 uncompressed and keys perfectly. Feeds are emitted together; your mixer's
 frame sync aligns them.
 
-**Syphon/Spout notes:** the texture share appears as `facetrack` in
+**Syphon/Spout notes:** the texture share appears as `facetrack` (or
+`facetrack-<name>` with a custom `--ndi-name`, so two instances never
+collide) in
 Resolume / VDMX / MadMapper / TouchDesigner on the same machine. *What
 it carries* switches it between the full picture, the graphics-with-alpha
 layer, and the faces cutout — VJ keying with no network hop. Python version matters: Syphon needs Python 3.12,

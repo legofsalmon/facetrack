@@ -45,6 +45,11 @@ class Pipeline:
         self.ndi_name = args.ndi_name
         self.overlay_name = args.ndi_overlay or f"{args.ndi_name} Overlay"
         self.faces_name = f"{args.ndi_name} Faces"
+        # Syphon/Spout server name follows --ndi-name so a second instance
+        # (which must use its own --ndi-name) can't collide; the default
+        # stays plain "facetrack" to keep existing VJ patches working.
+        self.texture_name = ("facetrack" if args.ndi_name == "FaceTracker"
+                             else f"facetrack-{args.ndi_name}")
         from . import texture_out
         self.texture_kind, self.texture_error = texture_out.probe()
         self.texture = None
@@ -83,6 +88,7 @@ class Pipeline:
         self._pv_seq = 0
         self._pv_jpeg: bytes | None = None
         self._pv_time = 0.0
+        self._checker: np.ndarray | None = None  # alpha-preview backdrop
 
     # ---- control surface (called from web threads) ----
 
@@ -151,7 +157,7 @@ class Pipeline:
         if want_texture and self.texture is None:
             try:
                 from . import texture_out
-                self.texture = texture_out.create("facetrack")
+                self.texture = texture_out.create(self.texture_name)
             except Exception as exc:
                 self.texture_error = str(exc)
                 self.texture_kind = ""  # don't retry every frame
@@ -332,6 +338,8 @@ class Pipeline:
                 pass
 
     def _publish_preview(self, display) -> None:
+        """Publish a frame to the panel. BGRA input is composited over a
+        checkerboard so transparency is visible in the (opaque) JPEG."""
         now = time.monotonic()
         if now - self._pv_time < PREVIEW_INTERVAL:
             return
@@ -340,6 +348,15 @@ class Pipeline:
         if img.shape[1] > PREVIEW_WIDTH:
             h = int(round(img.shape[0] * PREVIEW_WIDTH / img.shape[1]))
             img = cv2.resize(img, (PREVIEW_WIDTH, h), interpolation=cv2.INTER_AREA)
+        if img.shape[2] == 4:
+            if self._checker is None or self._checker.shape[:2] != img.shape[:2]:
+                h2, w2 = img.shape[:2]
+                yy, xx = np.mgrid[0:h2, 0:w2]
+                self._checker = np.where(((yy // 24 + xx // 24) % 2)[..., None],
+                                         66, 46).astype(np.uint8).repeat(3, axis=2)
+            a = img[:, :, 3:4].astype(np.uint16)
+            img = ((img[:, :, :3].astype(np.uint16) * a
+                    + self._checker.astype(np.uint16) * (255 - a)) // 255).astype(np.uint8)
         ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 70])
         if ok:
             with self._pv_cond:
@@ -406,10 +423,13 @@ class Pipeline:
                 proc_ms = (time.perf_counter() - t0) * 1000.0
                 proc_ema = proc_ms if frame_idx == 0 else 0.9 * proc_ema + 0.1 * proc_ms
 
+                pv_on = self.web_enabled and p["panel_preview"]
+                pv_src = p["preview_source"]
                 overlay_bgra = None
                 need_overlay = (self.ndi_overlay is not None
                                 or (self.texture is not None
-                                    and p["texture_source"] == "overlay"))
+                                    and p["texture_source"] == "overlay")
+                                or (pv_on and pv_src == "overlay"))
                 if need_overlay:
                     overlay_bgra = render_overlay_bgra(
                         frame.shape[:2], tracks,
@@ -417,7 +437,8 @@ class Pipeline:
                 faces_bgra = None
                 need_faces = (self.ndi_faces is not None
                               or (self.texture is not None
-                                  and p["texture_source"] == "faces"))
+                                  and p["texture_source"] == "faces")
+                              or (pv_on and pv_src == "faces"))
                 if need_faces:
                     faces_bgra = render_faces_cutout(frame, tracks,
                                                      margin=p["cutout_margin"])
@@ -430,8 +451,14 @@ class Pipeline:
 
                 # Skip annotation entirely when nothing consumes it (previews
                 # off + clean main feed): detection -> tracking -> outputs only.
+                # The annotated display draws in place on `frame` when the
+                # main feed carries graphics — keep a pristine copy if the
+                # panel is watching the clean view.
+                clean_frame = frame
+                if pv_on and pv_src == "clean" and not p["clean_main"]:
+                    clean_frame = frame.copy()
                 display = None
-                if (p["local_preview"] or (self.web_enabled and p["panel_preview"])
+                if (p["local_preview"] or (pv_on and pv_src == "annotated")
                         or not p["clean_main"]):
                     display = frame.copy() if p["clean_main"] else frame
                     draw_tracks(display, tracks, show_emotion=p["emotion_enabled"],
@@ -466,8 +493,11 @@ class Pipeline:
                         tex_img = program
                     if tex_img is not None:
                         self.texture.send(_scaled(tex_img))
-                if self.web_enabled and p["panel_preview"] and display is not None:
-                    self._publish_preview(display)
+                if pv_on:
+                    pv_img = {"annotated": display, "clean": clean_frame,
+                              "overlay": overlay_bgra, "faces": faces_bgra}[pv_src]
+                    if pv_img is not None:
+                        self._publish_preview(pv_img)
                 if p["local_preview"] and display is not None:
                     try:
                         cv2.imshow("facetrack (q to quit)", _scaled(display))
