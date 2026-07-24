@@ -57,6 +57,14 @@
 
   .layout { display: grid; grid-template-columns: minmax(340px, 1fr) 400px; gap: 16px; }
   @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+  @media (min-width: 901px) {
+    /* keep the preview in view while scrolling the controls column */
+    .layout > div:first-child {
+      position: sticky; top: 14px; align-self: start;
+      max-height: calc(100vh - 28px); overflow-y: auto;
+      scrollbar-width: thin;
+    }
+  }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
           overflow: hidden; }
   .card h2 { font-size: 11.5px; font-weight: 650; letter-spacing: 1.1px;
