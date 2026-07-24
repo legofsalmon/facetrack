@@ -86,6 +86,48 @@ def render_faces_cutout(frame: np.ndarray, tracks: list[Track],
     return out
 
 
+def render_test_card(w: int, h: int, lines: list[str]) -> tuple[np.ndarray, np.ndarray]:
+    """Static test-card templates: (program card BGR, alpha-test BGRA).
+
+    Program card: SMPTE-style 75% bars, a grayscale ramp, and identity
+    text. Alpha card: corner brackets + crosshair + label on transparency,
+    for verifying the keyed feeds. The pipeline stamps a moving block and
+    clock on copies each tick, so motion proves the chain is live."""
+    card = np.zeros((h, w, 3), dtype=np.uint8)
+    bars = [(235, 235, 235), (0, 235, 235), (235, 235, 0), (0, 235, 0),
+            (235, 0, 235), (0, 0, 235), (235, 0, 0)]  # BGR: white..blue
+    bar_h = int(h * 0.58)
+    for i, c in enumerate(bars):
+        x1 = int(w * i / len(bars))
+        x2 = int(w * (i + 1) / len(bars))
+        card[0:bar_h, x1:x2] = c
+    ramp_y2 = int(h * 0.72)
+    ramp = np.tile(np.linspace(0, 255, w, dtype=np.uint8), (ramp_y2 - bar_h, 1))
+    card[bar_h:ramp_y2] = ramp[:, :, None]
+    fscale = max(0.5, w / 1600)
+    th = max(1, round(w / 1000))
+    y = int(h * 0.80)
+    for i, line in enumerate(lines):
+        cv2.putText(card, line, (int(w * 0.03), y + i * int(44 * fscale + 14)),
+                    cv2.FONT_HERSHEY_SIMPLEX, fscale * (1.5 if i == 0 else 1.0),
+                    (235, 235, 235), th, cv2.LINE_AA)
+
+    ovl = np.zeros((h, w, 4), dtype=np.uint8)
+    white = (255, 255, 255, 255)
+    L, m, t2 = int(min(w, h) * 0.09), int(min(w, h) * 0.04), max(2, th + 1)
+    for cx, cy, dx, dy in ((m, m, 1, 1), (w - m, m, -1, 1),
+                           (m, h - m, 1, -1), (w - m, h - m, -1, -1)):
+        cv2.line(ovl, (cx, cy), (cx + dx * L, cy), white, t2, cv2.LINE_AA)
+        cv2.line(ovl, (cx, cy), (cx, cy + dy * L), white, t2, cv2.LINE_AA)
+    cv2.line(ovl, (w // 2 - L, h // 2), (w // 2 + L, h // 2), white, t2, cv2.LINE_AA)
+    cv2.line(ovl, (w // 2, h // 2 - L), (w // 2, h // 2 + L), white, t2, cv2.LINE_AA)
+    label = "facetrack ALPHA TEST"
+    (tw, _), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fscale, th)
+    cv2.putText(ovl, label, ((w - tw) // 2, h // 2 - L - 12),
+                cv2.FONT_HERSHEY_SIMPLEX, fscale, white, th, cv2.LINE_AA)
+    return card, ovl
+
+
 def draw_stats(frame: np.ndarray, lines: list[str]) -> None:
     W = frame.shape[1]
     fscale = max(0.45, W / 2400)

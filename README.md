@@ -137,6 +137,7 @@ persists across restarts:
 | Faces cutout feed | the picture **only inside detected face boxes**, transparent everywhere else | *Cutout margin* slider adds headroom around each box |
 | Syphon (macOS) / Spout (Windows) | full picture, graphics overlay, **or** faces cutout — pick in the panel | zero-compression, GPU-to-GPU, same machine only |
 | Output size | Match input / 1920 / 1280 / 960 wide | applies to all feeds; lowers network load |
+| Test card | SMPTE-style bars, ramp, feed identity, clock + moving block | motion proves the chain is live, not frozen; alpha feeds get a bracket/crosshair pattern instead; works with no input connected |
 
 Feed *names* are fixed at launch (`--ndi-name`, `--ndi-overlay`; the
 overlay defaults to "<name> Overlay", the cutout to "<name> Faces")

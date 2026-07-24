@@ -142,6 +142,21 @@ def _():
     assert grown > frac
 
 
+@run("test card: bars on program, markers on alpha")
+def _():
+    from facetrack.overlay import render_test_card
+    card, ovl = render_test_card(640, 360, ["facetrack TEST CARD", "MAC", "640x360"])
+    assert card.shape == (360, 640, 3) and ovl.shape == (360, 640, 4)
+    bar_row = card[10]
+    uniques = len(np.unique(bar_row.reshape(-1, 3), axis=0))
+    assert uniques >= 7, f"expected 7 colour bars, saw {uniques} colours"
+    ramp_row = card[int(360 * 0.65)]
+    assert ramp_row[..., 0].max() - ramp_row[..., 0].min() > 200, "ramp missing"
+    alpha = ovl[:, :, 3]
+    assert 0.001 < (alpha > 0).mean() < 0.2, "alpha test pattern coverage odd"
+    assert ovl[alpha == 0].max() == 0, "alpha card must be empty where transparent"
+
+
 @run("params: string choices validate")
 def _():
     from facetrack.params import LiveParams, SPEC

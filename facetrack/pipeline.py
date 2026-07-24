@@ -17,7 +17,8 @@ import numpy as np
 from .capture import NullSource, open_source
 from .detectors import pick_backend
 from .emotion import EmotionEstimator
-from .overlay import draw_stats, draw_tracks, render_faces_cutout, render_overlay_bgra
+from .overlay import (draw_stats, draw_tracks, render_faces_cutout,
+                      render_overlay_bgra, render_test_card)
 from .params import LiveParams
 from .tracker import FaceTracker
 
@@ -69,6 +70,7 @@ class Pipeline:
         self._signal_lost_at: float | None = None
         self._reopen_at = 0.0
         self._slate_cache: dict = {}
+        self._card_cache: tuple | None = None
         self._last_size: tuple[int, int] = (args.width or 1280, args.height or 720)
         self._stats_lock = threading.Lock()
         self._stats: dict = {}
@@ -216,6 +218,50 @@ class Pipeline:
                                 "error": self.last_error})
         time.sleep(0.1)
 
+    def _run_test_card_tick(self, p: dict) -> None:
+        """Send the test pattern to every active feed, with motion (a
+        sweeping block and a wall clock) so a frozen link is obvious."""
+        self._sync_outputs(p)
+        w, h = self._last_size
+        if self._card_cache is None or self._card_cache[0] != (w, h):
+            base, ovl = render_test_card(w, h, [
+                "facetrack TEST CARD",
+                f"{self.hostname} · {self.ndi_name}",
+                f"{w}x{h} @ {self.args.fps:g} fps target",
+            ])
+            self._card_cache = ((w, h), base, ovl)
+        card = self._card_cache[1].copy()
+        ovl = self._card_cache[2].copy()
+        t = time.monotonic()
+        bw = max(40, w // 16)
+        bx = int((t * w / 5.0) % max(1, w - bw))
+        by = int(h * 0.73)
+        cv2.rectangle(card, (bx, by), (bx + bw, by + max(10, h // 36)),
+                      (255, 255, 255), -1)
+        cv2.rectangle(ovl, (bx, by), (bx + bw, by + max(10, h // 36)),
+                      (255, 255, 255, 255), -1)
+        clock = time.strftime("%H:%M:%S")
+        fscale = max(0.5, w / 1600)
+        th = max(1, round(w / 1000))
+        (tw, _), _ = cv2.getTextSize(clock, cv2.FONT_HERSHEY_SIMPLEX, fscale * 1.5, th)
+        cv2.putText(card, clock, (w - tw - int(w * 0.03), int(h * 0.80)),
+                    cv2.FONT_HERSHEY_SIMPLEX, fscale * 1.5, (235, 235, 235), th,
+                    cv2.LINE_AA)
+        if self.ndi is not None:
+            self.ndi.send(card)
+        if self.ndi_overlay is not None:
+            self.ndi_overlay.send(ovl)
+        if self.ndi_faces is not None:
+            self.ndi_faces.send(ovl)
+        if self.texture is not None:
+            self.texture.send(card if p["texture_source"] == "program" else ovl)
+        if self.web_enabled and p["panel_preview"]:
+            self._publish_preview(card)
+        with self._stats_lock:
+            self._stats.update({"state": "test-card", "fps": 0.0, "faces": 0,
+                                "error": self.last_error})
+        time.sleep(1 / 30)
+
     def _run_signal_lost_tick(self) -> None:
         """Input died mid-run (unplugged camera, dead NDI feed): keep the
         feeds up with a NO SIGNAL slate, tell the panel, and try to reopen
@@ -318,6 +364,11 @@ class Pipeline:
                     t_last = time.perf_counter()  # don't count the pause in fps
                     continue
                 self._maybe_swap_source()
+                p = self.params.snapshot()
+                if p["test_card"]:
+                    self._run_test_card_tick(p)
+                    t_last = time.perf_counter()  # don't count card time in fps
+                    continue
                 in_loss = self._signal_lost_at is not None
                 ok, frame = self.source.read(timeout=0.25 if in_loss else 2.0)
                 if not ok:
@@ -335,7 +386,6 @@ class Pipeline:
                     if self.last_error.startswith("Signal lost"):
                         self.last_error = ""
                     t_last = time.perf_counter()  # don't count the outage in fps
-                p = self.params.snapshot()
                 self._sync_outputs(p)
                 self._last_size = (frame.shape[1], frame.shape[0])
                 if p["flip"]:

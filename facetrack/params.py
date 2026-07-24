@@ -28,6 +28,7 @@ SPEC = {
     "texture_source": (str, ("program", "overlay", "faces"), None),  # what it carries
     "ndi_faces": (bool, None, None),      # faces-cutout NDI feed
     "cutout_margin": (float, 0.0, 0.5),   # extra room around each face box
+    "test_card": (bool, None, None),      # bars + motion on all feeds
     "panel_preview": (bool, None, None),  # MJPEG thumbnail in the web panel
     "local_preview": (bool, None, None),  # preview window on the machine
 }

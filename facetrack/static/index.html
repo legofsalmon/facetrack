@@ -278,6 +278,11 @@
         <label class="switch"><input type="checkbox" id="clean_main"><span class="slider"></span></label>
       </div>
       <div class="row">
+        <div class="lbl"><label for="test_card">Test card</label>
+          <span class="hint">bars + motion + clock on every feed — checks the chain end-to-end</span></div>
+        <label class="switch"><input type="checkbox" id="test_card"><span class="slider"></span></label>
+      </div>
+      <div class="row">
         <div class="lbl"><label for="out_width">Output size</label>
           <span class="hint">smaller = less network load</span></div>
         <select id="out_width">
@@ -334,7 +339,7 @@
                   "emotion_enabled","emotion_budget","show_ids","show_stats",
                   "clean_main","flip","ndi_main","ndi_overlay","ndi_faces",
                   "cutout_margin","out_width","texture_share","texture_source",
-                  "panel_preview","local_preview"];
+                  "test_card","panel_preview","local_preview"];
   const PRESETS = {
     wide:  { det_size: 960, det_threshold: 0.35, min_face: 0,  detect_every: 1 },
     mid:   { det_size: 640, det_threshold: 0.45, min_face: 0,  detect_every: 1 },
@@ -503,6 +508,9 @@
     onair.classList.remove("live", "paused", "nosignal");
     if (lastState === "paused") {
       onair.textContent = "PAUSED";
+      onair.classList.add("paused");
+    } else if (lastState === "test-card") {
+      onair.textContent = "TEST CARD";
       onair.classList.add("paused");
     } else if (lastState === "no-signal") {
       onair.textContent = "NO SIGNAL";
