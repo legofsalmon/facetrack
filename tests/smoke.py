@@ -142,6 +142,48 @@ def _():
     assert grown > frac
 
 
+@run("cutout shapes: ovals, feathering, premultiplied alpha")
+def _():
+    from facetrack.detectors import YuNetDetector
+    from facetrack.overlay import render_faces_cutout
+    from facetrack.tracker import FaceTracker
+    frame = _first_frame()
+    trk = FaceTracker(min_hits=1)
+    tracks = trk.step(YuNetDetector(score_threshold=0.4).detect(frame))
+    assert tracks
+
+    oval = render_faces_cutout(frame, tracks, margin=0.1, shape="oval")
+    a = oval[:, :, 3]
+    t = tracks[0]
+    x, y, w, h = t.bbox
+    cy, cx = int(y + h / 2), int(x + w / 2)
+    assert a[cy, cx] == 255, "oval centre must be opaque"
+    # an oval leaves the box corners transparent (rectangle would not)
+    rect = render_faces_cutout(frame, tracks, margin=0.1, shape="rectangle")
+    assert (a > 0).sum() < (rect[:, :, 3] > 0).sum(), "oval must cover less than rect"
+
+    soft = render_faces_cutout(frame, tracks, margin=0.1, shape="oval", feather=21)
+    sa = soft[:, :, 3]
+    assert ((sa > 0) & (sa < 255)).any(), "feather must create soft edges"
+    assert (soft[:, :, :3].astype(int) <= sa[..., None].astype(int) + 1).all(), \
+        "premultiplied: no channel may exceed alpha"
+
+
+@run("people segmenter: loads and produces a full-frame mask")
+def _():
+    from facetrack.overlay import render_faces_cutout
+    from facetrack.segmenter import PeopleSegmenter
+    frame = _first_frame()
+    seg = PeopleSegmenter()
+    mask = seg.mask(frame)
+    assert mask.shape == frame.shape[:2] and mask.dtype == np.uint8
+    cut = render_faces_cutout(frame, [], shape="people", feather=10,
+                              people_mask=mask)
+    ca = cut[:, :, 3]
+    assert (cut[:, :, :3].astype(int) <= ca[..., None].astype(int) + 1).all(), \
+        "people cutout must be premultiplied"
+
+
 @run("test card: bars on program, markers on alpha")
 def _():
     from facetrack.overlay import render_test_card

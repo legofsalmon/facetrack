@@ -34,6 +34,12 @@ MODELS = {
         "zip_url": "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip",
         "zip_member": "det_10g.onnx",
     },
+    "human_segmentation_pphumanseg_2023mar.onnx": {
+        "min_bytes": 1_000_000,
+        "why": "people-silhouette cutout",
+        "url": "https://github.com/opencv/opencv_zoo/raw/main/models/"
+               "human_segmentation_pphumanseg/human_segmentation_pphumanseg_2023mar.onnx",
+    },
 }
 
 _results: list[tuple[str, str, str]] = []  # (status, title, detail)

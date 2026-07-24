@@ -27,7 +27,9 @@ SPEC = {
     "texture_share": (bool, None, None),  # Syphon (macOS) / Spout (Windows)
     "texture_source": (str, ("program", "overlay", "faces"), None),  # what it carries
     "ndi_faces": (bool, None, None),      # faces-cutout NDI feed
+    "cutout_shape": (str, ("rectangle", "oval", "people"), None),
     "cutout_margin": (float, 0.0, 0.5),   # extra room around each face box
+    "cutout_feather": (int, 0, 60),       # mask edge softness, px
     "test_card": (bool, None, None),      # bars + motion on all feeds
     "panel_preview": (bool, None, None),  # MJPEG thumbnail in the web panel
     "preview_source": (str, ("annotated", "clean", "overlay", "faces"), None),

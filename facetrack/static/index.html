@@ -300,11 +300,26 @@
           <span class="hint">only the detected faces show; everything else transparent</span></div>
         <label class="switch"><input type="checkbox" id="ndi_faces"><span class="slider"></span></label>
       </div>
+      <div class="row" id="cutout-shape-row">
+        <div class="lbl"><label for="cutout_shape">Cutout shape</label>
+          <span class="hint">people silhouette loads its model the first time you pick it</span></div>
+        <select id="cutout_shape">
+          <option value="rectangle">Rectangles</option>
+          <option value="oval">Soft ovals</option>
+          <option value="people">People silhouette</option>
+        </select>
+      </div>
       <div class="row" id="cutout-margin-row">
         <div class="lbl"><label for="cutout_margin">Cutout margin</label>
           <span class="hint">extra room around each face box</span></div>
         <input type="range" id="cutout_margin" min="0" max="0.5" step="0.05" value="0.15">
         <output>15%</output>
+      </div>
+      <div class="row" id="cutout-feather-row">
+        <div class="lbl"><label for="cutout_feather">Edge softness</label>
+          <span class="hint">feathers the cutout edge</span></div>
+        <input type="range" id="cutout_feather" min="0" max="60" step="2" value="0">
+        <output>0px</output>
       </div>
       <div class="row">
         <div class="lbl"><label for="out_width">Output size</label>
@@ -367,7 +382,8 @@
   const params = ["det_threshold","det_size","detect_every","min_face","max_misses",
                   "emotion_enabled","emotion_budget","show_ids","show_stats",
                   "clean_main","flip","ndi_main","ndi_overlay","ndi_faces",
-                  "cutout_margin","out_width","texture_share","texture_source",
+                  "cutout_shape","cutout_margin","cutout_feather","out_width",
+                  "texture_share","texture_source",
                   "test_card","panel_preview","local_preview"];
   const PRESETS = {
     wide:  { det_size: 960, det_threshold: 0.35, min_face: 0,  detect_every: 1 },
@@ -405,6 +421,7 @@
     if (el.id === "max_misses") out.textContent = "~" + (el.value / lastFps).toFixed(1) + "s";
     else if (el.id === "min_face") out.textContent = el.value + "px";
     else if (el.id === "cutout_margin") out.textContent = Math.round(el.value * 100) + "%";
+    else if (el.id === "cutout_feather") out.textContent = el.value + "px";
     else out.textContent = el.value;
   }
 
@@ -522,9 +539,15 @@
     markActivePreset(p);
     document.querySelectorAll("#pv-tabs button").forEach((b) =>
       b.classList.toggle("active", b.dataset.v === p.preview_source));
-    const cutActive = p.ndi_faces || p.texture_source === "faces";
-    $("cutout-margin-row").classList.toggle("dimmed", !cutActive);
-    $("cutout_margin").disabled = !cutActive;
+    const cutActive = p.ndi_faces || p.texture_source === "faces"
+                      || p.preview_source === "faces";
+    $("cutout-shape-row").classList.toggle("dimmed", !cutActive);
+    $("cutout_shape").disabled = !cutActive;
+    const marginOn = cutActive && p.cutout_shape !== "people";
+    $("cutout-margin-row").classList.toggle("dimmed", !marginOn);
+    $("cutout_margin").disabled = !marginOn;
+    $("cutout-feather-row").classList.toggle("dimmed", !cutActive);
+    $("cutout_feather").disabled = !cutActive;
     if (!p.panel_preview) {
       pvMsg.textContent = "Panel preview off — saving processing";
       pvMsg.classList.remove("hide");

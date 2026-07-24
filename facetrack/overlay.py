@@ -67,22 +67,66 @@ def render_overlay_bgra(shape_hw: tuple[int, int], tracks: list[Track],
 
 
 def render_faces_cutout(frame: np.ndarray, tracks: list[Track],
-                        margin: float = 0.15) -> np.ndarray:
-    """The picture only inside the detected face boxes; everything else is
-    transparent (BGRA, alpha 0). `margin` grows each box by that fraction
-    of its size on every side. Full alpha inside the boxes keeps NDI's
-    premultiplied convention trivially satisfied."""
+                        margin: float = 0.15, shape: str = "rectangle",
+                        feather: int = 0,
+                        people_mask: np.ndarray | None = None) -> np.ndarray:
+    """The picture only inside the cutout mask; transparent elsewhere.
+
+    shape: 'rectangle' / 'oval' (per-face, margin-grown) or 'people'
+    (pass the segmenter's full-frame mask via people_mask). feather
+    softens the mask edge (Gaussian, px). Output is premultiplied BGRA —
+    soft edges multiply the picture down so NDI/Syphon key cleanly.
+
+    Face shapes do all their work inside each face's own region (faces
+    are a small fraction of the frame; full-frame math costs 20+ ms at
+    1080p). The people path is inherently full-frame but uses OpenCV's
+    SIMD multiply."""
     H, W = frame.shape[:2]
+
+    if shape == "people" and people_mask is not None:
+        alpha = people_mask
+        if feather > 0:
+            k = feather | 1
+            alpha = cv2.GaussianBlur(alpha, (k, k), 0)
+        a3 = cv2.cvtColor(alpha, cv2.COLOR_GRAY2BGR)
+        b, g, r = cv2.split(cv2.multiply(frame, a3, scale=1 / 255.0))
+        return cv2.merge((b, g, r, alpha))
+
     out = np.zeros((H, W, 4), dtype=np.uint8)
+    oval = shape == "oval"
     for t in tracks:
         x, y, w, h = t.bbox
         mx, my = w * margin, h * margin
-        x1, y1 = int(max(0, x - mx)), int(max(0, y - my))
-        x2, y2 = int(min(W, x + w + mx)), int(min(H, y + h + my))
+        # region: the grown box plus room for the feather to fade out
+        x1 = int(max(0, x - mx - feather))
+        y1 = int(max(0, y - my - feather))
+        x2 = int(min(W, x + w + mx + feather))
+        y2 = int(min(H, y + h + my + feather))
         if x2 <= x1 or y2 <= y1:
             continue
-        out[y1:y2, x1:x2, :3] = frame[y1:y2, x1:x2]
-        out[y1:y2, x1:x2, 3] = 255
+        if not oval and feather == 0:
+            out[y1:y2, x1:x2, :3] = frame[y1:y2, x1:x2]
+            out[y1:y2, x1:x2, 3] = 255
+            continue
+        m = np.zeros((y2 - y1, x2 - x1), np.uint8)
+        if oval:
+            cv2.ellipse(m, (int(x + w / 2 - x1), int(y + h / 2 - y1)),
+                        (max(1, int(w / 2 + mx)), max(1, int(h / 2 + my))),
+                        0, 0, 360, 255, -1)
+        else:
+            gx1 = max(0, int(round(x - mx)) - x1)
+            gy1 = max(0, int(round(y - my)) - y1)
+            gx2 = min(x2 - x1, int(round(x + w + mx)) - x1)
+            gy2 = min(y2 - y1, int(round(y + h + my)) - y1)
+            m[gy1:gy2, gx1:gx2] = 255
+        if feather > 0:
+            k = feather | 1
+            m = cv2.GaussianBlur(m, (k, k), 0)
+        a16 = m.astype(np.uint16)[..., None]
+        prem = ((frame[y1:y2, x1:x2].astype(np.uint16) * a16) // 255).astype(np.uint8)
+        # overlapping faces: max, so cutouts never darken each other
+        np.maximum(out[y1:y2, x1:x2, :3], prem, out=out[y1:y2, x1:x2, :3])
+        np.maximum(out[y1:y2, x1:x2, 3], m, out=out[y1:y2, x1:x2, 3])
     return out
 
 

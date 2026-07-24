@@ -89,6 +89,8 @@ class Pipeline:
         self._pv_jpeg: bytes | None = None
         self._pv_time = 0.0
         self._checker: np.ndarray | None = None  # alpha-preview backdrop
+        self._people_seg = None  # lazy: loads when 'people' cutout is picked
+        self._people_cache: np.ndarray | None = None
 
     # ---- control surface (called from web threads) ----
 
@@ -309,6 +311,27 @@ class Pipeline:
                 pass
             self.source = fresh
 
+    def _people_mask(self, frame):
+        """Segmenter mask, loading the model on first use. On any failure
+        the cutout shape reverts to ovals with a panel-visible error, so
+        picking a broken mode can't take the feed down."""
+        if self._people_seg is None:
+            try:
+                from .segmenter import PeopleSegmenter
+                self._people_seg = PeopleSegmenter()
+            except Exception as exc:
+                self.params.set("cutout_shape", "oval")
+                self.last_error = f"People cutout unavailable: {exc}"
+                self._error_time = time.monotonic()
+                return None
+        try:
+            return self._people_seg.mask(frame)
+        except Exception as exc:
+            self.params.set("cutout_shape", "oval")
+            self.last_error = f"People cutout failed: {exc}"
+            self._error_time = time.monotonic()
+            return None
+
     def _maybe_swap_source(self) -> None:
         with self._source_lock:
             spec, self._pending_source = self._pending_source, None
@@ -440,8 +463,21 @@ class Pipeline:
                                   and p["texture_source"] == "faces")
                               or (pv_on and pv_src == "faces"))
                 if need_faces:
-                    faces_bgra = render_faces_cutout(frame, tracks,
-                                                     margin=p["cutout_margin"])
+                    people = None
+                    if p["cutout_shape"] == "people":
+                        # segmentation is the expensive part; every 2nd
+                        # frame is indistinguishable and halves the cost
+                        stale = (self._people_cache is None
+                                 or self._people_cache.shape != frame.shape[:2])
+                        if stale or frame_idx % 2 == 0:
+                            fresh = self._people_mask(frame)
+                            if fresh is not None:
+                                self._people_cache = fresh
+                        people = self._people_cache
+                    faces_bgra = render_faces_cutout(
+                        frame, tracks, margin=p["cutout_margin"],
+                        shape=p["cutout_shape"], feather=p["cutout_feather"],
+                        people_mask=people)
 
                 now = time.perf_counter()
                 dt = now - t_last

@@ -29,6 +29,7 @@ DEFAULTS = dict(det_threshold=0.5, det_size=640, detect_every=1, min_face=0,
                 show_ids=True, show_stats=True, clean_main=False, flip=False,
                 ndi_main=True, ndi_overlay=False, ndi_faces=False, out_width=0,
                 texture_share=False, texture_source="program", cutout_margin=0.15,
+                cutout_shape="rectangle", cutout_feather=0,
                 test_card=False, panel_preview=True, local_preview=True,
                 preview_source="annotated")
 
@@ -143,6 +144,8 @@ def build_params(args, saved_params: dict) -> LiveParams:
         texture_source=saved_params.get("texture_source", "program"),
         ndi_faces=saved_params.get("ndi_faces", False),
         cutout_margin=saved_params.get("cutout_margin", 0.15),
+        cutout_shape=saved_params.get("cutout_shape", "rectangle"),
+        cutout_feather=saved_params.get("cutout_feather", 0),
         test_card=saved_params.get("test_card", False),
         panel_preview=saved_params.get("panel_preview", True),
         preview_source=saved_params.get("preview_source", "annotated"),
