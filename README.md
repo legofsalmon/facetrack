@@ -138,7 +138,7 @@ persists across restarts:
 |---|---|---|
 | Main NDI feed | the program picture (annotated, or clean with *Keep main feed clean* on) | panel shows connected-receiver count |
 | Overlay NDI feed | graphics only, real alpha (premultiplied) | key it in vMix / Resolume / TriCaster / OBS+DistroAV |
-| Faces cutout feed | the picture only inside the cutout mask, transparent everywhere else | *Cutout shape*: rectangles, soft ovals, or a **people silhouette** (PP-HumanSeg, Apache-2.0 — loads when first selected); *Cutout margin* adds headroom; *Edge softness* feathers the mask |
+| Faces cutout feed | the picture only inside the cutout mask, transparent everywhere else | *Cutout shape*: rectangles, soft ovals, or a **people silhouette** (PP-HumanSeg, Apache-2.0 — loads when first selected); *Cutout margin* adds headroom; *Edge softness* feathers the mask; *Silhouette steadiness* trades calm edges against a beat of lag on movement |
 | Syphon (macOS) / Spout (Windows) | full picture, graphics overlay, **or** faces cutout — pick in the panel | zero-compression, GPU-to-GPU, same machine only |
 | Output size | Match input / 1920 / 1280 / 960 wide | applies to all feeds; lowers network load |
 | Test card | SMPTE-style bars, ramp, feed identity, clock + moving block | lives in the Process card; motion proves the chain is live, not frozen; alpha feeds get a bracket/crosshair pattern instead; works with no input connected |

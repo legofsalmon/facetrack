@@ -311,7 +311,7 @@ class Pipeline:
                 pass
             self.source = fresh
 
-    def _people_mask(self, frame):
+    def _people_mask(self, frame, steady: float = 0.55):
         """Segmenter mask, loading the model on first use. On any failure
         the cutout shape reverts to ovals with a panel-visible error, so
         picking a broken mode can't take the feed down."""
@@ -324,6 +324,7 @@ class Pipeline:
                 self.last_error = f"People cutout unavailable: {exc}"
                 self._error_time = time.monotonic()
                 return None
+        self._people_seg.smoothing = steady
         try:
             return self._people_seg.mask(frame)
         except Exception as exc:
@@ -470,7 +471,7 @@ class Pipeline:
                         stale = (self._people_cache is None
                                  or self._people_cache.shape != frame.shape[:2])
                         if stale or frame_idx % 2 == 0:
-                            fresh = self._people_mask(frame)
+                            fresh = self._people_mask(frame, p["cutout_steady"])
                             if fresh is not None:
                                 self._people_cache = fresh
                         people = self._people_cache
