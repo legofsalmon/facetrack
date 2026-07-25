@@ -149,7 +149,7 @@ persists across restarts:
 |---|---|---|
 | Main NDI feed | the program picture (annotated, or clean with *Keep main feed clean* on) | panel shows connected-receiver count |
 | Overlay NDI feed | graphics only, real alpha (premultiplied) | key it in vMix / Resolume / TriCaster / OBS+DistroAV |
-| Faces cutout feed | the picture only inside the cutout mask, transparent everywhere else | *Cutout shape*: rectangles, soft ovals, or a **people silhouette** (PP-HumanSeg, Apache-2.0 — loads when first selected); *Cutout margin* adds headroom; *Edge softness* feathers the mask; *Silhouette steadiness* trades calm edges against a beat of lag on movement |
+| Faces cutout feed | the picture only inside the cutout mask, transparent everywhere else | *Cutout shape*: rectangles, soft ovals, or a **people silhouette** (PP-HumanSeg, Apache-2.0 — loads when first selected); *Silhouette model* picks the engine — **Fast** (PP-HumanSeg, runs anywhere), **Quality** (MODNet, hair-level matting of prominent subjects) or **Best** (RVM video matting: temporally stable, handles difficult clothing/backgrounds; ~27ms/frame on an M-class CPU, a few ms on the GPU machine); *Cutout margin* adds headroom; *Edge softness* feathers the mask; *Silhouette steadiness* trades calm edges against a beat of lag |
 | Syphon (macOS) / Spout (Windows) | full picture, graphics overlay, **or** faces cutout — pick in the panel | zero-compression, GPU-to-GPU, same machine only |
 | Output size | Match input / 1920 / 1280 / 960 wide | applies to all feeds; lowers network load |
 | Test card | SMPTE-style bars, ramp, feed identity, clock + moving block | lives in the Process card; motion proves the chain is live, not frozen; alpha feeds get a bracket/crosshair pattern instead; works with no input connected |
@@ -227,6 +227,15 @@ no matching against any database, and records nothing — frames are
 processed and discarded in memory. Expression labels are a cosmetic
 overlay estimate. For public events, follow your usual venue practice on
 camera signage, and keep this paragraph handy for client conversations.
+
+### Model licences
+
+All bundled models permit commercial use except one: YuNet, PP-HumanSeg
+and MODNet are Apache-2.0, FER+ is MIT, and RVM is **GPL-3.0** — GPL
+fully allows commercial *use*; its source-sharing obligations apply only
+if you distribute facetrack itself. The one open question remains the
+SCRFD GPU face detector (InsightFace non-commercial research terms) —
+decide before a paid event, or stay on YuNet.
 
 ### Start on boot (show machines)
 

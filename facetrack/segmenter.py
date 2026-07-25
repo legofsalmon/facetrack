@@ -23,9 +23,21 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / \
-    "human_segmentation_pphumanseg_2023mar.onnx"
+_MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
+MODEL_PATH = _MODELS_DIR / "human_segmentation_pphumanseg_2023mar.onnx"
+MODNET_PATH = _MODELS_DIR / "modnet_portrait.onnx"
+RVM_PATH = _MODELS_DIR / "rvm_mobilenetv3_fp32.onnx"
 _INPUT = 192
+
+
+def _ort_session(path: Path):
+    import onnxruntime as ort
+    if not path.exists():
+        raise RuntimeError(f"{path.name} missing — run the launcher or "
+                           "`python main.py --doctor` to download it")
+    provs = [p for p in ("CUDAExecutionProvider", "CPUExecutionProvider")
+             if p in ort.get_available_providers()]
+    return ort.InferenceSession(str(path), providers=provs)
 
 # 25%..75% probability -> 0..255 alpha; the 50% midpoint lands on 128 so
 # the cutout's re-harden threshold decides exactly like the zoo's argmax.
@@ -34,6 +46,8 @@ _GATE_LUT = np.clip((np.arange(256, dtype=np.float32) - 0.25 * 255) * 2.0,
 
 
 class PeopleSegmenter:
+    soft = False  # coarse 192px mask: downstream re-hardens the edge
+
     def __init__(self, model_path: str | Path = MODEL_PATH):
         path = Path(model_path)
         if not path.exists():
@@ -73,3 +87,81 @@ class PeopleSegmenter:
         out = np.zeros((H, W), dtype=np.uint8)
         out[y1:y2, x1:x2] = self._infer(frame[y1:y2, x1:x2])
         return out
+
+
+class ModnetMatter:
+    """MODNet portrait matting (Apache-2.0) via onnxruntime: true soft
+    alpha with hair-level detail. Strongest on prominent single subjects
+    (a presenter to camera); GPU-recommended, workable on CPU."""
+
+    soft = True  # a real matte: don't re-harden the edge downstream
+
+    def __init__(self, model_path: str | Path = MODNET_PATH, ref: int = 512):
+        self.sess = _ort_session(Path(model_path))
+        self.ref = ref
+
+    def _infer(self, image: np.ndarray) -> np.ndarray:
+        H, W = image.shape[:2]
+        s = self.ref / max(H, W)
+        nh = max(32, int(H * s) // 32 * 32)
+        nw = max(32, int(W * s) // 32 * 32)
+        x = cv2.resize(image, (nw, nh), interpolation=cv2.INTER_AREA).astype(np.float32)
+        x = (cv2.cvtColor(x, cv2.COLOR_BGR2RGB) - 127.5) / 127.5
+        m = self.sess.run(None, {"input": x.transpose(2, 0, 1)[None]})[0][0, 0]
+        m8 = (np.clip(m, 0, 1) * 255).astype(np.uint8)
+        return cv2.resize(m8, (W, H), interpolation=cv2.INTER_LINEAR)
+
+    def mask(self, frame: np.ndarray,
+             roi: tuple[int, int, int, int] | None = None) -> np.ndarray:
+        H, W = frame.shape[:2]
+        if roi is None:
+            return self._infer(frame)
+        x1, y1, x2, y2 = roi
+        x1, y1 = max(0, x1), max(0, y1)
+        x2, y2 = min(W, x2), min(H, y2)
+        if x2 - x1 < 32 or y2 - y1 < 32:
+            return self._infer(frame)
+        out = np.zeros((H, W), dtype=np.uint8)
+        out[y1:y2, x1:x2] = self._infer(frame[y1:y2, x1:x2])
+        return out
+
+
+class RvmMatter:
+    """Robust Video Matting (GPL-3.0) via onnxruntime: the best-looking
+    people matte — temporally stable by design (recurrent state carries
+    between frames). Runs full-frame; the ROI is ignored so the memory
+    stays coherent. GPU-recommended; ~27ms/frame on an M-class CPU at
+    720p, so workable for testing."""
+
+    soft = True
+
+    def __init__(self, model_path: str | Path = RVM_PATH):
+        self.sess = _ort_session(Path(model_path))
+        self._state = None
+        self._shape: tuple[int, int] | None = None
+
+    def mask(self, frame: np.ndarray,
+             roi: tuple[int, int, int, int] | None = None) -> np.ndarray:
+        H, W = frame.shape[:2]
+        if self._shape != (W, H) or self._state is None:
+            self._shape = (W, H)
+            self._state = [np.zeros((1, 1, 1, 1), np.float32)] * 4
+        x = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+        ds = float(np.clip(384.0 / max(W, H), 0.125, 1.0))
+        inputs = {"src": x.transpose(2, 0, 1)[None],
+                  "downsample_ratio": np.array([ds], np.float32)}
+        for key, val in zip(("r1i", "r2i", "r3i", "r4i"), self._state):
+            inputs[key] = val
+        _fgr, pha, *self._state = self.sess.run(None, inputs)
+        return (np.clip(pha[0, 0], 0, 1) * 255).astype(np.uint8)
+
+
+PEOPLE_MODELS = {
+    "pphumanseg": PeopleSegmenter,
+    "modnet": ModnetMatter,
+    "rvm": RvmMatter,
+}
+
+
+def create_people_model(name: str):
+    return PEOPLE_MODELS.get(name, PeopleSegmenter)()

@@ -36,9 +36,20 @@ MODELS = {
     },
     "human_segmentation_pphumanseg_2023mar.onnx": {
         "min_bytes": 1_000_000,
-        "why": "people-silhouette cutout",
+        "why": "people-silhouette cutout (fast)",
         "url": "https://github.com/opencv/opencv_zoo/raw/main/models/"
                "human_segmentation_pphumanseg/human_segmentation_pphumanseg_2023mar.onnx",
+    },
+    "modnet_portrait.onnx": {
+        "min_bytes": 5_000_000,
+        "why": "people matte (quality — MODNet)",
+        "url": "https://huggingface.co/Xenova/modnet/resolve/main/onnx/model.onnx",
+    },
+    "rvm_mobilenetv3_fp32.onnx": {
+        "min_bytes": 5_000_000,
+        "why": "people matte (best — RVM)",
+        "url": "https://github.com/PeterL1n/RobustVideoMatting/releases/download/"
+               "v1.0.0/rvm_mobilenetv3_fp32.onnx",
     },
 }
 

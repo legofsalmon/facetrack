@@ -31,6 +31,7 @@ DEFAULTS = dict(det_threshold=0.5, det_size=640, detect_every=1, min_face=0,
                 ndi_main=True, ndi_overlay=False, ndi_faces=False, out_width=0,
                 texture_share=False, texture_source="program", cutout_margin=0.15,
                 cutout_shape="rectangle", cutout_feather=0, cutout_steady=0.55,
+                people_model="pphumanseg",
                 test_card=False, panel_preview=True, local_preview=True,
                 preview_source="annotated")
 
@@ -149,6 +150,7 @@ def build_params(args, saved_params: dict) -> LiveParams:
         cutout_feather=saved_params.get("cutout_feather", 0),
         cutout_steady=saved_params.get("cutout_steady", 0.55),
         overlay_color=saved_params.get("overlay_color", ""),
+        people_model=saved_params.get("people_model", "pphumanseg"),
         test_card=saved_params.get("test_card", False),
         panel_preview=saved_params.get("panel_preview", True),
         preview_source=saved_params.get("preview_source", "annotated"),

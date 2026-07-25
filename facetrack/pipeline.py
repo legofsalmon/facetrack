@@ -93,7 +93,8 @@ class Pipeline:
         self.heartbeat = time.monotonic()  # watchdog liveness signal
         self._t0 = time.time()
         self._color_cache: tuple[str, tuple | None] = ("", None)
-        self._people_seg = None  # lazy: loads when 'people' cutout is picked
+        self._people_models: dict = {}  # lazy, keyed by people_model param
+        self._people_soft = False       # whether the active mask is a true matte
         self._people_cache: np.ndarray | None = None
         self._people_roi: tuple[float, float, float, float] | None = None
 
@@ -345,26 +346,38 @@ class Pipeline:
         self._people_roi = box
         return tuple(int(round(v)) for v in box)
 
-    def _people_mask(self, frame, tracks, steady: float):
-        """Segmenter mask, loading the model on first use. Temporal
-        smoothing happens here in full-frame space (correct even while
-        the ROI follows the subject). On any failure the cutout shape
-        reverts to ovals with a panel-visible error, so picking a broken
-        mode can't take the feed down."""
-        if self._people_seg is None:
+    def _people_mask(self, frame, tracks, steady: float, model_name: str):
+        """Mask from the selected silhouette model, loading it on first
+        use. Temporal smoothing happens here in full-frame space (correct
+        even while the ROI follows the subject). Failures fall back:
+        modnet/rvm -> pphumanseg -> oval shape, always with a panel error
+        — picking a broken model can't take the feed down."""
+        model = self._people_models.get(model_name)
+        if model is None:
             try:
-                from .segmenter import PeopleSegmenter
-                self._people_seg = PeopleSegmenter()
+                from .segmenter import create_people_model
+                model = create_people_model(model_name)
+                self._people_models[model_name] = model
             except Exception as exc:
-                self.params.set("cutout_shape", "oval")
-                self.last_error = f"People cutout unavailable: {exc}"
+                if model_name != "pphumanseg":
+                    self.params.set("people_model", "pphumanseg")
+                    self.last_error = f"'{model_name}' unavailable: {exc} — using Fast"
+                else:
+                    self.params.set("cutout_shape", "oval")
+                    self.last_error = f"People cutout unavailable: {exc}"
                 self._error_time = time.monotonic()
                 return None
         try:
-            mask = self._people_seg.mask(frame, roi=self._people_roi_for(frame, tracks))
+            mask = model.mask(frame, roi=self._people_roi_for(frame, tracks))
+            self._people_soft = model.soft
         except Exception as exc:
-            self.params.set("cutout_shape", "oval")
-            self.last_error = f"People cutout failed: {exc}"
+            self._people_models.pop(model_name, None)
+            if model_name != "pphumanseg":
+                self.params.set("people_model", "pphumanseg")
+                self.last_error = f"'{model_name}' failed: {exc} — using Fast"
+            else:
+                self.params.set("cutout_shape", "oval")
+                self.last_error = f"People cutout failed: {exc}"
             self._error_time = time.monotonic()
             return None
         prev = self._people_cache
@@ -534,14 +547,15 @@ class Pipeline:
                                  or self._people_cache.shape != frame.shape[:2])
                         if stale or frame_idx % 2 == 0:
                             fresh = self._people_mask(frame, tracks,
-                                                      p["cutout_steady"])
+                                                      p["cutout_steady"],
+                                                      p["people_model"])
                             if fresh is not None:
                                 self._people_cache = fresh
                         people = self._people_cache
                     faces_bgra = render_faces_cutout(
                         frame, tracks, margin=p["cutout_margin"],
                         shape=p["cutout_shape"], feather=p["cutout_feather"],
-                        people_mask=people)
+                        people_mask=people, people_soft=self._people_soft)
 
                 now = time.perf_counter()
                 dt = now - t_last

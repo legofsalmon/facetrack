@@ -32,6 +32,7 @@ SPEC = {
     "cutout_margin": (float, 0.0, 0.5),   # extra room around each face box
     "cutout_feather": (int, 0, 60),       # mask edge softness, px
     "cutout_steady": (float, 0.0, 0.9),   # people-mask temporal smoothing
+    "people_model": (str, ("pphumanseg", "modnet", "rvm"), None),
     "test_card": (bool, None, None),      # bars + motion on all feeds
     "panel_preview": (bool, None, None),  # MJPEG thumbnail in the web panel
     "preview_source": (str, ("annotated", "clean", "overlay", "faces"), None),

@@ -226,6 +226,34 @@ def _():
         "people cutout must be premultiplied"
 
 
+@run("matting models: MODNet and RVM produce sane soft mattes")
+def _():
+    try:
+        import onnxruntime  # noqa: F401
+    except ImportError:
+        print("        (onnxruntime not installed — skipped)")
+        return
+    from facetrack.overlay import render_faces_cutout
+    from facetrack.segmenter import ModnetMatter, RvmMatter
+    frame = _first_frame()
+    for cls in (ModnetMatter, RvmMatter):
+        model = cls()
+        assert model.soft is True
+        m = model.mask(frame)
+        assert m.shape == frame.shape[:2] and m.dtype == np.uint8
+        cut = render_faces_cutout(frame, [], shape="people", people_mask=m,
+                                  people_soft=True)
+        a = cut[:, :, 3]
+        assert (cut[:, :, :3].astype(int) <= a[..., None].astype(int) + 1).all(), \
+            f"{cls.__name__} cutout must stay premultiplied"
+    # RVM: recurrent state survives repeat frames and resets on size change
+    r = RvmMatter()
+    r.mask(frame)
+    r.mask(frame)
+    small = cv2.resize(frame, (320, 180))
+    assert r.mask(small).shape == (180, 320)
+
+
 @run("people segmenter: ROI keeps the matte inside the region")
 def _():
     from facetrack.segmenter import PeopleSegmenter

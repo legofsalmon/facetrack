@@ -72,7 +72,8 @@ def render_overlay_bgra(shape_hw: tuple[int, int], tracks: list[Track],
 def render_faces_cutout(frame: np.ndarray, tracks: list[Track],
                         margin: float = 0.15, shape: str = "rectangle",
                         feather: int = 0,
-                        people_mask: np.ndarray | None = None) -> np.ndarray:
+                        people_mask: np.ndarray | None = None,
+                        people_soft: bool = False) -> np.ndarray:
     """The picture only inside the cutout mask; transparent elsewhere.
 
     shape: 'rectangle' / 'oval' (per-face, margin-grown) or 'people'
@@ -87,14 +88,21 @@ def render_faces_cutout(frame: np.ndarray, tracks: list[Track],
     H, W = frame.shape[:2]
 
     if shape == "people" and people_mask is not None:
-        # The segmenter's mask is upscaled from 192px, which bakes a mushy
-        # ~15px ramp into the edge — feathering on top of that was barely
-        # visible. Re-harden at 50% first (the isoline of the upscaled
-        # field is smooth), then feather by the requested amount; the
-        # 3px minimum anti-aliases the re-hardened contour.
-        _, alpha = cv2.threshold(people_mask, 127, 255, cv2.THRESH_BINARY)
-        k = max(feather, 3) | 1
-        alpha = cv2.GaussianBlur(alpha, (k, k), 0)
+        if people_soft:
+            # true matting models (MODNet/RVM): the alpha already carries
+            # real edge detail — feather only if asked, never re-harden
+            alpha = people_mask
+            if feather > 0:
+                k = feather | 1
+                alpha = cv2.GaussianBlur(alpha, (k, k), 0)
+        else:
+            # coarse 192px segmentation: upscaling bakes a mushy ~15px ramp
+            # into the edge. Re-harden at 50% (the isoline of the upscaled
+            # field is smooth), then feather deliberately; the 3px minimum
+            # anti-aliases the re-hardened contour.
+            _, alpha = cv2.threshold(people_mask, 127, 255, cv2.THRESH_BINARY)
+            k = max(feather, 3) | 1
+            alpha = cv2.GaussianBlur(alpha, (k, k), 0)
         a3 = cv2.cvtColor(alpha, cv2.COLOR_GRAY2BGR)
         b, g, r = cv2.split(cv2.multiply(frame, a3, scale=1 / 255.0))
         return cv2.merge((b, g, r, alpha))

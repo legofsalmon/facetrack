@@ -23,5 +23,8 @@ SOFTWARE.
 ---
 
 Note: the ONNX model files in models/ are third-party works with their own
-licenses (YuNet: Apache-2.0; FER+: MIT; SCRFD: InsightFace's model terms).
-This license covers only the code in this repository.
+licenses (YuNet: Apache-2.0; FER+: MIT; PP-HumanSeg: Apache-2.0; MODNet:
+Apache-2.0; RVM: GPL-3.0; SCRFD: InsightFace's model terms). GPL-3.0
+permits commercial use; its source-sharing obligations apply only if you
+distribute this software. This license covers only the code in this
+repository.

@@ -318,6 +318,15 @@
           <option value="people">People silhouette</option>
         </select>
       </div>
+      <div class="row" id="people-model-row">
+        <div class="lbl"><label for="people_model">Silhouette model</label>
+          <span class="hint">Fast runs anywhere · Quality &amp; Best shine on the GPU machine (fine to try on CPU)</span></div>
+        <select id="people_model">
+          <option value="pphumanseg">Fast — PP-HumanSeg</option>
+          <option value="modnet">Quality — MODNet</option>
+          <option value="rvm">Best — RVM video matting</option>
+        </select>
+      </div>
       <div class="row" id="cutout-margin-row">
         <div class="lbl"><label for="cutout_margin">Cutout margin</label>
           <span class="hint">extra room around each face box</span></div>
@@ -400,7 +409,8 @@
   const params = ["det_threshold","det_size","detect_every","min_face","max_misses",
                   "emotion_enabled","emotion_budget","show_ids","show_stats",
                   "clean_main","flip","ndi_main","ndi_overlay","ndi_faces",
-                  "cutout_shape","cutout_margin","cutout_feather","cutout_steady","out_width",
+                  "cutout_shape","cutout_margin","cutout_feather","cutout_steady",
+                  "people_model","out_width",
                   "texture_share","texture_source",
                   "test_card","panel_preview","local_preview"];
   const PRESETS = {
@@ -570,6 +580,8 @@
     const steadyOn = cutActive && p.cutout_shape === "people";
     $("cutout-steady-row").classList.toggle("dimmed", !steadyOn);
     $("cutout_steady").disabled = !steadyOn;
+    $("people-model-row").classList.toggle("dimmed", !steadyOn);
+    $("people_model").disabled = !steadyOn;
     if (document.activeElement !== brandPick) {
       brandChk.checked = !!p.overlay_color;
       if (p.overlay_color) brandPick.value = p.overlay_color;
