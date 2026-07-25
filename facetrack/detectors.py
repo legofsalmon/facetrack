@@ -105,12 +105,16 @@ class SCRFDDetector:
                  score_threshold: float = 0.45, nms_threshold: float = 0.4,
                  providers: list[str] | None = None):
         import onnxruntime as ort
+
+        from .runtime import session_options
         if providers is None:
             avail = ort.get_available_providers()
             providers = [p for p in ("TensorrtExecutionProvider",
                                      "CUDAExecutionProvider",
                                      "CPUExecutionProvider") if p in avail]
-        self.session = ort.InferenceSession(model_path, providers=providers)
+        self.session = ort.InferenceSession(model_path,
+                                            sess_options=session_options(),
+                                            providers=providers)
         active = self.session.get_providers()[0]
         self.name = "scrfd-" + active.replace("ExecutionProvider", "").lower()
         self.input_name = self.session.get_inputs()[0].name

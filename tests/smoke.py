@@ -350,6 +350,71 @@ def _():
     assert m2.shape == frame.shape[:2]
 
 
+@run("runtime: CPU limit caps OpenCV and ONNX threads")
+def _():
+    import cv2 as _cv
+    from facetrack import runtime
+    default = _cv.getNumThreads()
+    try:
+        n = runtime.limit_threads(True)
+        assert 1 <= n <= max(1, runtime.cores() // 2)
+        # OpenCV only honours an arbitrary count on TBB/OpenMP/pthreads
+        # builds; macOS GCD builds ignore it. Either is acceptable — the
+        # ONNX cap below is the one that governs the expensive models.
+        assert runtime.cv_threads() in (n, runtime.cores())
+        so = runtime.session_options()
+        if so is not None:  # None when onnxruntime isn't installed (CI)
+            assert so.intra_op_num_threads == n
+            assert so.inter_op_num_threads == max(1, n // 2)
+        runtime.limit_threads(False)
+        assert runtime.budget() == 0, "unlimited = library default"
+        assert runtime.session_options() is None
+    finally:
+        runtime.limit_threads(False)
+        _cv.setNumThreads(default)
+
+
+@run("auto relief: steps down under load, recovers with headroom")
+def _():
+    from main import DEFAULTS
+    from facetrack.params import LiveParams
+    from facetrack.pipeline import Pipeline
+
+    pipe = Pipeline.__new__(Pipeline)          # logic only, no capture/models
+    pipe._relief = 0
+    pipe._over_since = pipe._under_since = None
+    pipe.last_error = ""
+    pipe._error_time = 0.0
+    on = {"auto_relief": True, "detect_every": 1, "det_size": 1280}
+
+    t = 100.0
+    pipe._update_relief(on, 150, t)            # first overload sample
+    assert pipe._relief == 0, "must not react to a single spike"
+    for step in (1, 2, 3):
+        t += 6.0
+        pipe._update_relief(on, 150, t)
+        assert pipe._relief == step, f"expected step {step}, got {pipe._relief}"
+    t += 6.0
+    pipe._update_relief(on, 150, t)
+    assert pipe._relief == 3, "must not exceed the last step"
+
+    eff = pipe._relieved(on)
+    assert eff["detect_every"] == 2 and eff["det_size"] == 640
+    assert on["detect_every"] == 1, "operator's own settings must not be rewritten"
+
+    t += 1.0
+    pipe._update_relief(on, 40, t)             # first low sample starts the clock
+    assert pipe._relief == 3, "must not restore on a single quiet sample"
+    for expect in (2, 1, 0):                   # headroom sustained
+        t += 21.0
+        pipe._update_relief(on, 40, t)
+        assert pipe._relief == expect, f"expected recovery to {expect}"
+
+    pipe._relief = 2                           # switching it off clears state
+    pipe._update_relief({**on, "auto_relief": False}, 200, t + 100)
+    assert pipe._relief == 0
+
+
 @run("test card: bars on program, markers on alpha")
 def _():
     from facetrack.overlay import render_test_card

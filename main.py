@@ -36,6 +36,7 @@ DEFAULTS = dict(det_threshold=0.5, det_size=640, detect_every=1, min_face=0,
                 cutout_shape="rectangle", cutout_feather=0, cutout_grow=0,
                 cutout_steady=0.55,
                 people_model="pphumanseg",
+                limit_cpu=False, auto_relief=True,
                 test_card=False, panel_preview=True, local_preview=True,
                 preview_source="annotated")
 
@@ -166,6 +167,8 @@ def build_params(args, saved_params: dict) -> LiveParams:
         cutout_steady=saved_params.get("cutout_steady", 0.55),
         overlay_color=saved_params.get("overlay_color", ""),
         people_model=saved_params.get("people_model", "pphumanseg"),
+        limit_cpu=saved_params.get("limit_cpu", False),
+        auto_relief=saved_params.get("auto_relief", True),
         test_card=saved_params.get("test_card", False),
         panel_preview=saved_params.get("panel_preview", True),
         preview_source=saved_params.get("preview_source", "annotated"),
@@ -236,6 +239,10 @@ def main(argv=None) -> int:
 
     saved = settings.load()
     params = build_params(args, saved["params"])
+    # Apply the CPU budget before any model loads — ONNX Runtime bakes its
+    # thread count into each session at creation.
+    from facetrack.runtime import limit_threads
+    limit_threads(params.snapshot()["limit_cpu"])
     if args.source is None:
         args.source = saved["source"] or "0"
         if not args.source.isdigit() and not args.source.lower().startswith("ndi:"):

@@ -244,6 +244,30 @@ if you distribute facetrack itself. The one open question remains the
 SCRFD GPU face detector (InsightFace non-commercial research terms) —
 decide before a paid event, or stay on YuNet.
 
+### Keeping the machine healthy
+
+facetrack is compute-hungry by nature — on a 12-core Mac the heaviest
+setup (RVM silhouette + expressions + several feeds) draws about 4.5
+cores. Two guards in the panel's **Machine load** card keep that from
+swamping a machine (both are switched on by the *Power saver* preset):
+
+- **Limit CPU use** — by default the AI runtimes take every core they
+  can. This caps them to about a third of the cores (measured: 448% ->
+  347% CPU on a 12-core Mac for the same frame rate), which keeps the
+  rest of the machine — and this control panel — responsive. Most
+  effective on Windows, where OpenCV honours the cap too; on macOS the
+  OpenCV wheel uses GCD and ignores thread limits, so only the ONNX
+  models (RVM, MODNet, SCRFD — the expensive ones) are capped.
+- **Auto relief** (on by default) — if the pipeline can't hold the frame
+  budget for 5 seconds it sheds quality in three steps: silhouette
+  updated less often, then face finding every other frame, then the
+  detector size capped. It restores itself step by step once there's
+  headroom, and the panel says what it's doing. Your own settings are
+  never rewritten — relief is an internal override.
+
+facetrack also never runs faster than the source supplies: a 30 fps
+camera caps the loop at 30 fps, a 50 fps one at 50.
+
 ### Capture cards (Blackmagic, Magewell, Elgato, AVerMedia, AJA)
 
 Two panel controls matter here, both in the **Input** card: **Capture

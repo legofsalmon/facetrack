@@ -17,6 +17,7 @@ import numpy as np
 from .capture import NullSource, open_source, parse_cap_format
 from .detectors import pick_backend
 from .emotion import EmotionEstimator
+from . import runtime as _rt
 from .overlay import (apply_cutout, cutout_alpha, draw_stats, draw_tracks,
                       hard_rect_regions, render_mask, render_overlay_bgra,
                       render_test_card)
@@ -105,6 +106,10 @@ class Pipeline:
         self.heartbeat = time.monotonic()  # watchdog liveness signal
         self._t0 = time.time()
         self._color_cache: tuple[str, tuple | None] = ("", None)
+        self._cpu_limited: bool | None = None  # last applied limit_cpu
+        self._relief = 0                # auto-relief step, 0 = full quality
+        self._over_since: float | None = None
+        self._under_since: float | None = None
         self._people_models: dict = {}  # lazy, keyed by people_model param
         self._people_soft = False       # whether the active mask is a true matte
         self._people_cache: np.ndarray | None = None
@@ -330,6 +335,60 @@ class Pipeline:
                 pass
             self.source = fresh
 
+    # Relief steps: 1 = segment less often, 2 = also detect every other
+    # frame, 3 = also cap detector input. Applied as an internal override
+    # so the operator's own settings are never rewritten.
+    MAX_RELIEF = 3
+
+    def _apply_cpu_limit(self, p: dict) -> None:
+        """Track the limit_cpu param; reload models on change so their
+        ONNX thread pools pick up the new budget."""
+        if p["limit_cpu"] == self._cpu_limited:
+            return
+        from .runtime import limit_threads
+        limit_threads(p["limit_cpu"])
+        self._cpu_limited = p["limit_cpu"]
+        self._people_models.clear()
+
+    def _update_relief(self, p: dict, load_pct: int, now: float) -> None:
+        """Shed quality when the machine can't hold the frame budget, and
+        give it back once there's headroom again. Hysteresis both ways so
+        it settles instead of oscillating."""
+        if not p["auto_relief"]:
+            self._relief = 0
+            self._over_since = self._under_since = None
+            return
+        if load_pct > 100:
+            self._under_since = None
+            if self._over_since is None:
+                self._over_since = now
+            elif now - self._over_since > 5.0 and self._relief < self.MAX_RELIEF:
+                self._relief += 1
+                self._over_since = now
+                self.last_error = (f"Auto relief step {self._relief}: reduced "
+                                   "quality to keep up with the frame rate")
+                self._error_time = now
+        elif load_pct < 70:
+            self._over_since = None
+            if self._under_since is None:
+                self._under_since = now
+            elif now - self._under_since > 20.0 and self._relief > 0:
+                self._relief -= 1
+                self._under_since = now
+        else:
+            self._over_since = self._under_since = None
+
+    def _relieved(self, p: dict) -> dict:
+        """The live params with any auto-relief overrides applied."""
+        if not self._relief:
+            return p
+        p = dict(p)
+        if self._relief >= 2:
+            p["detect_every"] = max(p["detect_every"], 2)
+        if self._relief >= 3:
+            p["det_size"] = min(p["det_size"], 640)
+        return p
+
     def _people_roi_for(self, frame, tracks):
         """Body-shaped region around the tracked faces: the portrait
         segmenter works far better when people fill its input. Faces are
@@ -474,7 +533,8 @@ class Pipeline:
         """Blocking loop; call from the main thread. Returns frame count."""
         args = self.args
         frame_idx = 0
-        fps_ema = None
+        fps_ema = 0.0
+        dt_ema = None
         proc_ema = 0.0
         t_last = time.perf_counter()
         window_open = False
@@ -510,6 +570,8 @@ class Pipeline:
                     if self.last_error.startswith("Signal lost"):
                         self.last_error = ""
                     t_last = time.perf_counter()  # don't count the outage in fps
+                self._apply_cpu_limit(p)
+                p = self._relieved(p)
                 self._sync_outputs(p)
                 self._last_size = (frame.shape[1], frame.shape[0])
                 if p["flip"]:
@@ -564,9 +626,11 @@ class Pipeline:
                     if p["cutout_shape"] == "people":
                         # segmentation is the expensive part; every 2nd
                         # frame is indistinguishable and halves the cost
+                        # (every 3rd once auto-relief has stepped in)
+                        seg_every = 3 if self._relief else 2
                         stale = (self._people_cache is None
                                  or self._people_cache.shape != frame.shape[:2])
-                        if stale or frame_idx % 2 == 0:
+                        if stale or frame_idx % seg_every == 0:
                             t0 = time.perf_counter()
                             fresh = self._people_mask(frame, tracks,
                                                       p["cutout_steady"],
@@ -596,8 +660,12 @@ class Pipeline:
                 now = time.perf_counter()
                 dt = now - t_last
                 t_last = now
-                inst = 1.0 / dt if dt > 0 else 0.0
-                fps_ema = inst if fps_ema is None else 0.9 * fps_ema + 0.1 * inst
+                # Average the frame TIME, not 1/dt: with work that lands on
+                # alternate frames (segmentation), averaging instantaneous
+                # rates over-weights the cheap frames and reports an fps
+                # well above the real one.
+                dt_ema = dt if dt_ema is None else 0.9 * dt_ema + 0.1 * dt
+                fps_ema = 1.0 / dt_ema if dt_ema > 0 else 0.0
 
                 # Skip annotation entirely when nothing consumes it (previews
                 # off + clean main feed): detection -> tracking -> outputs only.
@@ -699,6 +767,8 @@ class Pipeline:
                                      + 0.1 * laps.get(k, 0.0))
                 budget_ms = 1000.0 / (args.fps or 30)
                 load_ms = sum(self._perf.values())
+                self._update_relief(p, int(round(load_ms / budget_ms * 100)),
+                                    time.monotonic())
                 ow = out_width or frame.shape[1]
                 oh = int(round(frame.shape[0] * ow / frame.shape[1]))
                 with self._stats_lock:
@@ -727,21 +797,31 @@ class Pipeline:
                                  if v >= 0.02},
                         "budget_ms": round(budget_ms, 1),
                         "load_pct": int(round(load_ms / budget_ms * 100)),
+                        "relief": self._relief,
+                        "cpu_threads": _rt.budget(),
+                        "cv_threads": _rt.cv_threads(),
+                        "cpu_cores": _rt.cores(),
                         "error": self.last_error,
                     }
 
-                # Pace file sources to their native fps so tests behave like
-                # a real feed (fans stay quiet, NDI rates stay sane). Runs
-                # unpaced when --max-frames is set (benchmark mode).
-                if not self.source.is_live and not args.max_frames:
-                    fps_native = min(getattr(self.source, "fps", 0) or 30.0, 120.0)
-                    period = 1.0 / fps_native
+                # Frame-rate ceiling: never run faster than the source
+                # supplies (a 30 fps camera caps the loop at 30, a 50 fps
+                # one at 50). Nothing downstream benefits from re-running
+                # the pipeline between frames, and it keeps the machine
+                # cool. Unpaced only for --max-frames benchmark runs.
+                if not args.max_frames:
+                    src_fps = min(max(getattr(self.source, "fps", 0) or 30.0, 1.0), 120.0)
+                    period = 1.0 / src_fps
                     now2 = time.perf_counter()
-                    pace_next = (pace_next if pace_next is not None else now2) + period
+                    if pace_next is None:
+                        pace_next = now2
+                    pace_next += period
                     if pace_next > now2:
                         time.sleep(pace_next - now2)
-                    elif now2 - pace_next > 0.5:
-                        pace_next = now2  # fell behind; don't try to catch up
+                    else:
+                        # behind schedule: reset rather than bank the debt,
+                        # or the loop bursts to "catch up" and runs hot
+                        pace_next = now2
                 else:
                     pace_next = None
 
@@ -766,7 +846,7 @@ class Pipeline:
             if window_open:
                 cv2.destroyAllWindows()
 
-        if fps_ema is not None:
+        if dt_ema is not None:
             print(f"[facetrack] done: {frame_idx} frames, {fps_ema:.1f} fps avg (ema), "
                   f"proc {proc_ema:.1f} ms")
         return frame_idx

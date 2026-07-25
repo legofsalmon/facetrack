@@ -46,6 +46,9 @@ SPEC = {
     "cutout_grow": (int, -30, 30),        # people mask: spread / choke, px
     "cutout_steady": (float, 0.0, 0.9),   # people-mask temporal smoothing
     "people_model": (str, ("pphumanseg", "modnet", "rvm"), None),
+    # Machine load guards
+    "limit_cpu": (bool, None, None),      # cap ML threads to ~half the cores
+    "auto_relief": (bool, None, None),    # shed quality when over budget
     "test_card": (bool, None, None),      # bars + motion on all feeds
     "panel_preview": (bool, None, None),  # MJPEG thumbnail in the web panel
     "preview_source": (str, ("annotated", "clean", "overlay", "faces", "mask"), None),

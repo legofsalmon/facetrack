@@ -32,12 +32,15 @@ _INPUT = 192
 
 def _ort_session(path: Path):
     import onnxruntime as ort
+
+    from .runtime import session_options
     if not path.exists():
         raise RuntimeError(f"{path.name} missing — run the launcher or "
                            "`python main.py --doctor` to download it")
     provs = [p for p in ("CUDAExecutionProvider", "CPUExecutionProvider")
              if p in ort.get_available_providers()]
-    return ort.InferenceSession(str(path), providers=provs)
+    return ort.InferenceSession(str(path), sess_options=session_options(),
+                                providers=provs)
 
 # 25%..75% probability -> 0..255 alpha; the 50% midpoint lands on 128 so
 # the cutout's re-harden threshold decides exactly like the zoo's argmax.

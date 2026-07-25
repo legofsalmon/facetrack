@@ -172,7 +172,7 @@
   <button class="preset" data-preset="wide" title="search detail 960 · strictness 0.35 · no size filter · detect every frame">Wide crowd<small>whole audience, small faces</small></button>
   <button class="preset" data-preset="mid" title="search detail 640 · strictness 0.45 · no size filter · detect every frame">Mid crowd<small>balanced — good default</small></button>
   <button class="preset" data-preset="close" title="search detail 640 · strictness 0.60 · ignore faces under 40px · detect every frame">Stage close-up<small>near faces, fewer false hits</small></button>
-  <button class="preset" data-preset="eco" title="search detail 480 · strictness 0.50 · detect every 2nd frame · expression effort 2">Power saver<small>if the machine struggles</small></button>
+  <button class="preset" data-preset="eco" title="search detail 480 · strictness 0.50 · detect every 2nd frame · expression effort 2 · limits CPU use · auto relief on">Power saver<small>if the machine struggles</small></button>
 </div>
 
 <div class="layout">
@@ -209,6 +209,21 @@
       <div id="perf" style="padding: 11px 14px; display: flex; flex-direction: column; gap: 7px">
         <span class="hint">waiting for data…</span>
       </div>
+    </div>
+
+    <div class="card" style="margin-top: 14px">
+      <h2>Machine load</h2>
+      <div class="row">
+        <div class="lbl"><label for="limit_cpu">Limit CPU use</label>
+          <span class="hint" id="cpu-hint">stop the AI models taking every core, so the machine stays responsive</span></div>
+        <label class="switch"><input type="checkbox" id="limit_cpu"><span class="slider"></span></label>
+      </div>
+      <div class="row">
+        <div class="lbl"><label for="auto_relief">Auto relief</label>
+          <span class="hint">if it can't hold the frame rate, reduce quality automatically until it can</span></div>
+        <label class="switch"><input type="checkbox" id="auto_relief"><span class="slider"></span></label>
+      </div>
+      <div id="relief-note" class="hint" style="padding: 0 14px 11px; display: none"></div>
     </div>
   </div>
 
@@ -470,6 +485,7 @@
                   "tex_program","tex_overlay","tex_faces","tex_mask","mask_style",
                   "cutout_shape","cutout_margin","cutout_feather","cutout_grow","cutout_steady",
                   "people_model","out_width",
+                  "limit_cpu","auto_relief",
                   "test_card","panel_preview","local_preview"];
   const PERF_LABELS = { detect: "Face finding", track: "Tracking",
                         express: "Expressions", silhouette: "Silhouette model",
@@ -480,7 +496,8 @@
     wide:  { det_size: 960, det_threshold: 0.35, min_face: 0,  detect_every: 1 },
     mid:   { det_size: 640, det_threshold: 0.45, min_face: 0,  detect_every: 1 },
     close: { det_size: 640, det_threshold: 0.6,  min_face: 40, detect_every: 1 },
-    eco:   { det_size: 480, det_threshold: 0.5,  min_face: 0,  detect_every: 2, emotion_budget: 2 },
+    eco:   { det_size: 480, det_threshold: 0.5,  min_face: 0,  detect_every: 2, emotion_budget: 2,
+             limit_cpu: true, auto_relief: true },
   };
   let ws = null, sendTimer = null, pendingSets = {}, lastParams = {}, lastFps = 30;
   let savedTimer = null, lastState = "live", sentQuit = false, sentRestart = false;
@@ -752,6 +769,25 @@
       el.classList.toggle("unavail", !kindName);
       el.title = kindName ? "" : "texture share unavailable on this machine";
     });
+    // machine-load state
+    if (s.cpu_cores) {
+      $("cpu-hint").textContent = s.cpu_threads
+        ? `limited to ${s.cpu_threads} of ${s.cpu_cores} cores — the machine stays responsive`
+        : `off: free to use all ${s.cpu_cores} cores`;
+    }
+    const rn = $("relief-note");
+    const RELIEF = ["", "silhouette updated less often",
+                    "+ face finding every other frame",
+                    "+ detector size capped"];
+    if (s.relief > 0) {
+      rn.textContent = `⚠ Auto relief step ${s.relief}/3 active — ${RELIEF[s.relief]}. `
+                     + "Restores itself once there's headroom.";
+      rn.style.color = "var(--warn)";
+      rn.style.display = "block";
+    } else {
+      rn.style.display = "none";
+    }
+
     if (s.error) { errBox.textContent = s.error; errBox.style.display = "block"; }
     else errBox.style.display = "none";
     if (s.uptime_s != null) {
