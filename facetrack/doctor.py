@@ -203,6 +203,9 @@ def check_port(port: int = 8089) -> None:
 
 
 def main(argv=None) -> int:
+    if sys.platform == "win32":
+        import os
+        os.system("")  # switches legacy consoles into ANSI-colour mode
     ap = argparse.ArgumentParser(description="facetrack self-check")
     ap.add_argument("--fix", action="store_true", help="download any missing model files")
     ap.add_argument("--no-camera", action="store_true", help="skip the camera probe")

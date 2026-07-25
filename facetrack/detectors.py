@@ -191,4 +191,4 @@ def pick_backend(backend: str, det_size: int, score_threshold: float):
             backend = "yunet"
     if backend == "scrfd":
         return SCRFDDetector(input_size=det_size, score_threshold=score_threshold)
-    return YuNetDetector(input_width=det_size, score_threshold=max(score_threshold, 0.5))
+    return YuNetDetector(input_width=det_size, score_threshold=score_threshold)

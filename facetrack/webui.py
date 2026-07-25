@@ -46,13 +46,13 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None,
 
     @app.get("/sources")
     def sources(request: Request):
-        if not _pin_ok(request):
-            return PlainTextResponse("PIN required", status_code=401)
         """Selectable inputs for the panel, scanned live on each call:
         connected cameras/system video devices (with real names where the
         OS provides them) + NDI sources on the network (minus our own
         outputs). The camera the pipeline is using is reported without
         being re-opened."""
+        if not _pin_ok(request):
+            return PlainTextResponse("PIN required", status_code=401)
         current = pipeline.source_spec
         in_use = int(current) if current.isdigit() else None
         try:
@@ -140,11 +140,17 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None,
             while not pipeline.stopped:
                 try:
                     msg = await asyncio.wait_for(sock.receive_text(), timeout=0.5)
-                    data = json.loads(msg)
-                    kind = data.get("type")
+                except asyncio.TimeoutError:
+                    msg = None
+                if msg is not None:
+                    try:  # a malformed message must not kill the socket
+                        data = json.loads(msg)
+                        kind = data.get("type")
+                    except (ValueError, AttributeError):
+                        data, kind = {}, None
                     if kind == "set":
                         changed = False
-                        for k, v in dict(data.get("data", {})).items():
+                        for k, v in dict(data.get("data", {}) or {}).items():
                             try:
                                 params.set(k, v)
                                 changed = True
@@ -164,8 +170,6 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None,
                             pipeline.request_restart()
                         elif action == "quit":
                             pipeline.stop()
-                except asyncio.TimeoutError:
-                    pass
                 await sock.send_text(json.dumps({
                     "type": "tick",
                     "stats": pipeline.get_stats(),

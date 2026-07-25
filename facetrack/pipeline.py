@@ -450,9 +450,10 @@ class Pipeline:
                 yy, xx = np.mgrid[0:h2, 0:w2]
                 self._checker = np.where(((yy // 24 + xx // 24) % 2)[..., None],
                                          66, 46).astype(np.uint8).repeat(3, axis=2)
+            # content is premultiplied: composite = fg + bg * (1 - a)
             a = img[:, :, 3:4].astype(np.uint16)
-            img = ((img[:, :, :3].astype(np.uint16) * a
-                    + self._checker.astype(np.uint16) * (255 - a)) // 255).astype(np.uint8)
+            img = (img[:, :, :3].astype(np.uint16)
+                   + self._checker.astype(np.uint16) * (255 - a) // 255).astype(np.uint8)
         ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 70])
         if ok:
             with self._pv_cond:

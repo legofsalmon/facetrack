@@ -12,7 +12,10 @@ pause_exit() { echo ""; read -n 1 -s -r -p "Press any key to close..."; exit 1; 
 models_ok() {
   [ -s models/face_detection_yunet_2023mar.onnx ] &&
   [ -s models/emotion-ferplus-8.onnx ] &&
-  [ -s models/scrfd_10g.onnx ]
+  [ -s models/scrfd_10g.onnx ] &&
+  [ -s models/human_segmentation_pphumanseg_2023mar.onnx ] &&
+  [ -s models/modnet_portrait.onnx ] &&
+  [ -s models/rvm_mobilenetv3_fp32.onnx ]
 }
 
 ready() {

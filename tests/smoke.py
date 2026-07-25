@@ -85,6 +85,14 @@ def _():
         ids.update(t.id for t in tracks)
     assert len(tracks) == 3, f"expected 3 confirmed tracks, got {len(tracks)}"
     assert len(ids) == 3, f"IDs churned: {sorted(ids)}"
+    # hold time must match the panel's promise: a lost box survives
+    # exactly max_misses frames of empty detections, then goes
+    trk.max_misses = 10
+    empty = np.zeros((0, 5), dtype=np.float32)
+    for _ in range(10):
+        held = trk.step(empty)
+    assert len(held) == 3, "boxes must hold for the full max_misses window"
+    assert len(trk.step(empty)) == 0, "boxes must drop right after the window"
 
 
 def _first_frame():

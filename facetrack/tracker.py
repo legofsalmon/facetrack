@@ -124,5 +124,7 @@ class FaceTracker:
         t.misses = 0
 
     def confirmed(self) -> list[Track]:
+        # misses gate uses the FULL max_misses window so the panel's
+        # "Hold lost faces" seconds readout matches what's on screen
         return [t for t in self.tracks
-                if t.hits >= self.min_hits and t.misses <= self.max_misses // 2]
+                if t.hits >= self.min_hits and t.misses <= self.max_misses]
