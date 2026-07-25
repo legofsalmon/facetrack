@@ -154,7 +154,7 @@ identical controls — no more transport-specific options:
 |---|---|---|
 | Program | the picture (annotated, or clean with *Keep program clean* on) | panel shows connected-receiver count per NDI feed |
 | Overlay | graphics only, real alpha (premultiplied) | key it in vMix / Resolume / TriCaster / OBS+DistroAV |
-| Faces cutout | the picture only inside the cutout mask, transparent elsewhere | *Cutout shape*: rectangles, soft ovals, or a people silhouette; *Silhouette model* picks the engine — **Fast** (PP-HumanSeg), **Quality** (MODNet) or **Best** (RVM video matting); margin/softness/steadiness sliders |
+| Faces cutout | the picture only inside the cutout mask, transparent elsewhere | *Cutout shape*: rectangles, soft ovals, or a people silhouette; *Silhouette model* picks the engine — **Fast** (PP-HumanSeg), **Quality** (MODNet) or **Best** (RVM video matting); *Cutout margin* (face shapes) and *Silhouette margin* (people: grow for room, shrink to trim the background fringe matting models leave on hair and shoulders), plus edge softness and steadiness |
 | Mask | the cutout's matte itself | *Mask style*: **White on black** (classic luma matte for external keying) or **White on alpha** (alpha-aware chains) |
 
 NDI feeds are named `<name>`, `<name> Overlay`, `<name> Faces`,

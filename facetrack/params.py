@@ -43,6 +43,7 @@ SPEC = {
     "cutout_shape": (str, ("rectangle", "oval", "people"), None),
     "cutout_margin": (float, 0.0, 0.5),   # extra room around each face box
     "cutout_feather": (int, 0, 60),       # mask edge softness, px
+    "cutout_grow": (int, -30, 30),        # people mask: spread / choke, px
     "cutout_steady": (float, 0.0, 0.9),   # people-mask temporal smoothing
     "people_model": (str, ("pphumanseg", "modnet", "rvm"), None),
     "test_card": (bool, None, None),      # bars + motion on all feeds

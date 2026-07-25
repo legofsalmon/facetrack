@@ -581,7 +581,8 @@ class Pipeline:
                                          shape=p["cutout_shape"],
                                          feather=p["cutout_feather"],
                                          people_mask=people,
-                                         people_soft=self._people_soft)
+                                         people_soft=self._people_soft,
+                                         grow=p["cutout_grow"])
                     if need_faces:
                         hard = (hard_rect_regions(frame.shape[:2], tracks,
                                                   p["cutout_margin"])

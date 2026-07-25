@@ -242,6 +242,32 @@ def _():
             settings.SETTINGS_PATH = old
 
 
+@run("silhouette margin: grows and shrinks the people mask")
+def _():
+    from facetrack.overlay import cutout_alpha, grow_alpha
+    disc = np.zeros((360, 640), dtype=np.uint8)
+    cv2.circle(disc, (320, 180), 100, 255, -1)
+    base = (disc > 127).sum()
+
+    grown = (grow_alpha(disc, 12) > 127).sum()
+    shrunk = (grow_alpha(disc, -12) > 127).sum()
+    assert grown > base > shrunk, f"grow/shrink must change area ({shrunk} < {base} < {grown})"
+    assert grow_alpha(disc, 0) is disc, "zero must be a no-op"
+
+    # radius moves by roughly the requested pixels (area of a disc)
+    r_grown = (grown / np.pi) ** 0.5
+    assert 108 < r_grown < 116, f"expected ~112px radius after +12, got {r_grown:.1f}"
+
+    # reaches the people path with a soft matte, edge detail preserved
+    soft = cv2.GaussianBlur(disc, (21, 21), 0)
+    a_wide = cutout_alpha((360, 640), [], shape="people", people_mask=soft,
+                          people_soft=True, grow=10)
+    a_tight = cutout_alpha((360, 640), [], shape="people", people_mask=soft,
+                           people_soft=True, grow=-10)
+    assert (a_wide > 127).sum() > (a_tight > 127).sum()
+    assert ((a_wide > 0) & (a_wide < 255)).any(), "soft edge must survive the grow"
+
+
 @run("people cutout: feather slider actually controls edge width")
 def _():
     from facetrack.overlay import render_faces_cutout
