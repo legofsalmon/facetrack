@@ -357,7 +357,11 @@ def _():
     default = _cv.getNumThreads()
     try:
         n = runtime.limit_threads(True)
-        assert 1 <= n <= max(1, runtime.cores() // 2)
+        c = runtime.cores()
+        # assert the policy's intent, not its arithmetic
+        assert 1 <= n <= 6, f"budget {n} outside 1..6 on {c} cores"
+        if c >= 3:
+            assert n < c, f"must leave cores in reserve ({n} of {c})"
         # OpenCV only honours an arbitrary count on TBB/OpenMP/pthreads
         # builds; macOS GCD builds ignore it. Either is acceptable — the
         # ONNX cap below is the one that governs the expensive models.

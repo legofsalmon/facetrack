@@ -35,10 +35,12 @@ def budget() -> int:
     ONNX Runtime loose used ~5.5 cores for 28 inferences/s, while 4
     threads gave 22/s for 3.6 cores and 3 threads gave 16/s for 2.5.
     The pipeline only needs ~15/s (30 fps, segmenting every other
-    frame), so a third of the cores keeps full frame rate at well under
-    half the CPU. Floored at 2 so small machines still get parallelism,
-    capped at 6 because more buys almost nothing."""
-    return max(2, min(6, round(cores() * 0.35))) if _limited else 0
+    frame), so a third of the cores holds the frame rate at well under
+    half the CPU: 2 cores -> 1, 4 -> 2, 8 -> 3, 12 -> 4. Capped at 6
+    because more buys almost nothing, and always at least one below the
+    core count so even a small machine keeps something in reserve —
+    that's the case this setting exists for."""
+    return max(1, min(6, (cores() + 2) // 3)) if _limited else 0
 
 
 def cv_threads() -> int:
