@@ -69,23 +69,18 @@ def render_overlay_bgra(shape_hw: tuple[int, int], tracks: list[Track],
     return canvas
 
 
-def render_faces_cutout(frame: np.ndarray, tracks: list[Track],
-                        margin: float = 0.15, shape: str = "rectangle",
-                        feather: int = 0,
-                        people_mask: np.ndarray | None = None,
-                        people_soft: bool = False) -> np.ndarray:
-    """The picture only inside the cutout mask; transparent elsewhere.
+def cutout_alpha(shape_hw: tuple[int, int], tracks: list[Track],
+                 margin: float = 0.15, shape: str = "rectangle",
+                 feather: int = 0,
+                 people_mask: np.ndarray | None = None,
+                 people_soft: bool = False) -> np.ndarray:
+    """The cutout's alpha mask alone (uint8, full frame).
 
     shape: 'rectangle' / 'oval' (per-face, margin-grown) or 'people'
-    (pass the segmenter's full-frame mask via people_mask). feather
-    softens the mask edge (Gaussian, px). Output is premultiplied BGRA —
-    soft edges multiply the picture down so NDI/Syphon key cleanly.
-
-    Face shapes do all their work inside each face's own region (faces
-    are a small fraction of the frame; full-frame math costs 20+ ms at
-    1080p). The people path is inherently full-frame but uses OpenCV's
-    SIMD multiply."""
-    H, W = frame.shape[:2]
+    (pass the segmenter's full-frame mask via people_mask; people_soft
+    marks a true matte whose edge detail must not be re-hardened).
+    feather softens the edge (Gaussian, px)."""
+    H, W = shape_hw
 
     if shape == "people" and people_mask is not None:
         if people_soft:
@@ -103,16 +98,13 @@ def render_faces_cutout(frame: np.ndarray, tracks: list[Track],
             _, alpha = cv2.threshold(people_mask, 127, 255, cv2.THRESH_BINARY)
             k = max(feather, 3) | 1
             alpha = cv2.GaussianBlur(alpha, (k, k), 0)
-        a3 = cv2.cvtColor(alpha, cv2.COLOR_GRAY2BGR)
-        b, g, r = cv2.split(cv2.multiply(frame, a3, scale=1 / 255.0))
-        return cv2.merge((b, g, r, alpha))
+        return alpha
 
-    out = np.zeros((H, W, 4), dtype=np.uint8)
+    mask = np.zeros((H, W), dtype=np.uint8)
     oval = shape == "oval"
     for t in tracks:
         x, y, w, h = t.bbox
         mx, my = w * margin, h * margin
-        # region: the grown box plus room for the feather to fade out
         x1 = int(max(0, x - mx - feather))
         y1 = int(max(0, y - my - feather))
         x2 = int(min(W, x + w + mx + feather))
@@ -120,8 +112,7 @@ def render_faces_cutout(frame: np.ndarray, tracks: list[Track],
         if x2 <= x1 or y2 <= y1:
             continue
         if not oval and feather == 0:
-            out[y1:y2, x1:x2, :3] = frame[y1:y2, x1:x2]
-            out[y1:y2, x1:x2, 3] = 255
+            mask[y1:y2, x1:x2] = 255
             continue
         m = np.zeros((y2 - y1, x2 - x1), np.uint8)
         if oval:
@@ -137,12 +128,64 @@ def render_faces_cutout(frame: np.ndarray, tracks: list[Track],
         if feather > 0:
             k = feather | 1
             m = cv2.GaussianBlur(m, (k, k), 0)
-        a16 = m.astype(np.uint16)[..., None]
-        prem = ((frame[y1:y2, x1:x2].astype(np.uint16) * a16) // 255).astype(np.uint8)
-        # overlapping faces: max, so cutouts never darken each other
-        np.maximum(out[y1:y2, x1:x2, :3], prem, out=out[y1:y2, x1:x2, :3])
-        np.maximum(out[y1:y2, x1:x2, 3], m, out=out[y1:y2, x1:x2, 3])
-    return out
+        np.maximum(mask[y1:y2, x1:x2], m, out=mask[y1:y2, x1:x2])
+    return mask
+
+
+def apply_cutout(frame: np.ndarray, alpha: np.ndarray,
+                 hard_regions: list | None = None) -> np.ndarray:
+    """Premultiplied BGRA: the picture inside the alpha, empty outside.
+    hard_regions (list of (x1, y1, x2, y2), for binary rectangle masks)
+    takes the cheap region-copy path; otherwise SIMD multiply."""
+    if hard_regions is not None:
+        out = np.zeros((*frame.shape[:2], 4), dtype=np.uint8)
+        for x1, y1, x2, y2 in hard_regions:
+            out[y1:y2, x1:x2, :3] = frame[y1:y2, x1:x2]
+        out[:, :, 3] = alpha
+        return out
+    a3 = cv2.cvtColor(alpha, cv2.COLOR_GRAY2BGR)
+    b, g, r = cv2.split(cv2.multiply(frame, a3, scale=1 / 255.0))
+    return cv2.merge((b, g, r, alpha))
+
+
+def hard_rect_regions(shape_hw: tuple[int, int], tracks: list[Track],
+                      margin: float) -> list:
+    """Clamped margin-grown boxes — the fast path for hard rectangles."""
+    H, W = shape_hw
+    regions = []
+    for t in tracks:
+        x, y, w, h = t.bbox
+        mx, my = w * margin, h * margin
+        x1, y1 = int(max(0, x - mx)), int(max(0, y - my))
+        x2, y2 = int(min(W, x + w + mx)), int(min(H, y + h + my))
+        if x2 > x1 and y2 > y1:
+            regions.append((x1, y1, x2, y2))
+    return regions
+
+
+def render_mask(alpha: np.ndarray, style: str = "white") -> np.ndarray:
+    """The mask itself as an output feed. 'white': white-on-black BGR —
+    the classic luma matte for external keying. 'alpha': white silhouette
+    carried in the alpha channel (premultiplied) for alpha-aware chains."""
+    if style == "alpha":
+        return cv2.merge((alpha, alpha, alpha, alpha))
+    return cv2.cvtColor(alpha, cv2.COLOR_GRAY2BGR)
+
+
+def render_faces_cutout(frame: np.ndarray, tracks: list[Track],
+                        margin: float = 0.15, shape: str = "rectangle",
+                        feather: int = 0,
+                        people_mask: np.ndarray | None = None,
+                        people_soft: bool = False) -> np.ndarray:
+    """The picture only inside the cutout mask; transparent elsewhere
+    (premultiplied BGRA). Convenience wrapper over cutout_alpha +
+    apply_cutout."""
+    alpha = cutout_alpha(frame.shape[:2], tracks, margin=margin, shape=shape,
+                         feather=feather, people_mask=people_mask,
+                         people_soft=people_soft)
+    hard = (hard_rect_regions(frame.shape[:2], tracks, margin)
+            if shape == "rectangle" and feather == 0 else None)
+    return apply_cutout(frame, alpha, hard_regions=hard)
 
 
 def render_test_card(w: int, h: int, lines: list[str]) -> tuple[np.ndarray, np.ndarray]:

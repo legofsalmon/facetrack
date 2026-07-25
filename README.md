@@ -84,9 +84,13 @@ names. That's it.
 - **Click the preview** to open it full-size in its own tab; the *view
   log* link in the Process card shows the app's recent log lines from
   any device — no need to walk to the machine.
-- **Stat chips change colour** when things get tight: processing time
-  turns amber past 60% of the frame budget and red past the whole budget;
-  fps warns below 90% of the target rate and alarms below two-thirds.
+- **Performance card + load chip**: the header shows total pipeline
+  **load** as a percentage of the frame budget, and the Performance card
+  breaks it down per feature (face finding, expressions, silhouette
+  model, feed outputs, previews…) with live bars — so you can see
+  exactly what each toggle costs and what to switch off when the
+  machine is tight. fps and load chips turn amber/red as they approach
+  limits.
 - **PIN protection**: on a shared production network, launch with
   `--pin 4721` (or add `"pin": "4721"` to `settings.json`). The panel then
   asks once per browser; without it, controls, preview and source listing
@@ -142,21 +146,24 @@ panel port, and prints the fix for anything broken.
 
 ### Output feeds
 
-Everything below is a live toggle in the panel's **Output feeds** card and
-persists across restarts:
+The panel's **Outputs card is a matrix**: four content types, each
+switchable onto NDI (network) and/or Syphon/Spout (same machine) with
+identical controls — no more transport-specific options:
 
-| Output | What it carries | Notes |
+| Content | What it carries | Notes |
 |---|---|---|
-| Main NDI feed | the program picture (annotated, or clean with *Keep main feed clean* on) | panel shows connected-receiver count |
-| Overlay NDI feed | graphics only, real alpha (premultiplied) | key it in vMix / Resolume / TriCaster / OBS+DistroAV |
-| Faces cutout feed | the picture only inside the cutout mask, transparent everywhere else | *Cutout shape*: rectangles, soft ovals, or a **people silhouette** (PP-HumanSeg, Apache-2.0 — loads when first selected); *Silhouette model* picks the engine — **Fast** (PP-HumanSeg, runs anywhere), **Quality** (MODNet, hair-level matting of prominent subjects) or **Best** (RVM video matting: temporally stable, handles difficult clothing/backgrounds; ~27ms/frame on an M-class CPU, a few ms on the GPU machine); *Cutout margin* adds headroom; *Edge softness* feathers the mask; *Silhouette steadiness* trades calm edges against a beat of lag |
-| Syphon (macOS) / Spout (Windows) | full picture, graphics overlay, **or** faces cutout — pick in the panel | zero-compression, GPU-to-GPU, same machine only |
-| Output size | Match input / 1920 / 1280 / 960 wide | applies to all feeds; lowers network load |
-| Test card | SMPTE-style bars, ramp, feed identity, clock + moving block | lives in the Process card; motion proves the chain is live, not frozen; alpha feeds get a bracket/crosshair pattern instead; works with no input connected |
+| Program | the picture (annotated, or clean with *Keep program clean* on) | panel shows connected-receiver count per NDI feed |
+| Overlay | graphics only, real alpha (premultiplied) | key it in vMix / Resolume / TriCaster / OBS+DistroAV |
+| Faces cutout | the picture only inside the cutout mask, transparent elsewhere | *Cutout shape*: rectangles, soft ovals, or a people silhouette; *Silhouette model* picks the engine — **Fast** (PP-HumanSeg), **Quality** (MODNet) or **Best** (RVM video matting); margin/softness/steadiness sliders |
+| Mask | the cutout's matte itself | *Mask style*: **White on black** (classic luma matte for external keying) or **White on alpha** (alpha-aware chains) |
 
-Feed *names* are fixed at launch (`--ndi-name`, `--ndi-overlay`; the
-overlay defaults to "<name> Overlay", the cutout to "<name> Faces")
-because renaming mid-show would drop receivers. NDI's codec is lossy, so keyed NDI graphics gain a pixel of
+NDI feeds are named `<name>`, `<name> Overlay`, `<name> Faces`,
+`<name> Mask`; texture feeds appear as `facetrack`,
+`facetrack-overlay/-faces/-mask` (with a custom `--ndi-name`, the base
+becomes `facetrack-<name>`, so two instances never collide).
+
+Feed *names* are fixed at launch because renaming mid-show would drop
+receivers. NDI's codec is lossy, so keyed NDI graphics gain a pixel of
 soft fringe — normal for all NDI alpha sources; the Syphon/Spout path is
 uncompressed and keys perfectly. Feeds are emitted together; your mixer's
 frame sync aligns them.

@@ -103,6 +103,21 @@
   .lbl .hint { line-height: 1.3; }
   .row output { flex: 0 0 52px; text-align: right; font-variant-numeric: tabular-nums;
                 font-size: 12.5px; color: var(--dim); }
+  .mx-h { flex: 0 0 44px; text-align: center; font-size: 10.5px; font-weight: 650;
+          letter-spacing: .6px; color: var(--dim); text-transform: uppercase; }
+  .row label.switch.mx { flex: 0 0 38px; margin-left: 0; }
+  .row label.switch.mx:first-of-type { margin-left: auto; }
+  .row .mx { margin-right: 6px; }
+  .tex-sw.unavail { opacity: .3; pointer-events: none; }
+  .perf-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  .perf-row .pn { flex: 0 0 118px; color: var(--dim); }
+  .perf-row .pt { flex: 1; height: 8px; background: var(--panel2); border-radius: 4px;
+                  overflow: hidden; }
+  .perf-row .pb { height: 100%; background: var(--accent); border-radius: 4px; }
+  .perf-row .pb.warn { background: var(--warn); }
+  .perf-row .pb.bad { background: var(--bad); }
+  .perf-row .pv { flex: 0 0 58px; text-align: right; color: var(--dim);
+                  font-variant-numeric: tabular-nums; }
   input[type=range] { flex: 1; accent-color: var(--accent); height: 22px; min-width: 60px; }
   select, input[type=text] {
     background: var(--panel2); color: var(--text); border: 1px solid var(--line);
@@ -149,7 +164,7 @@
   <div class="chips">
     <div class="chip">faces <b id="s-faces">–</b></div>
     <div class="chip">fps <b id="s-fps">–</b></div>
-    <div class="chip">proc <b id="s-proc">–</b> ms</div>
+    <div class="chip" title="total pipeline work vs the frame budget">load <b id="s-load">–</b>%</div>
   </div>
 </header>
 
@@ -173,6 +188,7 @@
         <button data-v="clean" title="the picture exactly as the camera sees it">Clean camera</button>
         <button data-v="overlay" title="graphics layer on transparency (checkerboard = transparent)">Overlay only</button>
         <button data-v="faces" title="faces cutout on transparency (checkerboard = transparent)">Faces cutout</button>
+        <button data-v="mask" title="the mask feed as sent (white = kept)">Mask</button>
       </div>
       <div id="feedinfo">–</div>
       <div id="error"></div>
@@ -185,6 +201,13 @@
         <div class="lbl"><label for="local_preview">Window on the machine</label>
           <span class="hint">the preview window on the facetrack computer itself</span></div>
         <label class="switch"><input type="checkbox" id="local_preview"><span class="slider"></span></label>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top: 14px">
+      <h2>Performance</h2>
+      <div id="perf" style="padding: 11px 14px; display: flex; flex-direction: column; gap: 7px">
+        <span class="hint">waiting for data…</span>
       </div>
     </div>
   </div>
@@ -288,26 +311,48 @@
     </div>
 
     <div class="card">
-      <h2>Output feeds</h2>
-      <div class="row">
-        <div class="lbl"><label for="ndi_main">Main NDI feed</label>
-          <span class="hint" id="ndi-main-hint">the program picture</span></div>
-        <label class="switch"><input type="checkbox" id="ndi_main"><span class="slider"></span></label>
+      <h2>Outputs</h2>
+      <div class="row" style="padding: 8px 14px 4px; border-bottom: 0">
+        <div class="lbl" style="flex: 1"><span class="hint">each feed can go to NDI (network) and/or <span id="tex-col-name">Syphon</span> (this machine)</span></div>
+        <span class="mx-h">NDI</span>
+        <span class="mx-h" id="tex-col-h">Syphon</span>
       </div>
       <div class="row">
-        <div class="lbl"><label for="clean_main">Keep main feed clean</label>
-          <span class="hint">no graphics on the main feed — they go to the overlay feed only</span></div>
+        <div class="lbl"><label for="ndi_program">Program</label>
+          <span class="hint">the picture (with graphics unless kept clean)</span></div>
+        <label class="switch mx"><input type="checkbox" id="ndi_program"><span class="slider"></span></label>
+        <label class="switch mx tex-sw"><input type="checkbox" id="tex_program"><span class="slider"></span></label>
+      </div>
+      <div class="row">
+        <div class="lbl"><label for="clean_main">&nbsp;&nbsp;↳ Keep program clean</label>
+          <span class="hint">no graphics on the program — they go to the overlay feed only</span></div>
         <label class="switch"><input type="checkbox" id="clean_main"><span class="slider"></span></label>
       </div>
       <div class="row">
-        <div class="lbl"><label for="ndi_overlay">Overlay NDI feed</label>
-          <span class="hint" id="ndi-ovl-hint">graphics on transparency, for keying</span></div>
-        <label class="switch"><input type="checkbox" id="ndi_overlay"><span class="slider"></span></label>
+        <div class="lbl"><label for="ndi_overlay">Overlay</label>
+          <span class="hint">graphics on transparency, for keying</span></div>
+        <label class="switch mx"><input type="checkbox" id="ndi_overlay"><span class="slider"></span></label>
+        <label class="switch mx tex-sw"><input type="checkbox" id="tex_overlay"><span class="slider"></span></label>
       </div>
       <div class="row">
-        <div class="lbl"><label for="ndi_faces">Faces cutout feed</label>
-          <span class="hint">only the detected faces show; everything else transparent</span></div>
-        <label class="switch"><input type="checkbox" id="ndi_faces"><span class="slider"></span></label>
+        <div class="lbl"><label for="ndi_faces">Faces cutout</label>
+          <span class="hint">the picture inside the cutout; transparent elsewhere</span></div>
+        <label class="switch mx"><input type="checkbox" id="ndi_faces"><span class="slider"></span></label>
+        <label class="switch mx tex-sw"><input type="checkbox" id="tex_faces"><span class="slider"></span></label>
+      </div>
+      <div class="row">
+        <div class="lbl"><label for="ndi_mask">Mask</label>
+          <span class="hint">the cutout's matte itself, for external keying</span></div>
+        <label class="switch mx"><input type="checkbox" id="ndi_mask"><span class="slider"></span></label>
+        <label class="switch mx tex-sw"><input type="checkbox" id="tex_mask"><span class="slider"></span></label>
+      </div>
+      <div class="row" id="mask-style-row">
+        <div class="lbl"><label for="mask_style">Mask style</label>
+          <span class="hint">luma matte, or the matte carried in the alpha channel</span></div>
+        <select id="mask_style">
+          <option value="white">White on black</option>
+          <option value="alpha">White on alpha</option>
+        </select>
       </div>
       <div class="row" id="cutout-shape-row">
         <div class="lbl"><label for="cutout_shape">Cutout shape</label>
@@ -359,24 +404,6 @@
     </div>
 
     <div class="card">
-      <h2 id="tex-title">Texture share</h2>
-      <div class="row">
-        <div class="lbl"><label for="texture_share" id="tex-label">Syphon / Spout output</label>
-          <span class="hint" id="tex-hint">direct to Resolume, VDMX, TouchDesigner… on this machine</span></div>
-        <label class="switch"><input type="checkbox" id="texture_share"><span class="slider"></span></label>
-      </div>
-      <div class="row">
-        <div class="lbl"><label for="texture_source">What it carries</label>
-          <span class="hint">overlay &amp; faces come with alpha for keying</span></div>
-        <select id="texture_source">
-          <option value="program">Full picture</option>
-          <option value="overlay">Graphics overlay</option>
-          <option value="faces">Faces cutout</option>
-        </select>
-      </div>
-    </div>
-
-    <div class="card">
       <h2>Process</h2>
       <div class="row">
         <div class="lbl"><label for="test_card">Test card</label>
@@ -408,11 +435,17 @@
         savedBadge = $("saved"), pvMsg = $("pv-msg"), pv = $("preview");
   const params = ["det_threshold","det_size","detect_every","min_face","max_misses",
                   "emotion_enabled","emotion_budget","show_ids","show_stats",
-                  "clean_main","flip","ndi_main","ndi_overlay","ndi_faces",
+                  "clean_main","flip",
+                  "ndi_program","ndi_overlay","ndi_faces","ndi_mask",
+                  "tex_program","tex_overlay","tex_faces","tex_mask","mask_style",
                   "cutout_shape","cutout_margin","cutout_feather","cutout_steady",
                   "people_model","out_width",
-                  "texture_share","texture_source",
                   "test_card","panel_preview","local_preview"];
+  const PERF_LABELS = { detect: "Face finding", track: "Tracking",
+                        express: "Expressions", silhouette: "Silhouette model",
+                        cutout: "Cutout render", overlay: "Overlay render",
+                        annotate: "Annotation", outputs: "Feed outputs",
+                        preview: "Panel preview" };
   const PRESETS = {
     wide:  { det_size: 960, det_threshold: 0.35, min_face: 0,  detect_every: 1 },
     mid:   { det_size: 640, det_threshold: 0.45, min_face: 0,  detect_every: 1 },
@@ -568,7 +601,10 @@
     markActivePreset(p);
     document.querySelectorAll("#pv-tabs button").forEach((b) =>
       b.classList.toggle("active", b.dataset.v === p.preview_source));
-    const cutActive = p.ndi_faces || p.texture_source === "faces"
+    const maskOn = p.ndi_mask || p.tex_mask || p.preview_source === "mask";
+    $("mask-style-row").classList.toggle("dimmed", !maskOn);
+    $("mask_style").disabled = !maskOn;
+    const cutActive = p.ndi_faces || p.tex_faces || maskOn
                       || p.preview_source === "faces";
     $("cutout-shape-row").classList.toggle("dimmed", !cutActive);
     $("cutout_shape").disabled = !cutActive;
@@ -598,8 +634,9 @@
     if (s.fps) lastFps = s.fps;
     $("s-fps").textContent = s.fps ?? "–";
     $("s-faces").textContent = s.faces ?? "–";
-    $("s-proc").textContent = s.proc_ms ?? "–";
+    $("s-load").textContent = s.load_pct ?? "–";
     lastState = s.state || "live";
+    const ndiFeeds = s.ndi_feeds || [], texFeeds = s.tex_feeds || [];
     $("btn-pause").textContent = lastState === "paused" ? "Resume" : "Pause";
     onair.classList.remove("live", "paused", "nosignal");
     if (lastState === "paused") {
@@ -611,25 +648,47 @@
     } else if (lastState === "no-signal") {
       onair.textContent = "NO SIGNAL";
       onair.classList.add("nosignal");
-    } else if (s.ndi_display || s.ndi_overlay_display || s.ndi_faces_display
-               || s.texture_on) {
+    } else if (ndiFeeds.length || texFeeds.length) {
       onair.textContent = "ON AIR";
       onair.classList.add("live");
     } else {
       onair.textContent = "FEEDS OFF";
     }
 
-    // health colouring: proc vs the frame budget, fps vs the target rate
+    // health colouring: load vs the frame budget, fps vs the target rate
     const target = s.out_fps_target || 30;
-    const procEl = $("s-proc");
-    procEl.classList.remove("warn", "bad");
-    if (s.proc_ms > 1000 / target) procEl.classList.add("bad");
-    else if (s.proc_ms > 600 / target) procEl.classList.add("warn");
+    const loadEl = $("s-load");
+    loadEl.classList.remove("warn", "bad");
+    if (s.load_pct > 100) loadEl.classList.add("bad");
+    else if (s.load_pct > 60) loadEl.classList.add("warn");
     const fpsEl = $("s-fps");
     fpsEl.classList.remove("warn", "bad");
     if (lastState === "live" && s.fps) {
       if (s.fps < target * 0.67) fpsEl.classList.add("bad");
       else if (s.fps < target * 0.9) fpsEl.classList.add("warn");
+    }
+
+    // per-feature cost bars
+    if (s.perf && lastState === "live") {
+      const budget = s.budget_ms || 33.3;
+      let total = 0;
+      let html = "";
+      Object.keys(PERF_LABELS).forEach((k) => {
+        const ms = s.perf[k];
+        if (ms == null) return;
+        total += ms;
+        const pct = Math.min(100, ms / budget * 100);
+        const cls = pct > 45 ? "bad" : pct > 25 ? "warn" : "";
+        html += `<div class="perf-row"><span class="pn">${PERF_LABELS[k]}</span>` +
+                `<span class="pt"><span class="pb ${cls}" style="width:${pct.toFixed(1)}%"></span></span>` +
+                `<span class="pv">${ms.toFixed(1)} ms</span></div>`;
+      });
+      const tpct = Math.min(100, total / budget * 100);
+      const tcls = tpct > 85 ? "bad" : tpct > 60 ? "warn" : "";
+      html += `<div class="perf-row" style="font-weight:600"><span class="pn" style="color:var(--text)">Total / budget</span>` +
+              `<span class="pt"><span class="pb ${tcls}" style="width:${tpct.toFixed(1)}%"></span></span>` +
+              `<span class="pv">${total.toFixed(1)} / ${budget} ms</span></div>`;
+      $("perf").innerHTML = html;
     }
 
     if (switching && (s.source === switching.spec || Date.now() > switching.until)) {
@@ -640,31 +699,22 @@
     }
     let info = "Input: <b>" + (s.no_input ? "none — pick a source above" : (s.source || "–")) + "</b>";
     if (s.out_res) info += " &nbsp;·&nbsp; out: <b>" + s.out_res + "</b>";
-    const feeds = [];  // every live feed shows, whether or not main is on
-    if (s.ndi_display)
-      feeds.push("<b>" + s.ndi_display + "</b> (" + (s.ndi_connections ?? 0) + " watching)");
-    if (s.ndi_overlay_display)
-      feeds.push("<b>" + s.ndi_overlay_display + "</b> (" + (s.ndi_overlay_connections ?? 0) + " watching)");
-    if (s.ndi_faces_display)
-      feeds.push("<b>" + s.ndi_faces_display + "</b> (" + (s.ndi_faces_connections ?? 0) + " watching)");
-    if (s.texture_on) feeds.push("<b>" + s.texture_kind + "</b>: live");
+    const feeds = [];
+    ndiFeeds.forEach((f) =>
+      feeds.push("<b>" + f.name + "</b> (" + (f.watching ?? 0) + " watching)"));
+    texFeeds.forEach((f) =>
+      feeds.push("<b>" + f.name + "</b> (" + (s.texture_kind || "texture") + ")"));
     info += " &nbsp;·&nbsp; " + (feeds.length ? feeds.join(" &nbsp;+&nbsp; ") : "no feeds on");
     $("feedinfo").innerHTML = info;
-    // texture-share card labels adapt to platform/availability
+    // texture column adapts to the platform, and greys out if unavailable
     const kindName = s.texture_kind === "syphon" ? "Syphon"
                    : s.texture_kind === "spout" ? "Spout" : "";
-    if (kindName) {
-      $("tex-title").textContent = "Texture share — " + kindName;
-      $("tex-label").textContent = kindName + " output";
-    }
-    if (s.texture_error) {
-      $("tex-hint").textContent = s.texture_error;
-      $("tex-hint").style.color = "var(--warn)";
-    } else {
-      $("tex-hint").style.color = "";
-      $("tex-hint").textContent =
-        "direct to Resolume, VDMX, TouchDesigner… on this machine";
-    }
+    $("tex-col-h").textContent = kindName || "Syphon";
+    $("tex-col-name").textContent = kindName || "Syphon/Spout";
+    document.querySelectorAll(".tex-sw").forEach((el) => {
+      el.classList.toggle("unavail", !kindName);
+      el.title = kindName ? "" : "texture share unavailable on this machine";
+    });
     if (s.error) { errBox.textContent = s.error; errBox.style.display = "block"; }
     else errBox.style.display = "none";
     if (s.uptime_s != null) {

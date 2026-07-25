@@ -35,9 +35,15 @@ def load() -> dict:
     data = _read_raw()
     params = data.get("params", {})
     known = {k: v for k, v in params.items() if k in SPEC}
-    # migration: "texture_overlay" (bool, pre-faces-cutout) -> "texture_source"
-    if "texture_source" not in known and params.get("texture_overlay"):
-        known["texture_source"] = "overlay"
+    # migrations from before the output matrix (July 2026)
+    if "ndi_program" not in known and "ndi_main" in params:
+        known["ndi_program"] = bool(params["ndi_main"])
+    if params.get("texture_share") and not any(
+            k in known for k in ("tex_program", "tex_overlay", "tex_faces")):
+        src = params.get("texture_source",
+                         "overlay" if params.get("texture_overlay") else "program")
+        known[{"program": "tex_program", "overlay": "tex_overlay",
+               "faces": "tex_faces"}.get(src, "tex_program")] = True
     return {
         "params": known,
         "source": data.get("source") or None,

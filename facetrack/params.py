@@ -22,12 +22,19 @@ SPEC = {
     "overlay_color": (str, None, None),   # "#rrggbb" brand colour; "" = palette
     "clean_main": (bool, None, None),
     "flip": (bool, None, None),
-    "ndi_main": (bool, None, None),
+    # The output matrix: four content types x two transports. NDI feeds
+    # are named "<name>", "<name> Overlay/Faces/Mask"; texture servers
+    # (Syphon/Spout) are "facetrack", "facetrack-overlay/-faces/-mask".
+    "ndi_program": (bool, None, None),
     "ndi_overlay": (bool, None, None),
+    "ndi_faces": (bool, None, None),
+    "ndi_mask": (bool, None, None),
+    "tex_program": (bool, None, None),
+    "tex_overlay": (bool, None, None),
+    "tex_faces": (bool, None, None),
+    "tex_mask": (bool, None, None),
+    "mask_style": (str, ("white", "alpha"), None),  # luma matte / on alpha
     "out_width": (int, 0, 3840),          # 0 = match input resolution
-    "texture_share": (bool, None, None),  # Syphon (macOS) / Spout (Windows)
-    "texture_source": (str, ("program", "overlay", "faces"), None),  # what it carries
-    "ndi_faces": (bool, None, None),      # faces-cutout NDI feed
     "cutout_shape": (str, ("rectangle", "oval", "people"), None),
     "cutout_margin": (float, 0.0, 0.5),   # extra room around each face box
     "cutout_feather": (int, 0, 60),       # mask edge softness, px
@@ -35,7 +42,7 @@ SPEC = {
     "people_model": (str, ("pphumanseg", "modnet", "rvm"), None),
     "test_card": (bool, None, None),      # bars + motion on all feeds
     "panel_preview": (bool, None, None),  # MJPEG thumbnail in the web panel
-    "preview_source": (str, ("annotated", "clean", "overlay", "faces"), None),
+    "preview_source": (str, ("annotated", "clean", "overlay", "faces", "mask"), None),
     "local_preview": (bool, None, None),  # preview window on the machine
 }
 

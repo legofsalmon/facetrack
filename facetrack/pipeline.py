@@ -17,8 +17,9 @@ import numpy as np
 from .capture import NullSource, open_source
 from .detectors import pick_backend
 from .emotion import EmotionEstimator
-from .overlay import (draw_stats, draw_tracks, render_faces_cutout,
-                      render_overlay_bgra, render_test_card)
+from .overlay import (apply_cutout, cutout_alpha, draw_stats, draw_tracks,
+                      hard_rect_regions, render_mask, render_overlay_bgra,
+                      render_test_card)
 from .params import LiveParams
 from .tracker import FaceTracker
 
@@ -40,19 +41,31 @@ class Pipeline:
         self.hostname = socket.gethostname().split(".")[0].upper()
         self.on_source_change = None  # optional callback(spec) after a successful swap
 
-        # Output names are fixed at launch; whether each output runs is a
-        # live param (_sync_outputs creates/destroys them mid-run).
-        self.ndi_name = args.ndi_name
-        self.overlay_name = args.ndi_overlay or f"{args.ndi_name} Overlay"
-        self.faces_name = f"{args.ndi_name} Faces"
-        # Syphon/Spout server name follows --ndi-name so a second instance
+        # The output matrix: four content types x two transports. Names
+        # are fixed at launch; whether each feed runs is a live param
+        # (_sync_outputs creates/destroys them mid-run).
+        base = args.ndi_name
+        self.ndi_name = base
+        self.ndi_feed_names = {
+            "program": base,
+            "overlay": args.ndi_overlay or f"{base} Overlay",
+            "faces": f"{base} Faces",
+            "mask": f"{base} Mask",
+        }
+        # Syphon/Spout server names follow --ndi-name so a second instance
         # (which must use its own --ndi-name) can't collide; the default
         # stays plain "facetrack" to keep existing VJ patches working.
-        self.texture_name = ("facetrack" if args.ndi_name == "FaceTracker"
-                             else f"facetrack-{args.ndi_name}")
+        tex_base = "facetrack" if base == "FaceTracker" else f"facetrack-{base}"
+        self.tex_feed_names = {
+            "program": tex_base,
+            "overlay": f"{tex_base}-overlay",
+            "faces": f"{tex_base}-faces",
+            "mask": f"{tex_base}-mask",
+        }
         from . import texture_out
         self.texture_kind, self.texture_error = texture_out.probe()
-        self.texture = None
+        self.ndi_outs: dict = {}
+        self.tex_outs: dict = {}
 
         self.source_spec = args.source
         self.startup_error = ""
@@ -63,11 +76,9 @@ class Pipeline:
             self.startup_error = f"source '{args.source}': {exc}"
             self.source = NullSource(args.width or 1280, args.height or 720)
 
-        self.ndi = None
-        self.ndi_overlay = None
-        self.ndi_faces = None
-        self._connections = (0, 0, 0)
+        self._connections: dict = {}
         self._conn_check_frame = -999
+        self._perf: dict = {}  # per-stage ms EMAs for the panel meter
 
         self._stop = threading.Event()
         self.paused = False
@@ -133,60 +144,66 @@ class Pipeline:
 
     # ---- internals ----
 
+    CONTENTS = ("program", "overlay", "faces", "mask")
+
     def _sync_outputs(self, p: dict) -> None:
-        """Create/destroy NDI senders and the Syphon/Spout server to match
-        the live params. Cheap no-op when nothing changed. NDI is imported
+        """Create/destroy feeds to match the live params — same logic for
+        both transports. Cheap no-op when nothing changed. NDI is imported
         only when actually turning a feed on, so NDI-less environments
         (CI) can still run the pipeline with feeds off."""
-        try:
-            if p["ndi_main"] and self.ndi is None:
-                from .ndi_io import NDIOutput
-                self.ndi = NDIOutput(self.ndi_name, fps=self.args.fps)
-            elif not p["ndi_main"] and self.ndi is not None:
-                self.ndi.close()
-                self.ndi = None
-            if p["ndi_overlay"] and self.ndi_overlay is None:
-                from .ndi_io import NDIOutput
-                self.ndi_overlay = NDIOutput(self.overlay_name, fps=self.args.fps)
-            elif not p["ndi_overlay"] and self.ndi_overlay is not None:
-                self.ndi_overlay.close()
-                self.ndi_overlay = None
-            if p["ndi_faces"] and self.ndi_faces is None:
-                from .ndi_io import NDIOutput
-                self.ndi_faces = NDIOutput(self.faces_name, fps=self.args.fps)
-            elif not p["ndi_faces"] and self.ndi_faces is not None:
-                self.ndi_faces.close()
-                self.ndi_faces = None
-        except Exception as exc:
-            self.last_error = f"NDI output: {exc}"
-            self._error_time = time.monotonic()
-
-        want_texture = p["texture_share"] and bool(self.texture_kind)
-        if want_texture and self.texture is None:
+        for c in self.CONTENTS:
             try:
-                from . import texture_out
-                self.texture = texture_out.create(self.texture_name)
+                if p[f"ndi_{c}"] and c not in self.ndi_outs:
+                    from .ndi_io import NDIOutput
+                    self.ndi_outs[c] = NDIOutput(self.ndi_feed_names[c],
+                                                 fps=self.args.fps)
+                elif not p[f"ndi_{c}"] and c in self.ndi_outs:
+                    self.ndi_outs.pop(c).close()
             except Exception as exc:
-                self.texture_error = str(exc)
-                self.texture_kind = ""  # don't retry every frame
-        elif not want_texture and self.texture is not None:
-            self.texture.close()
-            self.texture = None
+                self.last_error = f"NDI output: {exc}"
+                self._error_time = time.monotonic()
+            want_tex = p[f"tex_{c}"] and bool(self.texture_kind)
+            if want_tex and c not in self.tex_outs:
+                try:
+                    from . import texture_out
+                    self.tex_outs[c] = texture_out.create(self.tex_feed_names[c])
+                except Exception as exc:
+                    self.texture_error = str(exc)
+                    self.texture_kind = ""  # don't retry every frame
+                    self.last_error = f"Texture share: {exc}"
+                    self._error_time = time.monotonic()
+            elif not want_tex and c in self.tex_outs:
+                self.tex_outs.pop(c).close()
 
-    def _receiver_counts(self, frame_idx: int) -> tuple[int, int, int]:
+    def _receiver_counts(self, frame_idx: int) -> dict:
         """Connected-receiver counts per NDI feed, refreshed ~3x/second."""
         if frame_idx - self._conn_check_frame >= 10:
             self._conn_check_frame = frame_idx
-            def count(out):
-                if out is None or out.sender is None:
-                    return 0
+            counts = {}
+            for c, out in self.ndi_outs.items():
                 try:
-                    return int(out.sender.get_num_connections(0))
+                    counts[c] = int(out.sender.get_num_connections(0)) \
+                        if out.sender is not None else 0
                 except Exception:
-                    return 0
-            self._connections = (count(self.ndi), count(self.ndi_overlay),
-                                 count(self.ndi_faces))
+                    counts[c] = 0
+            self._connections = counts
         return self._connections
+
+    def _send_idle(self, p: dict, program_img) -> None:
+        """Push an idle state to every active feed: `program_img` on the
+        program feeds, transparency on the alpha feeds, and an empty mask
+        on the mask feeds (black or transparent per style)."""
+        _, transparent = self._standby_frames("")
+        black, _ = self._standby_frames("")
+        mask_img = black if p["mask_style"] == "white" else transparent
+        table = {"program": program_img, "overlay": transparent,
+                 "faces": transparent, "mask": mask_img}
+        for outs in (self.ndi_outs, self.tex_outs):
+            for c, out in list(outs.items()):
+                try:
+                    out.send(table[c])
+                except Exception:
+                    pass
 
     def _standby_frames(self, title: str = "STANDBY",
                         sub: str = "resume from the control panel"):
@@ -216,15 +233,8 @@ class Pipeline:
         """One loop iteration while paused: keep feeds up with a standby
         slate (overlay goes fully transparent), keep the panel informed."""
         self._sync_outputs(p)
-        slate, transparent = self._standby_frames()
-        if self.ndi is not None:
-            self.ndi.send(slate)
-        if self.ndi_overlay is not None:
-            self.ndi_overlay.send(transparent)
-        if self.ndi_faces is not None:
-            self.ndi_faces.send(transparent)
-        if self.texture is not None:
-            self.texture.send(slate if p["texture_source"] == "program" else transparent)
+        slate, _ = self._standby_frames()
+        self._send_idle(p, slate)
         if self.web_enabled and p["panel_preview"]:
             self._publish_preview(slate)
         with self._stats_lock:
@@ -261,14 +271,15 @@ class Pipeline:
         cv2.putText(card, clock, (w - tw - int(w * 0.03), int(h * 0.80)),
                     cv2.FONT_HERSHEY_SIMPLEX, fscale * 1.5, (235, 235, 235), th,
                     cv2.LINE_AA)
-        if self.ndi is not None:
-            self.ndi.send(card)
-        if self.ndi_overlay is not None:
-            self.ndi_overlay.send(ovl)
-        if self.ndi_faces is not None:
-            self.ndi_faces.send(ovl)
-        if self.texture is not None:
-            self.texture.send(card if p["texture_source"] == "program" else ovl)
+        mask_test = (cv2.cvtColor(ovl[:, :, 3], cv2.COLOR_GRAY2BGR)
+                     if p["mask_style"] == "white" else ovl)
+        table = {"program": card, "overlay": ovl, "faces": ovl, "mask": mask_test}
+        for outs in (self.ndi_outs, self.tex_outs):
+            for c, out in list(outs.items()):
+                try:
+                    out.send(table[c])
+                except Exception:
+                    pass
         if self.web_enabled and p["panel_preview"]:
             self._publish_preview(card)
         with self._stats_lock:
@@ -285,15 +296,8 @@ class Pipeline:
         self._sync_outputs(p)
         # Outputs get plain black — graceful on a live screen. The panel
         # preview keeps the diagnostic slate for the operator.
-        black, transparent = self._standby_frames("")
-        if self.ndi is not None:
-            self.ndi.send(black)
-        if self.ndi_overlay is not None:
-            self.ndi_overlay.send(transparent)
-        if self.ndi_faces is not None:
-            self.ndi_faces.send(transparent)
-        if self.texture is not None:
-            self.texture.send(black if p["texture_source"] == "program" else transparent)
+        black, _ = self._standby_frames("")
+        self._send_idle(p, black)
         if self.web_enabled and p["panel_preview"]:
             slate, _ = self._standby_frames(
                 "NO SIGNAL", f"input '{self.source_spec}' lost - reconnecting")
@@ -501,6 +505,7 @@ class Pipeline:
                 if p["flip"]:
                     frame = cv2.flip(frame, 1)
 
+                laps: dict = {}
                 t0 = time.perf_counter()
                 self.detector.apply_live(p["det_threshold"], p["det_size"])
                 self.tracker.max_misses = p["max_misses"]
@@ -509,8 +514,12 @@ class Pipeline:
                     dets = self.detector.detect(frame)
                     if p["min_face"] > 0 and len(dets):
                         dets = dets[(dets[:, 2] >= p["min_face"]) & (dets[:, 3] >= p["min_face"])]
+                laps["detect"] = (time.perf_counter() - t0) * 1000.0
+                t0 = time.perf_counter()
                 tracks = self.tracker.step(dets)
+                laps["track"] = (time.perf_counter() - t0) * 1000.0
                 if p["emotion_enabled"] and p["emotion_budget"] > 0:
+                    t0 = time.perf_counter()
                     try:
                         self.emotion.budget = p["emotion_budget"]
                         self.emotion.update(frame, tracks, frame_idx)
@@ -518,27 +527,29 @@ class Pipeline:
                         self.params.set("emotion_enabled", False)
                         self.last_error = f"Expressions disabled: {exc}"
                         self._error_time = time.monotonic()
-                proc_ms = (time.perf_counter() - t0) * 1000.0
+                    laps["express"] = (time.perf_counter() - t0) * 1000.0
+                proc_ms = sum(laps.values())
                 proc_ema = proc_ms if frame_idx == 0 else 0.9 * proc_ema + 0.1 * proc_ms
 
                 pv_on = self.web_enabled and p["panel_preview"]
                 pv_src = p["preview_source"]
+
+                def wants(c):
+                    return p[f"ndi_{c}"] or (p[f"tex_{c}"] and bool(self.texture_kind))
+
                 overlay_bgra = None
-                need_overlay = (self.ndi_overlay is not None
-                                or (self.texture is not None
-                                    and p["texture_source"] == "overlay")
-                                or (pv_on and pv_src == "overlay"))
-                if need_overlay:
+                if wants("overlay") or (pv_on and pv_src == "overlay"):
+                    t0 = time.perf_counter()
                     overlay_bgra = render_overlay_bgra(
                         frame.shape[:2], tracks,
                         show_emotion=p["emotion_enabled"], show_ids=p["show_ids"],
                         color=self._brand_color(p["overlay_color"]))
+                    laps["overlay"] = (time.perf_counter() - t0) * 1000.0
                 faces_bgra = None
-                need_faces = (self.ndi_faces is not None
-                              or (self.texture is not None
-                                  and p["texture_source"] == "faces")
-                              or (pv_on and pv_src == "faces"))
-                if need_faces:
+                mask_img = None
+                need_faces = wants("faces") or (pv_on and pv_src == "faces")
+                need_mask = wants("mask") or (pv_on and pv_src == "mask")
+                if need_faces or need_mask:
                     people = None
                     if p["cutout_shape"] == "people":
                         # segmentation is the expensive part; every 2nd
@@ -546,16 +557,30 @@ class Pipeline:
                         stale = (self._people_cache is None
                                  or self._people_cache.shape != frame.shape[:2])
                         if stale or frame_idx % 2 == 0:
+                            t0 = time.perf_counter()
                             fresh = self._people_mask(frame, tracks,
                                                       p["cutout_steady"],
                                                       p["people_model"])
+                            laps["silhouette"] = (time.perf_counter() - t0) * 1000.0
                             if fresh is not None:
                                 self._people_cache = fresh
                         people = self._people_cache
-                    faces_bgra = render_faces_cutout(
-                        frame, tracks, margin=p["cutout_margin"],
-                        shape=p["cutout_shape"], feather=p["cutout_feather"],
-                        people_mask=people, people_soft=self._people_soft)
+                    t0 = time.perf_counter()
+                    alpha = cutout_alpha(frame.shape[:2], tracks,
+                                         margin=p["cutout_margin"],
+                                         shape=p["cutout_shape"],
+                                         feather=p["cutout_feather"],
+                                         people_mask=people,
+                                         people_soft=self._people_soft)
+                    if need_faces:
+                        hard = (hard_rect_regions(frame.shape[:2], tracks,
+                                                  p["cutout_margin"])
+                                if p["cutout_shape"] == "rectangle"
+                                and p["cutout_feather"] == 0 else None)
+                        faces_bgra = apply_cutout(frame, alpha, hard_regions=hard)
+                    if need_mask:
+                        mask_img = render_mask(alpha, p["mask_style"])
+                    laps["cutout"] = (time.perf_counter() - t0) * 1000.0
 
                 now = time.perf_counter()
                 dt = now - t_last
@@ -575,59 +600,69 @@ class Pipeline:
                 display = None
                 if (p["local_preview"] or (pv_on and pv_src == "annotated")
                         or not p["clean_main"]):
+                    t0 = time.perf_counter()
                     display = frame.copy() if p["clean_main"] else frame
                     draw_tracks(display, tracks, show_emotion=p["emotion_enabled"],
                                 show_ids=p["show_ids"], color=brand)
                     if p["show_stats"]:
+                        n_feeds = len(self.ndi_outs) + len(self.tex_outs)
                         draw_stats(display, [
                             f"{fps_ema:5.1f} fps   faces {len(tracks):3d}   proc {proc_ema:5.1f} ms",
-                            f"{self.detector.name}   NDI "
-                            f"{'off' if self.ndi is None else self.ndi_name}",
+                            f"{self.detector.name}   feeds {n_feeds}",
                         ])
+                    laps["annotate"] = (time.perf_counter() - t0) * 1000.0
 
                 out_width = p["out_width"]
+                scale_cache: dict = {}  # same image scaled once per frame
 
                 def _scaled(img):
-                    if out_width and img.shape[1] != out_width:
+                    if not out_width or img.shape[1] == out_width:
+                        return img
+                    got = scale_cache.get(id(img))
+                    if got is None:
                         oh = int(round(img.shape[0] * out_width / img.shape[1]))
-                        return cv2.resize(img, (out_width, oh),
-                                          interpolation=cv2.INTER_AREA)
-                    return img
+                        got = cv2.resize(img, (out_width, oh),
+                                         interpolation=cv2.INTER_AREA)
+                        scale_cache[id(img)] = got
+                    return got
 
-                def _safe_send(out, img, label):
-                    """Send, and on failure tear the output down with a
-                    panel error — _sync_outputs recreates it next frame,
-                    so a transient NDI/texture hiccup can't kill the show."""
+                t0 = time.perf_counter()
+                program = frame if p["clean_main"] else display
+                content_img = {"program": program, "overlay": overlay_bgra,
+                               "faces": faces_bgra, "mask": mask_img}
+
+                def _send_from(outs, c, kind):
+                    """Send, and on failure tear the feed down with a panel
+                    error — _sync_outputs recreates it next frame, so a
+                    transient NDI/texture hiccup can't kill the show."""
+                    out = outs.get(c)
+                    img = content_img[c]
                     if out is None or img is None:
-                        return out
+                        return
                     try:
                         out.send(_scaled(img))
-                        return out
                     except Exception as exc:
-                        self.last_error = f"{label} output error: {exc} — restarting feed"
+                        self.last_error = f"{kind} {c} output error: {exc} — restarting feed"
                         self._error_time = time.monotonic()
                         try:
                             out.close()
                         except Exception:
                             pass
-                        return None
+                        outs.pop(c, None)
 
-                program = frame if p["clean_main"] else display
-                self.ndi = _safe_send(self.ndi, program, "Main NDI")
-                self.ndi_overlay = _safe_send(self.ndi_overlay, overlay_bgra, "Overlay NDI")
-                self.ndi_faces = _safe_send(self.ndi_faces, faces_bgra, "Faces NDI")
-                if self.texture is not None:
-                    tex_img = {"overlay": overlay_bgra,
-                               "faces": faces_bgra}.get(p["texture_source"])
-                    if tex_img is None:
-                        tex_img = program
-                    self.texture = _safe_send(self.texture, tex_img,
-                                              self.texture_kind.capitalize())
+                for c in self.CONTENTS:
+                    _send_from(self.ndi_outs, c, "NDI")
+                    _send_from(self.tex_outs, c, self.texture_kind or "texture")
+                laps["outputs"] = (time.perf_counter() - t0) * 1000.0
+
                 if pv_on:
+                    t0 = time.perf_counter()
                     pv_img = {"annotated": display, "clean": clean_frame,
-                              "overlay": overlay_bgra, "faces": faces_bgra}[pv_src]
+                              "overlay": overlay_bgra, "faces": faces_bgra,
+                              "mask": mask_img}[pv_src]
                     if pv_img is not None:
                         self._publish_preview(pv_img)
+                    laps["preview"] = (time.perf_counter() - t0) * 1000.0
                 if p["local_preview"] and display is not None:
                     try:
                         cv2.imshow("facetrack (q to quit)", _scaled(display))
@@ -646,7 +681,13 @@ class Pipeline:
 
                 if self.last_error and time.monotonic() - self._error_time > 20:
                     self.last_error = ""
-                conn_main, conn_ovl, conn_faces = self._receiver_counts(frame_idx)
+                conns = self._receiver_counts(frame_idx)
+                # per-stage cost EMAs for the panel's performance meter
+                for k in set(self._perf) | set(laps):
+                    self._perf[k] = (0.9 * self._perf.get(k, laps.get(k, 0.0))
+                                     + 0.1 * laps.get(k, 0.0))
+                budget_ms = 1000.0 / (args.fps or 30)
+                load_ms = sum(self._perf.values())
                 ow = out_width or frame.shape[1]
                 oh = int(round(frame.shape[0] * ow / frame.shape[1]))
                 with self._stats_lock:
@@ -658,25 +699,23 @@ class Pipeline:
                         "frame": frame_idx,
                         "backend": self.detector.name,
                         "source": self.source_spec,
-                        "ndi_name": "" if self.ndi is None else self.ndi_name,
-                        "ndi_overlay": "" if self.ndi_overlay is None else self.overlay_name,
-                        "ndi_display": "" if self.ndi is None
-                                       else f"{self.hostname} ({self.ndi_name})",
-                        "ndi_overlay_display": "" if self.ndi_overlay is None
-                                               else f"{self.hostname} ({self.overlay_name})",
-                        "ndi_faces_display": "" if self.ndi_faces is None
-                                             else f"{self.hostname} ({self.faces_name})",
-                        "ndi_connections": conn_main,
-                        "ndi_overlay_connections": conn_ovl,
-                        "ndi_faces_connections": conn_faces,
+                        "ndi_feeds": [
+                            {"content": c,
+                             "name": f"{self.hostname} ({self.ndi_feed_names[c]})",
+                             "watching": conns.get(c, 0)}
+                            for c in self.CONTENTS if c in self.ndi_outs],
+                        "tex_feeds": [
+                            {"content": c, "name": self.tex_feed_names[c]}
+                            for c in self.CONTENTS if c in self.tex_outs],
                         "out_res": f"{ow}x{oh}",
                         "out_fps_target": args.fps,
                         "texture_kind": self.texture_kind,
-                        "texture_on": self.texture is not None,
-                        "texture_error": self.texture_error
-                                         if p["texture_share"] and self.texture is None else "",
                         "no_input": isinstance(self.source, NullSource),
                         "uptime_s": int(time.time() - self._t0),
+                        "perf": {k: round(v, 2) for k, v in self._perf.items()
+                                 if v >= 0.02},
+                        "budget_ms": round(budget_ms, 1),
+                        "load_pct": int(round(load_ms / budget_ms * 100)),
                         "error": self.last_error,
                     }
 
@@ -706,14 +745,13 @@ class Pipeline:
             with self._pv_cond:
                 self._pv_cond.notify_all()
             self.source.close()
-            if self.ndi is not None:
-                self.ndi.close()
-            if self.ndi_overlay is not None:
-                self.ndi_overlay.close()
-            if self.ndi_faces is not None:
-                self.ndi_faces.close()
-            if self.texture is not None:
-                self.texture.close()
+            for outs in (self.ndi_outs, self.tex_outs):
+                for out in outs.values():
+                    try:
+                        out.close()
+                    except Exception:
+                        pass
+                outs.clear()
             if window_open:
                 cv2.destroyAllWindows()
 

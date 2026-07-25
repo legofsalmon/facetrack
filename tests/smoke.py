@@ -189,6 +189,41 @@ def _():
         "premultiplied: no channel may exceed alpha"
 
 
+@run("mask feed: white-on-black and white-on-alpha styles")
+def _():
+    from facetrack.overlay import cutout_alpha, render_mask
+    from facetrack.tracker import Track
+    t = Track.__new__(Track)
+    t.id = 0
+    t.bbox = (100, 80, 60, 70)
+    alpha = cutout_alpha((360, 640), [t], margin=0.1, shape="oval", feather=15)
+    white = render_mask(alpha, "white")
+    assert white.shape == (360, 640, 3)
+    assert (white[:, :, 0] == alpha).all(), "white style must be the alpha as BGR"
+    assert white[0, 0].max() == 0, "background must be black"
+    av = render_mask(alpha, "alpha")
+    assert av.shape == (360, 640, 4)
+    assert (av[:, :, 3] == alpha).all()
+    assert (av[:, :, 0] == alpha).all(), "premultiplied white silhouette"
+
+
+@run("settings: old output params migrate to the feed matrix")
+def _():
+    from facetrack import settings
+    with tempfile.TemporaryDirectory() as td:
+        old = settings.SETTINGS_PATH
+        settings.SETTINGS_PATH = Path(td) / "settings.json"
+        try:
+            settings.SETTINGS_PATH.write_text(
+                '{"params": {"ndi_main": false, "texture_share": true,'
+                ' "texture_source": "faces"}}')
+            p = settings.load()["params"]
+            assert p["ndi_program"] is False, "ndi_main must migrate"
+            assert p["tex_faces"] is True, "texture_share+source must migrate"
+        finally:
+            settings.SETTINGS_PATH = old
+
+
 @run("people cutout: feather slider actually controls edge width")
 def _():
     from facetrack.overlay import render_faces_cutout
@@ -298,8 +333,8 @@ def _():
         else:
             vals[k] = 1
     p = LiveParams(**vals)
-    assert p.set("texture_source", "faces") == "faces"
-    assert p.set("texture_source", "garbage") == "program"  # falls back
+    assert p.set("mask_style", "alpha") == "alpha"
+    assert p.set("mask_style", "garbage") == "white"  # falls back
     assert p.set("overlay_color", "#ff8800") == "#ff8800"   # free string passes
     assert p.set("overlay_color", "") == ""
 
@@ -334,7 +369,7 @@ def _():
     args = parse_args(["--source", os.path.join(ROOT, "test_media", "synth.mp4"),
                        "--no-ndi", "--no-preview", "--no-web", "--no-browser",
                        "--quiet", "--backend", "yunet"])
-    params = LiveParams(**{**DEFAULTS, "ndi_main": False, "panel_preview": False,
+    params = LiveParams(**{**DEFAULTS, "ndi_program": False, "panel_preview": False,
                            "local_preview": False, "emotion_enabled": False})
     pipe = Pipeline(args, params, web_enabled=False)
     pipe.source.close()
