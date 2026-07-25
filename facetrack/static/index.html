@@ -116,8 +116,8 @@
   .perf-row .pb { height: 100%; background: var(--accent); border-radius: 4px; }
   .perf-row .pb.warn { background: var(--warn); }
   .perf-row .pb.bad { background: var(--bad); }
-  .perf-row .pv { flex: 0 0 58px; text-align: right; color: var(--dim);
-                  font-variant-numeric: tabular-nums; }
+  .perf-row .pv { flex: 0 0 96px; text-align: right; color: var(--dim);
+                  font-variant-numeric: tabular-nums; white-space: nowrap; }
   input[type=range] { flex: 1; accent-color: var(--accent); height: 22px; min-width: 60px; }
   select, input[type=text] {
     background: var(--panel2); color: var(--text); border: 1px solid var(--line);
@@ -692,19 +692,22 @@
       else if (s.fps < target * 0.9) fpsEl.classList.add("warn");
     }
 
-    // per-feature cost bars
+    // per-feature cost bars: stage bars compare features against each
+    // other (widest = priciest); the Total bar is absolute vs the budget
     if (s.perf && lastState === "live") {
       const budget = s.budget_ms || 33.3;
-      let total = 0;
+      const entries = Object.keys(PERF_LABELS)
+        .filter((k) => s.perf[k] != null)
+        .map((k) => [k, s.perf[k]]);
+      const total = entries.reduce((acc, [, ms]) => acc + ms, 0);
+      const maxMs = Math.max(0.1, ...entries.map(([, ms]) => ms));
       let html = "";
-      Object.keys(PERF_LABELS).forEach((k) => {
-        const ms = s.perf[k];
-        if (ms == null) return;
-        total += ms;
-        const pct = Math.min(100, ms / budget * 100);
-        const cls = pct > 45 ? "bad" : pct > 25 ? "warn" : "";
+      entries.forEach(([k, ms]) => {
+        const rel = Math.max(2, ms / maxMs * 100);       // width: vs priciest
+        const share = ms / budget * 100;                 // colour: vs budget
+        const cls = share > 45 ? "bad" : share > 25 ? "warn" : "";
         html += `<div class="perf-row"><span class="pn">${PERF_LABELS[k]}</span>` +
-                `<span class="pt"><span class="pb ${cls}" style="width:${pct.toFixed(1)}%"></span></span>` +
+                `<span class="pt"><span class="pb ${cls}" style="width:${rel.toFixed(1)}%"></span></span>` +
                 `<span class="pv">${ms.toFixed(1)} ms</span></div>`;
       });
       const tpct = Math.min(100, total / budget * 100);
