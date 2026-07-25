@@ -244,6 +244,44 @@ if you distribute facetrack itself. The one open question remains the
 SCRFD GPU face detector (InsightFace non-commercial research terms) —
 decide before a paid event, or stay on YuNet.
 
+### Capture cards (Blackmagic, Magewell, Elgato, AVerMedia, AJA)
+
+Two panel controls matter here, both in the **Input** card: **Capture
+format** (capture cards often refuse "auto" — ask for the exact signal,
+e.g. 1080p50) and **Capture driver** (on Windows, vendor cards live
+behind **DirectShow**). Re-applying the same source reconnects with the
+new settings.
+
+| Card | How it appears | Notes |
+|---|---|---|
+| Elgato Cam Link / HD60, Magewell USB Capture, AVerMedia USB, AJA U-TAP | standard webcam (UVC) | works everywhere, any driver setting |
+| Blackmagic DeckLink / UltraStudio | Windows: DirectShow device via Desktop Video ("Blackmagic WDM Capture") | install Blackmagic Desktop Video; set Capture driver = DirectShow; set the exact Capture format. No macOS path — use NDI or a UVC converter there |
+| Magewell Pro Capture (PCIe) | Windows DirectShow/WDM | driver = DirectShow; excellent auto-format |
+| AVerMedia PCIe | Windows DirectShow | driver = DirectShow |
+| AJA KONA | Windows DirectShow filters via AJA software | driver = DirectShow; U-TAP models are plain UVC |
+
+If a card shows black: confirm the signal format matches Capture format,
+try the other Windows driver, and check the vendor utility sees signal.
+
+### ST 2110 / Blackmagic IP10 (status)
+
+Native software ST 2110 needs PTP-timed NICs and a vendor stack (NVIDIA
+Rivermax + ConnectX, or Intel's DPDK-based MTL) — a systems project, not
+a patch, so facetrack does not speak 2110 directly. The production-grade
+routes that work today:
+
+- **2110 in**: a **DeckLink IP** card presents 2110 flows as a normal
+  DeckLink capture device → works via the DirectShow path above. Or a
+  2110→NDI gateway (Magewell Pro Convert, BirdDog) feeds facetrack's
+  NDI input.
+- **2110 / IP10 out**: Blackmagic's **IP10** codec exists only inside
+  their hardware (no public SDK), so "output IP10" = put a Blackmagic
+  2110 IP converter or NDI→2110 gateway on facetrack's output. NDI out
+  → gateway is the normal pattern for graphics/utility sources in 2110
+  plants; the gateway owns PTP timing.
+- A native DeckLink SDK playout module (SDI/2110 out from the app) is
+  feasible engineering but milestone-sized — ask when it's needed.
+
 ### Start on boot (show machines)
 
 - **macOS**: System Settings → General → Login Items → add

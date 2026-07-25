@@ -57,7 +57,7 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None,
         in_use = int(current) if current.isdigit() else None
         try:
             cameras = probe_cameras(
-                backend=getattr(pipeline.args, "capture_backend", "any"),
+                backend=params.snapshot().get("cap_backend", "any"),
                 skip=in_use)
         except Exception:
             cameras = []

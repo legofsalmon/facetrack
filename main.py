@@ -28,6 +28,7 @@ DEFAULTS = dict(det_threshold=0.5, det_size=640, detect_every=1, min_face=0,
                 max_misses=15, emotion_enabled=True, emotion_budget=4,
                 show_ids=True, show_stats=True, overlay_color="",
                 clean_main=False, flip=False,
+                cap_format="1280x720@30", cap_backend="any",
                 ndi_program=True, ndi_overlay=False, ndi_faces=False,
                 ndi_mask=False, tex_program=False, tex_overlay=False,
                 tex_faces=False, tex_mask=False, mask_style="white",
@@ -139,6 +140,12 @@ def build_params(args, saved_params: dict) -> LiveParams:
         show_stats=False if args.no_stats else saved_params.get("show_stats", True),
         clean_main=True if args.clean_main else saved_params.get("clean_main", False),
         flip=True if args.flip else saved_params.get("flip", False),
+        # explicit CLI capture flags win over the saved panel values
+        cap_format=(f"{args.width}x{args.height}@{args.fps:g}"
+                    if (args.width, args.height, args.fps) != (1280, 720, 30.0)
+                    else saved_params.get("cap_format", "1280x720@30")),
+        cap_backend=(args.capture_backend if args.capture_backend != "any"
+                     else saved_params.get("cap_backend", "any")),
         ndi_program=False if args.no_ndi else saved_params.get("ndi_program", True),
         ndi_mask=saved_params.get("ndi_mask", False),
         tex_program=True if args.texture_share

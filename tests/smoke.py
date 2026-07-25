@@ -70,6 +70,16 @@ def _():
             settings.SETTINGS_PATH = old
 
 
+@run("capture: format strings parse safely")
+def _():
+    from facetrack.capture import parse_cap_format
+    assert parse_cap_format("1920x1080@50") == (1920, 1080, 50.0)
+    assert parse_cap_format("1280x720@29.97") == (1280, 720, 29.97)
+    assert parse_cap_format("auto") == (0, 0, 0.0)
+    assert parse_cap_format("") == (0, 0, 0.0)
+    assert parse_cap_format("garbage@x") == (0, 0, 0.0)
+
+
 @run("tracker: stable IDs on moving boxes")
 def _():
     from facetrack.tracker import FaceTracker

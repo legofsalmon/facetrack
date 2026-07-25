@@ -14,7 +14,7 @@ import time
 import cv2
 import numpy as np
 
-from .capture import NullSource, open_source
+from .capture import NullSource, open_source, parse_cap_format
 from .detectors import pick_backend
 from .emotion import EmotionEstimator
 from .overlay import (apply_cutout, cutout_alpha, draw_stats, draw_tracks,
@@ -70,8 +70,9 @@ class Pipeline:
         self.source_spec = args.source
         self.startup_error = ""
         try:
-            self.source = open_source(args.source, args.width, args.height, args.fps,
-                                      args.capture_backend, loop=args.loop)
+            w, h, fps = self._cap_settings(p)
+            self.source = open_source(args.source, w, h, fps,
+                                      p["cap_backend"], loop=args.loop)
         except Exception as exc:
             self.startup_error = f"source '{args.source}': {exc}"
             self.source = NullSource(args.width or 1280, args.height or 720)
@@ -123,10 +124,18 @@ class Pipeline:
         self._stop.set()
 
     def request_source(self, spec: str) -> None:
+        """Applying the SAME spec again is a deliberate reconnect (fresh
+        open with the current capture format/backend) — what you want
+        after changing those, or when a capture card needs a kick."""
         spec = spec.strip()
         if spec:
             with self._source_lock:
                 self._pending_source = spec
+
+    def _cap_settings(self, p: dict) -> tuple[int, int, float]:
+        """Requested capture size/rate from the live cap_format param;
+        (0, 0, 0) = auto (let the device decide)."""
+        return parse_cap_format(p["cap_format"])
 
     def get_stats(self) -> dict:
         with self._stats_lock:
@@ -309,10 +318,10 @@ class Pipeline:
                                 "error": self.last_error})
         if now >= self._reopen_at:
             self._reopen_at = now + 3.0
-            a = self.args
+            w, h, fps = self._cap_settings(p)
             try:
-                fresh = open_source(self.source_spec, a.width, a.height, a.fps,
-                                    a.capture_backend, loop=True)
+                fresh = open_source(self.source_spec, w, h, fps,
+                                    p["cap_backend"], loop=True)
             except Exception:
                 return  # still gone; keep the slate up
             try:
@@ -392,12 +401,12 @@ class Pipeline:
     def _maybe_swap_source(self) -> None:
         with self._source_lock:
             spec, self._pending_source = self._pending_source, None
-        if not spec or spec == self.source_spec:
+        if not spec:
             return
-        a = self.args
+        p = self.params.snapshot()
+        w, h, fps = self._cap_settings(p)
         try:
-            new_source = open_source(spec, a.width, a.height, a.fps,
-                                     a.capture_backend, loop=True)
+            new_source = open_source(spec, w, h, fps, p["cap_backend"], loop=True)
         except Exception as exc:
             self.last_error = f"source '{spec}': {exc}"
             self._error_time = time.monotonic()

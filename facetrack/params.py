@@ -22,6 +22,11 @@ SPEC = {
     "overlay_color": (str, None, None),   # "#rrggbb" brand colour; "" = palette
     "clean_main": (bool, None, None),
     "flip": (bool, None, None),
+    # Capture negotiation — applied when a source is (re)opened. Format
+    # is "WxH@fps" or "auto"; backend matters for capture cards (vendor
+    # DirectShow filters on Windows, e.g. Blackmagic WDM).
+    "cap_format": (str, None, None),
+    "cap_backend": (str, ("any", "avfoundation", "dshow", "msmf"), None),
     # The output matrix: four content types x two transports. NDI feeds
     # are named "<name>", "<name> Overlay/Faces/Mask"; texture servers
     # (Syphon/Spout) are "facetrack", "facetrack-overlay/-faces/-mask".

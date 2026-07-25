@@ -186,7 +186,7 @@ def _camera_names() -> list[str]:
     return []
 
 
-def probe_cameras(max_index: int = 5, backend: str = "any",
+def probe_cameras(max_index: int = 8, backend: str = "any",
                   skip: int | None = None) -> list[dict]:
     """Checks which camera indices open, with real device names where the
     OS provides them. `skip` marks the index the pipeline is already using
@@ -213,6 +213,16 @@ def probe_cameras(max_index: int = 5, backend: str = "any",
         if misses >= 2 and i >= len(names):
             break  # two consecutive dead indices past the known devices
     return found
+
+
+def parse_cap_format(fmt: str) -> tuple[int, int, float]:
+    """'1920x1080@50' -> (1920, 1080, 50.0); 'auto'/invalid -> (0, 0, 0)."""
+    try:
+        size, fps = fmt.strip().lower().split("@")
+        w, h = size.split("x")
+        return int(w), int(h), float(fps)
+    except (ValueError, AttributeError):
+        return 0, 0, 0.0
 
 
 def open_source(spec: str, width: int = 0, height: int = 0, fps: float = 0.0,

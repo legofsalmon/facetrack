@@ -227,8 +227,32 @@
         <input type="text" id="src-custom" placeholder="/path/to/clip.mp4">
       </div>
       <div class="row">
+        <div class="lbl"><label for="cap_format">Capture format</label>
+          <span class="hint">asked of the device on connect — capture cards often need the exact format</span></div>
+        <select id="cap_format">
+          <option value="auto">Auto (device default)</option>
+          <option value="1280x720@30">720p30</option>
+          <option value="1280x720@60">720p60</option>
+          <option value="1920x1080@25">1080p25</option>
+          <option value="1920x1080@30">1080p30</option>
+          <option value="1920x1080@50">1080p50</option>
+          <option value="1920x1080@60">1080p60</option>
+          <option value="3840x2160@30">2160p30</option>
+        </select>
+      </div>
+      <div class="row">
+        <div class="lbl"><label for="cap_backend">Capture driver</label>
+          <span class="hint">capture cards on Windows usually want DirectShow (Blackmagic, Magewell, AJA…)</span></div>
+        <select id="cap_backend">
+          <option value="any">Auto</option>
+          <option value="dshow">DirectShow (Windows)</option>
+          <option value="msmf">Media Foundation (Windows)</option>
+          <option value="avfoundation">AVFoundation (Mac)</option>
+        </select>
+      </div>
+      <div class="row">
         <div class="lbl"><label>Switch input</label>
-          <span class="hint">takes effect instantly</span></div>
+          <span class="hint">instant — re-apply the same source to reconnect with new format/driver</span></div>
         <button id="src-apply">Use this source</button>
       </div>
       <div class="row">
@@ -435,7 +459,7 @@
         savedBadge = $("saved"), pvMsg = $("pv-msg"), pv = $("preview");
   const params = ["det_threshold","det_size","detect_every","min_face","max_misses",
                   "emotion_enabled","emotion_budget","show_ids","show_stats",
-                  "clean_main","flip",
+                  "clean_main","flip","cap_format","cap_backend",
                   "ndi_program","ndi_overlay","ndi_faces","ndi_mask",
                   "tex_program","tex_overlay","tex_faces","tex_mask","mask_style",
                   "cutout_shape","cutout_margin","cutout_feather","cutout_steady",
