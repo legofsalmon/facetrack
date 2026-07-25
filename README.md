@@ -62,12 +62,12 @@ names. That's it.
   camera currently in use is shown as "(in use)" and left undisturbed.
 - Every change applies live **and is remembered for next launch**.
 - **The preview is switchable** — tabs under the image show *Camera +
-  graphics*, *Clean camera*, *Overlay only* or *Faces cutout*, so you can
-  check exactly what each feed carries; transparency shows as a
-  checkerboard.
+  graphics*, *Clean camera*, *Overlay only*, *Faces cutout* or *Mask*,
+  so you can check exactly what each feed carries; transparency shows
+  as a checkerboard.
 - **Previews** (the panel thumbnail and the window on the facetrack
   machine) can be switched off during the show to save processing — the
-  NDI/Syphon/Spout feeds keep running. With *Keep main feed clean* on and
+  NDI/Syphon/Spout feeds keep running. With *Keep program clean* on and
   previews off, the annotation pass is skipped entirely.
 - **Process card**: *Pause* keeps the feeds up with a STANDBY slate (the
   overlay feed goes fully transparent, so keyed graphics vanish cleanly);
