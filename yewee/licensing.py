@@ -37,9 +37,13 @@ from pathlib import Path
 
 from . import _ed25519 as ed
 
-# Set by the packaging step for a sold build (hex, 64 chars). Empty here
-# so the repo never carries product keys and internal builds run free.
-VENDOR_PUBLIC_KEY = os.environ.get("YEWEE_PUBKEY", "")
+# Baked in by the packaging step (yewee/_buildinfo.py) for a sold build.
+# A source checkout has neither, so licensing stays dormant and the app
+# runs unrestricted — see edition.py.
+try:
+    from ._buildinfo import VENDOR_PUBLIC_KEY      # type: ignore
+except ImportError:
+    VENDOR_PUBLIC_KEY = os.environ.get("YEWEE_PUBKEY", "")
 
 TRIAL_HOURS = 72
 PRODUCT = "yewee"

@@ -1,0 +1,78 @@
+name: build installers
+
+# Builds unsigned app bundles for both platforms. Signing and
+# notarisation need paid certificates and are done locally for now —
+# see build/README.md.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "version to stamp into the build"
+        required: false
+        default: "0.0.0"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            python: "3.12"      # Syphon needs 3.12
+            artefact: Yewee-macos
+          - os: windows-latest
+            python: "3.13"      # Spout supports up to 3.13
+            artefact: Yewee-windows
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Smoke tests
+        run: python -m tests.smoke
+
+      - name: Work out the version
+        shell: bash
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          else
+            echo "VERSION=${{ inputs.version }}" >> "$GITHUB_ENV"
+          fi
+
+      # YEWEE_PUBKEY is the licence public key from the Licence Admin.
+      # Without it this produces an internal (unlicensed) build, which is
+      # what you want for testing but not for release.
+      - name: Build
+        shell: bash
+        run: |
+          if [ -n "${{ secrets.YEWEE_PUBKEY }}" ]; then
+            python build/build.py --distribution \
+              --pubkey "${{ secrets.YEWEE_PUBKEY }}" --version "$VERSION"
+          else
+            echo "::warning::No YEWEE_PUBKEY secret — building an internal, unlicensed app"
+            python build/build.py --version "$VERSION"
+          fi
+
+      - name: Check the bundle
+        shell: bash
+        run: |
+          test -d build/dist || { echo "nothing was built"; exit 1; }
+          du -sh build/dist/* || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artefact }}-${{ env.VERSION }}
+          path: build/dist/
+          retention-days: 14

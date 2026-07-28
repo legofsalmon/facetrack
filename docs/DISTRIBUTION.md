@@ -177,17 +177,27 @@ on the environment.
 - **Revocation** shows in the ledger but cannot be enforced without the
   Phase 4 server — a key already issued keeps working offline.
 
-## Phase 2 — installers (planned)
+## Phase 2 — installers 🔨 packaging done, signing pending
 
-GitHub Actions on `macos-latest` and `windows-latest`, certificates in
-repository secrets, artefacts attached to a Release.
+**Done:** `build/build.py` + `build/yewee.spec` produce a standalone
+bundle, and `.github/workflows/build.yml` builds both platforms on every
+tag. A macOS distribution build is verified running with no Python
+present: licensing active at 72 hours, RVM absent, ~29 fps. **338 MB** —
+OpenCV 118, models 72, ONNX Runtime 64.
 
-- **macOS**: PyInstaller → `.app` → Developer ID signing → notarisation →
-  `.dmg`. Apple Developer Program, $99/yr. Without notarisation Gatekeeper
-  blocks it.
-- **Windows**: PyInstaller → Inno Setup → code signing (~$200–500/yr).
-  Without a signature SmartScreen warns users off.
-- Expect roughly 250–400 MB per installer once RVM is excluded.
+A distribution build bakes `yewee/_buildinfo.py` (public key, version,
+distribution flag) because environment variables don't survive
+packaging, and the build aborts if RVM ever lands in the bundle.
+
+**Still to do — both need paid certificates:**
+
+- **macOS**: Developer ID signing → notarisation → `.dmg`. $99/yr.
+  Unsigned, Gatekeeper blocks it on other machines. Known snag:
+  PyInstaller leaves unsealed contents in `Syphon.framework`.
+- **Windows**: Inno Setup installer → `signtool`. ~£200–400/yr. Unsigned,
+  SmartScreen warns users off.
+
+Commands for both are in `build/README.md`.
 
 ## Phase 3 — selling (planned)
 

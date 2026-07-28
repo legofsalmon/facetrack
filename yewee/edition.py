@@ -15,6 +15,10 @@ from __future__ import annotations
 
 import os
 
-# Overwritten to True by the packaging step; the env var is for testing
-# the distribution build without repacking.
-DISTRIBUTION = os.environ.get("YEWEE_DISTRIBUTION", "") == "1"
+# The packaging step writes yewee/_buildinfo.py; a source checkout has no
+# such file and stays internal. The env var is for testing a distribution
+# build without repacking.
+try:
+    from ._buildinfo import DISTRIBUTION           # type: ignore
+except ImportError:
+    DISTRIBUTION = os.environ.get("YEWEE_DISTRIBUTION", "") == "1"
