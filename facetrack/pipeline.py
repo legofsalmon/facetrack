@@ -121,6 +121,8 @@ class Pipeline:
         self.heartbeat = time.monotonic()  # watchdog liveness signal
         self._t0 = time.time()
         self._color_cache: tuple[str, tuple | None] = ("", None)
+        self._licence: dict = {"state": "unrestricted"}
+        self._licence_checked = 0.0
         self._out_fps_applied = p["out_fps"]   # feeds declare this at creation
         self._cpu_limited: bool | None = None  # last applied limit_cpu
         self._relief = 0                # auto-relief step, 0 = full quality
@@ -325,6 +327,38 @@ class Pipeline:
             self._stats.update({"state": "test-card", "fps": 0.0, "faces": 0,
                                 "error": self.last_error})
         time.sleep(1 / 30)
+
+    def licence(self) -> dict:
+        """Cached licence status — re-read occasionally so activating in
+        the panel takes effect without a restart."""
+        now = time.monotonic()
+        if now - self._licence_checked > 20.0:
+            self._licence_checked = now
+            try:
+                from .licensing import status
+                self._licence = status()
+            except Exception:            # never let licensing break the show
+                self._licence = {"state": "unrestricted"}
+        return self._licence
+
+    def refresh_licence(self) -> dict:
+        """Force a re-read (called right after the panel activates a key)."""
+        self._licence_checked = 0.0
+        return self.licence()
+
+    def _run_unlicensed_tick(self, p: dict) -> None:
+        """Trial is over: hold the feeds up with a slate that says so,
+        rather than dropping them, so the operator can see why."""
+        self._sync_outputs(p)
+        slate, _ = self._standby_frames(
+            "TRIAL ENDED", "enter a licence key in the control panel")
+        self._send_idle(p, slate)
+        if self.web_enabled and p["panel_preview"]:
+            self._publish_preview(slate)
+        with self._stats_lock:
+            self._stats.update({"state": "unlicensed", "fps": 0.0, "faces": 0,
+                                "licence": self._licence, "error": self.last_error})
+        time.sleep(0.2)
 
     def _run_signal_lost_tick(self) -> None:
         """Input died mid-run (unplugged camera, dead NDI feed): keep the
@@ -593,6 +627,10 @@ class Pipeline:
                     self._run_paused_tick(self.params.snapshot())
                     t_last = time.perf_counter()  # don't count the pause in fps
                     continue
+                if self.licence()["state"] == "expired":
+                    self._run_unlicensed_tick(self.params.snapshot())
+                    t_last = time.perf_counter()
+                    continue
                 self._maybe_swap_source()
                 p = self.params.snapshot()
                 if p["test_card"]:
@@ -849,6 +887,7 @@ class Pipeline:
                         "cv_threads": _rt.cv_threads(),
                         "cpu_cores": _rt.cores(),
                         "people_models": _people_model_choices(),
+                        "licence": self.licence(),
                         "error": self.last_error,
                     }
 

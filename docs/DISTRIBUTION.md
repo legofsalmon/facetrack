@@ -82,22 +82,78 @@ FACETRACK_DISTRIBUTION=1 .venv/bin/python main.py
 
 ---
 
-## Phase 1 — licensing (planned)
+## Phase 1 — licensing ✅ done
 
-**Ed25519 signed keys, offline-first.** You hold the private key; the app
-embeds only the public key. A key encodes product, edition, issue date,
-optional expiry and optional machine binding, then is signed. The app
-verifies the signature locally, so **both online and offline activation
-work with no server at all**.
+**Ed25519 signed keys, verified offline.** You hold the private key; the
+app embeds only the public key, so activation never needs a server — the
+same key works online or air-gapped, which covers both activation paths
+and makes reviewer keys trivial.
 
-- *Free keys for reviewers* — issue a signed key, optionally time-limited.
-  A small `issue-key` CLI for you; nothing else needed.
-- *72-hour trial* — record first run in the app-support directory **and**
-  the OS keychain/registry so casual deletion doesn't reset it.
-- *Reality check* — facetrack is Python; a determined user can edit the
-  check out. Freezing raises the bar a little, compiling just the licence
-  module raises it more, nothing makes it airtight. Cap the effort: the
-  goal is keeping honest people honest.
+Crypto is `facetrack/_ed25519.py`, a dependency-free implementation of
+the RFC 8032 reference (verification takes ~4 ms and runs once at
+startup, so a compiled crypto library would only add installer weight).
+The official RFC test vectors are asserted in the smoke tests.
+
+### Issuing keys
+
+```bash
+python tools/issue_key.py keygen                 # once — store the private key safely
+export FACETRACK_SECRET=<private hex>
+
+python tools/issue_key.py issue --name "Jane Smith"                      # perpetual
+python tools/issue_key.py issue --name "Sam" --edition review --days 90  # reviewer
+python tools/issue_key.py issue --name "Venue" --machine <id from panel> # node-locked
+python tools/issue_key.py check FT1.…                                    # verify one
+```
+
+A key is ~206 characters: `FT1.<payload>.<signature>`, payload being
+compact JSON (product, edition, name, issued, optional expiry, optional
+machine binding, key id). Expiry and machine binding are optional, so a
+normal purchase gets a perpetual key that works on any machine.
+
+### In the app
+
+`facetrack/licensing.py` exposes `status()`, `activate()` and
+`deactivate()`. States:
+
+| State | When | Behaviour |
+|---|---|---|
+| `unrestricted` | no public key compiled in (repo / internal builds) | no gating at all |
+| `licensed` | a valid, unexpired, machine-matching key is stored | normal |
+| `trial` | no key yet, within 72 hours of first run | normal, panel counts down |
+| `expired` | no key, trial used up | feeds stay up but carry a TRIAL ENDED slate; panel stays usable so a key can be entered |
+
+The panel gains a **Licence** card (hidden entirely in unrestricted
+builds) showing the state, this machine's ID, and a paste-a-key field.
+Activation takes effect within ~20 seconds without a restart.
+
+The trial clock is anchored in the user data directory *and* a second
+platform location, and takes the earliest first-run either knows about,
+so deleting one file doesn't restart it. A rolled-back clock doesn't
+hand back time either. It is still local state, so a determined user can
+clear it — see the note above about not over-investing here.
+
+### Building a licensed app
+
+The packaging step sets the public key and the distribution flag:
+
+```bash
+export FACETRACK_PUBKEY=<public hex>
+export FACETRACK_DISTRIBUTION=1
+```
+
+Both are read at import time, so a build can bake them into
+`facetrack/licensing.py` and `facetrack/edition.py` instead of relying
+on the environment.
+
+### Not built yet
+
+- **Online activation proper.** Today "online" and "offline" are the
+  same operation: paste the key you were emailed. Server-backed
+  activation, seat counting and revocation are Phase 4; the key format
+  already carries a key id (`k`) for it.
+- **Purchase → key delivery** is Phase 3 (the payment provider's webhook
+  calls `issue_key.py`).
 
 ## Phase 2 — installers (planned)
 

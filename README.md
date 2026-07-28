@@ -246,6 +246,16 @@ processed and discarded in memory. Expression labels are a cosmetic
 overlay estimate. For public events, follow your usual venue practice on
 camera signage, and keep this paragraph handy for client conversations.
 
+### Licensing (product builds)
+
+The repo build is **unrestricted** — no keys, no trial, nothing to
+activate. Licensing only switches on when a build is packaged with a
+vendor public key; see `docs/DISTRIBUTION.md` for issuing keys and
+building a licensed app. In such a build, an unlicensed copy runs for 72
+hours and then holds its feeds on a TRIAL ENDED slate until a key is
+entered in the panel's Licence card. Keys are Ed25519-signed and verify
+offline, so activation works on an air-gapped show machine.
+
 ### Model licences
 
 Everything shipped is permissively licensed (MIT / Apache-2.0) and can be

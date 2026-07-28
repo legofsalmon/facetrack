@@ -488,6 +488,25 @@
       </div>
     </details>
 
+    <details class="card" data-card="licence" id="licence-card" style="display:none" open>
+      <summary>Licence <span class="tag" id="lic-tag"></span></summary>
+      <div class="row">
+        <div class="lbl"><label>Status</label>
+          <span class="hint" id="lic-machine"></span></div>
+        <span id="lic-state" style="margin-left:auto; font-size:12.5px"></span>
+      </div>
+      <div class="row" id="lic-entry-row">
+        <div class="lbl"><label for="lic-key">Licence key</label>
+          <span class="hint">paste the key from your email — works offline</span></div>
+        <input type="text" id="lic-key" placeholder="FT1.…" spellcheck="false">
+      </div>
+      <div class="row" style="gap:8px">
+        <button id="lic-activate" style="flex:1">Activate</button>
+        <button id="lic-remove" class="ghost" style="flex:1; display:none">Remove licence</button>
+      </div>
+      <div id="lic-msg" class="hint" style="padding: 0 14px 11px; display:none"></div>
+    </details>
+
     <details class="card" data-card="process" open>
       <summary>Process</summary>
       <div class="row">
@@ -730,6 +749,7 @@
     $("s-faces").textContent = s.faces ?? "–";
     $("s-load").textContent = s.load_pct ?? "–";
     lastState = s.state || "live";
+    applyLicence(s.licence);
     const ndiFeeds = s.ndi_feeds || [], texFeeds = s.tex_feeds || [];
     $("btn-pause").textContent = lastState === "paused" ? "Resume" : "Pause";
     onair.classList.remove("live", "paused", "nosignal");
@@ -739,6 +759,9 @@
     } else if (lastState === "test-card") {
       onair.textContent = "TEST CARD";
       onair.classList.add("paused");
+    } else if (lastState === "unlicensed") {
+      onair.textContent = "TRIAL ENDED";
+      onair.classList.add("nosignal");
     } else if (lastState === "no-signal") {
       onair.textContent = "NO SIGNAL";
       onair.classList.add("nosignal");
@@ -873,6 +896,44 @@
   pv.addEventListener("click", () =>
     window.open("/preview.mjpg?t=" + Date.now() + pinQ(), "_blank"));
 
+  // ---- licence ----
+  function applyLicence(l) {
+    if (!l || l.state === "unrestricted") { $("licence-card").style.display = "none"; return; }
+    $("licence-card").style.display = "";
+    const st = $("lic-state"), tag = $("lic-tag");
+    const licensed = l.state === "licensed";
+    $("lic-entry-row").style.display = licensed ? "none" : "";
+    $("lic-activate").style.display = licensed ? "none" : "";
+    $("lic-remove").style.display = licensed ? "" : "none";
+    $("lic-machine").textContent = "this machine: " + (l.machine || "?");
+    if (licensed) {
+      st.textContent = "Licensed to " + (l.name || "you")
+                     + (l.expires ? " · until " + l.expires : "");
+      st.style.color = "var(--good)";
+      tag.textContent = l.edition || "";
+    } else if (l.state === "trial") {
+      const h = l.trial_hours_left;
+      st.textContent = "Trial — " + (h >= 1 ? h.toFixed(0) + " hours" : "under an hour") + " left";
+      st.style.color = h < 12 ? "var(--warn)" : "var(--dim)";
+      tag.textContent = "trial";
+    } else {
+      st.textContent = "Trial ended — feeds are held until you activate";
+      st.style.color = "var(--bad)";
+      tag.textContent = "expired";
+    }
+  }
+  $("lic-activate").addEventListener("click", () => {
+    const key = $("lic-key").value.trim();
+    if (key) send({ type: "licence", data: { action: "activate", key } });
+  });
+  $("lic-remove").addEventListener("click", () => {
+    if (confirm("Remove the licence from this machine?"))
+      send({ type: "licence", data: { action: "deactivate" } });
+  });
+  $("lic-key").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") $("lic-activate").click();
+  });
+
   // ---- collapsible cards: remember what each operator keeps open ----
   document.querySelectorAll("details.card[data-card]").forEach((d) => {
     const key = "facetrack_card_" + d.dataset.card;
@@ -948,6 +1009,14 @@
         send({ type: "auth", data: pin });
         pv.src = "/preview.mjpg?t=" + Date.now() + pinQ();
         loadSources();
+        return;
+      }
+      if (msg.type === "licence_result") {
+        const el = $("lic-msg");
+        el.textContent = msg.message;
+        el.style.color = msg.ok ? "var(--good)" : "var(--warn)";
+        el.style.display = "block";
+        if (msg.ok) $("lic-key").value = "";
         return;
       }
       if (msg.type === "tick") { applyStats(msg.stats || {}); applyParams(msg.params || {}); }

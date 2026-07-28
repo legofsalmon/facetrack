@@ -160,6 +160,23 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None,
                             on_params_change(params.snapshot())
                     elif kind == "source":
                         pipeline.request_source(str(data.get("data", "")))
+                    elif kind == "licence":
+                        d = data.get("data") or {}
+                        act = d.get("action")
+                        try:
+                            from .licensing import activate, deactivate
+                            if act == "activate":
+                                ok, note = activate(str(d.get("key", "")))
+                            elif act == "deactivate":
+                                deactivate()
+                                ok, note = True, "Licence removed from this machine."
+                            else:
+                                ok, note = False, "Unknown licence action."
+                        except Exception as exc:
+                            ok, note = False, f"Licence error: {exc}"
+                        pipeline.refresh_licence()
+                        await sock.send_text(json.dumps(
+                            {"type": "licence_result", "ok": ok, "message": note}))
                     elif kind == "control":
                         action = data.get("data")
                         if action == "pause":
