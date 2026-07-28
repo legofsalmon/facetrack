@@ -204,11 +204,16 @@ machine. Automating it via their `order_created` webhook means putting
 that private key in a cloud function, where a breach lets anyone mint
 licences; worth it only once the volume justifies the risk.
 
-**The landing page** lives in `site/` — a static page for a subdomain on
-the owner's existing host, with checkout and account links pointing at
-Lemon Squeezy. Installers need a public download URL: either upload them
-alongside the site or use a public releases-only repo, since the app
-repo is private and its release assets need a GitHub login.
+**The landing page** lives in its own repository,
+[`legofsalmon/facetrack-site`](https://github.com/legofsalmon/facetrack-site),
+deployed on Vercel. It is kept separate deliberately: Vercel then never
+needs read access to this product source, and site deploys don't drag
+~200 MB of models through a build. Checkout and account links point at
+Lemon Squeezy.
+
+Installers need a public download URL. The app repo is private, so its
+release assets need a GitHub login — use a public releases-only repo, or
+object storage, and point the site's download buttons there.
 
 ## Phase 4 — online activation (optional)
 
