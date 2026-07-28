@@ -10,7 +10,7 @@ import threading
 # name -> (type, min, max); None bounds for bools; for str params the
 # second slot is the tuple of allowed choices (first = fallback).
 SPEC = {
-    "detector": (str, ("auto", "yunet", "scrfd"), None),
+    "detector": (str, ("auto", "yunet", "centerface"), None),
     "det_threshold": (float, 0.05, 0.95),
     "det_size": (int, 160, 1920),
     "detect_every": (int, 1, 6),

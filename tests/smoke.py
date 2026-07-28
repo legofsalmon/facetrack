@@ -390,6 +390,40 @@ def _():
         assert key not in SPEC, f"{key} must stay launch-only"
 
 
+@run("edition: GPL-only models are excluded from distribution builds")
+def _():
+    import importlib
+    from facetrack import edition, segmenter
+
+    internal = {m["value"] for m in segmenter.available_people_models()}
+    assert "rvm" in internal, "internal builds keep RVM (it is not distributed)"
+
+    orig = edition.DISTRIBUTION
+    try:
+        edition.DISTRIBUTION = True
+        importlib.reload(segmenter)  # picks the flag up through _usable()
+        shipped = {m["value"] for m in segmenter.available_people_models()}
+        assert "rvm" not in shipped, "GPL-3.0 model must not ship in a sold build"
+        assert "modnet" in shipped and "pphumanseg" in shipped
+        try:
+            segmenter.create_people_model("rvm")
+            raise AssertionError("distribution build must refuse to load RVM")
+        except RuntimeError as exc:
+            assert "GPL-3.0" in str(exc)
+    finally:
+        edition.DISTRIBUTION = orig
+        importlib.reload(segmenter)
+
+
+@run("detector: no non-distributable model is referenced")
+def _():
+    from facetrack import doctor
+    from facetrack.detectors import CenterFaceDetector, YuNetDetector  # noqa: F401
+    from facetrack.params import SPEC
+    assert "scrfd" not in SPEC["detector"][1], "SCRFD is non-commercial; must be gone"
+    assert not any("scrfd" in name for name in doctor.MODELS)
+
+
 @run("runtime: CPU limit caps OpenCV and ONNX threads")
 def _():
     import cv2 as _cv

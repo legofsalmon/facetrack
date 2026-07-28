@@ -159,12 +159,46 @@ class RvmMatter:
         return (np.clip(pha[0, 0], 0, 1) * 255).astype(np.uint8)
 
 
+# The people-cutout engines. `distributable` marks whether a model may
+# ship in a sold/distributed build — RVM is GPL-3.0, so it stays in
+# internal builds only (see facetrack/edition.py and LICENSE).
 PEOPLE_MODELS = {
-    "pphumanseg": PeopleSegmenter,
-    "modnet": ModnetMatter,
-    "rvm": RvmMatter,
+    "pphumanseg": {"cls": PeopleSegmenter, "path": MODEL_PATH,
+                   "label": "Fast — PP-HumanSeg", "licence": "Apache-2.0",
+                   "distributable": True},
+    "modnet": {"cls": ModnetMatter, "path": MODNET_PATH,
+               "label": "Quality — MODNet", "licence": "Apache-2.0",
+               "distributable": True},
+    "rvm": {"cls": RvmMatter, "path": RVM_PATH,
+            "label": "Best — RVM video matting", "licence": "GPL-3.0",
+            "distributable": False},
 }
+
+DEFAULT_PEOPLE_MODEL = "pphumanseg"
+
+
+def _usable(key: str) -> bool:
+    """A model is offered only if it may ship in this build AND is present."""
+    from .edition import DISTRIBUTION
+    info = PEOPLE_MODELS.get(key)
+    if info is None or (DISTRIBUTION and not info["distributable"]):
+        return False
+    return Path(info["path"]).exists()
+
+
+def available_people_models() -> list[dict]:
+    """[{value, label}] for the panel — what this build can actually run."""
+    return [{"value": k, "label": PEOPLE_MODELS[k]["label"]}
+            for k in PEOPLE_MODELS if _usable(k)]
 
 
 def create_people_model(name: str):
-    return PEOPLE_MODELS.get(name, PeopleSegmenter)()
+    """Instantiate a people model, refusing anything this build may not
+    ship (the caller falls back and reports it in the panel)."""
+    if not _usable(name):
+        info = PEOPLE_MODELS.get(name)
+        if info is not None and not info["distributable"]:
+            raise RuntimeError(
+                f"{info['label']} ({info['licence']}) is not included in this build")
+        raise RuntimeError(f"people model '{name}' is not available")
+    return PEOPLE_MODELS[name]["cls"]()

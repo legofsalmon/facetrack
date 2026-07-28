@@ -304,7 +304,7 @@
         <select id="detector">
           <option value="auto">Auto (best for this machine)</option>
           <option value="yunet">Fast — YuNet (any machine)</option>
-          <option value="scrfd">Accurate — SCRFD (NVIDIA GPU)</option>
+          <option value="centerface">Accurate — CenterFace (better on a GPU)</option>
         </select>
       </div>
       <div class="row">
@@ -459,11 +459,7 @@
       <div class="row" id="people-model-row">
         <div class="lbl"><label for="people_model">Silhouette model</label>
           <span class="hint">Fast runs anywhere · Quality &amp; Best shine on the GPU machine (fine to try on CPU)</span></div>
-        <select id="people_model">
-          <option value="pphumanseg">Fast — PP-HumanSeg</option>
-          <option value="modnet">Quality — MODNet</option>
-          <option value="rvm">Best — RVM video matting</option>
-        </select>
+        <select id="people_model"></select>
       </div>
       <div class="row" id="cutout-margin-row">
         <div class="lbl"><label for="cutout_margin">Cutout margin</label>
@@ -816,9 +812,22 @@
       el.classList.toggle("unavail", !kindName);
       el.title = kindName ? "" : "texture share unavailable on this machine";
     });
+    // the silhouette engines this build ships (RVM is internal-only)
+    if (s.people_models && s.people_models.length) {
+      const sel = $("people_model");
+      const sig = s.people_models.map((m) => m.value).join(",");
+      if (sel.dataset.sig !== sig) {
+        sel.dataset.sig = sig;
+        const keep = lastParams.people_model;
+        sel.innerHTML = s.people_models
+          .map((m) => `<option value="${m.value}">${m.label}</option>`).join("");
+        if (keep) sel.value = keep;
+      }
+    }
+
     // which detector is actually running (auto resolves at launch)
     if (s.backend) {
-      const nice = s.backend.startsWith("scrfd") ? "SCRFD" : "YuNet";
+      const nice = s.backend.startsWith("centerface") ? "CenterFace" : "YuNet";
       const where = s.backend.includes("cuda") || s.backend.includes("tensorrt")
                   ? "NVIDIA GPU" : "CPU";
       $("detector-hint").textContent = `running: ${nice} on ${where}`;

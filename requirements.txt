@@ -19,9 +19,9 @@ SpoutGL; sys_platform == "win32" and python_version < "3.14"
 
 # Detector acceleration:
 #   macOS / CPU-only machines: the default YuNet backend needs nothing extra,
-#   but plain onnxruntime lets you test the SCRFD backend on CPU.
-#   Windows + NVIDIA (RTX 5080): replace with `onnxruntime-gpu` for the
-#   CUDA/TensorRT-accelerated SCRFD backend. Requires a CUDA 12.8+ capable
+#   but plain onnxruntime lets you test the CenterFace backend on CPU.
+#   Windows + NVIDIA (RTX 5080): onnxruntime-gpu gives CenterFace and the
+#   CUDA/TensorRT-accelerated CenterFace detector. Requires a CUDA 12.8+ capable
 #   onnxruntime-gpu build (>= 1.21) for Blackwell cards.
 onnxruntime; sys_platform == "darwin"
 onnxruntime-gpu; sys_platform == "win32"

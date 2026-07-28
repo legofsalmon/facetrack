@@ -23,8 +23,23 @@ SOFTWARE.
 ---
 
 Note: the ONNX model files in models/ are third-party works with their own
-licenses (YuNet: Apache-2.0; FER+: MIT; PP-HumanSeg: Apache-2.0; MODNet:
-Apache-2.0; RVM: GPL-3.0; SCRFD: InsightFace's model terms). GPL-3.0
-permits commercial use; its source-sharing obligations apply only if you
-distribute this software. This license covers only the code in this
-repository.
+licenses. models/README.md lists each one with its source and terms.
+
+Summary for anyone redistributing facetrack:
+
+  Shippable (permissive)  YuNet (MIT), CenterFace (MIT), FER+ (MIT),
+                          PP-HumanSeg (Apache-2.0), MODNet (Apache-2.0)
+
+  NOT shippable           RVM (GPL-3.0). Distributing it would put this
+                          entire product under GPL-3.0 with a source
+                          requirement, so it is excluded from packaged
+                          builds (facetrack/edition.py) and remains
+                          available for in-house use only.
+
+  Removed                 SCRFD. InsightFace licenses its trained models
+                          for non-commercial research only.
+
+The NDI runtime is redistributed under NewTek/Vizrt's NDI SDK terms;
+review them before shipping a commercial build.
+
+This license covers only the code in this repository.

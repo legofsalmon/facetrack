@@ -60,8 +60,8 @@ def parse_args(argv=None):
                      help="mirror the image")
 
     det = p.add_argument_group("detection / tracking (all live-adjustable in the panel)")
-    det.add_argument("--backend", default="auto", choices=["auto", "yunet", "scrfd"],
-                     help="detector backend (auto: scrfd on NVIDIA GPU, else yunet)")
+    det.add_argument("--backend", default="auto", choices=["auto", "yunet", "centerface"],
+                     help="detector backend (auto: CenterFace on an NVIDIA GPU, else YuNet); also a panel setting")
     det.add_argument("--det-size", type=int, default=None,
                      help="detector input size in px; raise for more small faces")
     det.add_argument("--det-threshold", type=float, default=None,

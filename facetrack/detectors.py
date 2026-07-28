@@ -5,12 +5,16 @@ Two interchangeable backends, both returning an (N, 5) float32 array of
 
 - YuNetDetector: OpenCV's built-in YuNet. Very fast on CPU, the default on
   machines without an NVIDIA GPU (e.g. Apple Silicon).
-- SCRFDDetector: InsightFace SCRFD-10G via ONNX Runtime. More accurate on
-  dense crowds / small faces; on an NVIDIA GPU (CUDA/TensorRT provider) it
-  runs in a few milliseconds even at large input sizes.
+- CenterFaceDetector: CenterFace (MIT) via ONNX Runtime. Fully
+  convolutional, so unlike YuNet's fixed-640 export it scales to large
+  input sizes — cheap on a CUDA/TensorRT provider, where it resolves
+  smaller/more distant faces than YuNet can.
 
-pick_backend() auto-selects SCRFD when a CUDA/TensorRT ONNX Runtime provider
-is available, otherwise YuNet.
+pick_backend() auto-selects CenterFace when a CUDA/TensorRT ONNX Runtime
+provider is available, otherwise YuNet.
+
+Both models are permissively licensed (MIT), so they can ship in a
+distributed build — see LICENSE.
 """
 from __future__ import annotations
 
@@ -21,7 +25,7 @@ import numpy as np
 
 MODELS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models")
 YUNET_MODEL = os.path.join(MODELS_DIR, "face_detection_yunet_2023mar.onnx")
-SCRFD_MODEL = os.path.join(MODELS_DIR, "scrfd_10g.onnx")
+CENTERFACE_MODEL = os.path.join(MODELS_DIR, "centerface_dynamic.onnx")
 
 EMPTY = np.zeros((0, 5), dtype=np.float32)
 
@@ -71,15 +75,6 @@ class YuNetDetector:
         return out
 
 
-def _distance2bbox(centers: np.ndarray, distances: np.ndarray) -> np.ndarray:
-    return np.stack([
-        centers[:, 0] - distances[:, 0],
-        centers[:, 1] - distances[:, 1],
-        centers[:, 0] + distances[:, 2],
-        centers[:, 1] + distances[:, 3],
-    ], axis=-1)
-
-
 def _nms(boxes_xyxy: np.ndarray, scores: np.ndarray, threshold: float) -> list[int]:
     x1, y1, x2, y2 = boxes_xyxy.T
     areas = (x2 - x1) * (y2 - y1)
@@ -98,11 +93,17 @@ def _nms(boxes_xyxy: np.ndarray, scores: np.ndarray, threshold: float) -> list[i
     return keep
 
 
-class SCRFDDetector:
-    """SCRFD via ONNX Runtime (CUDA/TensorRT on NVIDIA, CPU elsewhere)."""
+class CenterFaceDetector:
+    """CenterFace via ONNX Runtime (CUDA/TensorRT on NVIDIA, CPU elsewhere).
 
-    def __init__(self, model_path: str = SCRFD_MODEL, input_size: int = 640,
-                 score_threshold: float = 0.45, nms_threshold: float = 0.4,
+    Anchor-free: the network emits a face-centre heatmap plus per-cell
+    size and sub-pixel offset at stride 4, which we decode and NMS. The
+    shipped model has dynamic input dims so `input_size` can be raised to
+    resolve small faces — worthwhile on a GPU, slow on CPU.
+    """
+
+    def __init__(self, model_path: str = CENTERFACE_MODEL, input_size: int = 640,
+                 score_threshold: float = 0.5, nms_threshold: float = 0.35,
                  providers: list[str] | None = None):
         import onnxruntime as ort
 
@@ -116,83 +117,61 @@ class SCRFDDetector:
                                             sess_options=session_options(),
                                             providers=providers)
         active = self.session.get_providers()[0]
-        self.name = "scrfd-" + active.replace("ExecutionProvider", "").lower()
+        self.name = "centerface-" + active.replace("ExecutionProvider", "").lower()
         self.input_name = self.session.get_inputs()[0].name
-        self.output_names = [o.name for o in self.session.get_outputs()]
-        self.fmc = 3
-        self.strides = (8, 16, 32)
-        self.num_anchors = 2
         self.score_threshold = float(score_threshold)
         self.nms_threshold = float(nms_threshold)
-        size = max(160, int(input_size))
-        self.input_size = size - (size % 32)
-        self._center_cache: dict[tuple, np.ndarray] = {}
+        self.input_size = max(160, int(input_size))
 
     def apply_live(self, threshold: float, size: int) -> None:
         """Apply runtime-adjustable settings (safe to call every frame)."""
         self.score_threshold = float(threshold)
-        size = max(160, int(size))
-        self.input_size = size - (size % 32)
-
-    def _centers(self, stride: int) -> np.ndarray:
-        key = (self.input_size, stride)
-        centers = self._center_cache.get(key)
-        if centers is None:
-            n = self.input_size // stride
-            xv, yv = np.meshgrid(np.arange(n), np.arange(n))
-            centers = np.stack([xv, yv], axis=-1).astype(np.float32).reshape(-1, 2) * stride
-            centers = np.repeat(centers, self.num_anchors, axis=0)
-            self._center_cache[key] = centers
-        return centers
+        self.input_size = max(160, int(size))
 
     def detect(self, frame_bgr: np.ndarray) -> np.ndarray:
         H, W = frame_bgr.shape[:2]
-        s = self.input_size
-        scale = min(s / float(W), s / float(H))
-        dw, dh = int(round(W * scale)), int(round(H * scale))
-        canvas = np.zeros((s, s, 3), dtype=np.uint8)
-        canvas[:dh, :dw] = cv2.resize(frame_bgr, (dw, dh), interpolation=cv2.INTER_LINEAR)
-        blob = cv2.dnn.blobFromImage(canvas, 1.0 / 128.0, (s, s),
-                                     (127.5, 127.5, 127.5), swapRB=True)
-        outs = self.session.run(self.output_names, {self.input_name: blob})
-
-        all_scores, all_boxes = [], []
-        for idx, stride in enumerate(self.strides):
-            scores = outs[idx].reshape(-1)
-            bbox_preds = outs[idx + self.fmc].reshape(-1, 4) * stride
-            pos = np.where(scores >= self.score_threshold)[0]
-            if pos.size == 0:
-                continue
-            boxes = _distance2bbox(self._centers(stride)[pos], bbox_preds[pos])
-            all_scores.append(scores[pos])
-            all_boxes.append(boxes)
-
-        if not all_boxes:
+        s = self.input_size / float(max(H, W))
+        # the network needs both sides to be multiples of 32
+        nh = max(32, int(np.ceil(H * s / 32) * 32))
+        nw = max(32, int(np.ceil(W * s / 32) * 32))
+        blob = cv2.dnn.blobFromImage(frame_bgr, 1.0, (nw, nh), (0, 0, 0),
+                                     swapRB=True, crop=False)
+        heat, scale, offset, _kps = self.session.run(None, {self.input_name: blob})
+        hm = heat[0, 0]
+        ys, xs = np.where(hm > self.score_threshold)
+        if ys.size == 0:
             return EMPTY
-        boxes = np.concatenate(all_boxes, axis=0)
-        scores = np.concatenate(all_scores, axis=0)
-        keep = _nms(boxes, scores, self.nms_threshold)
-        boxes, scores = boxes[keep] / scale, scores[keep]
-        boxes[:, 0::2] = boxes[:, 0::2].clip(0, W)
-        boxes[:, 1::2] = boxes[:, 1::2].clip(0, H)
-        out = np.empty((len(boxes), 5), dtype=np.float32)
-        out[:, 0] = boxes[:, 0]
-        out[:, 1] = boxes[:, 1]
-        out[:, 2] = boxes[:, 2] - boxes[:, 0]
-        out[:, 3] = boxes[:, 3] - boxes[:, 1]
-        out[:, 4] = scores
+        scale, offset = scale[0], offset[0]
+        # decode: exp(scale) * stride gives the box, offset refines the centre
+        bh = np.exp(scale[0, ys, xs]) * 4.0
+        bw = np.exp(scale[1, ys, xs]) * 4.0
+        cx = (xs + offset[1, ys, xs] + 0.5) * 4.0
+        cy = (ys + offset[0, ys, xs] + 0.5) * 4.0
+        rx, ry = W / nw, H / nh          # back to full-frame pixels
+        x1 = (cx - bw / 2) * rx
+        y1 = (cy - bh / 2) * ry
+        bw, bh = bw * rx, bh * ry
+        scores = hm[ys, xs].astype(np.float32)
+        xyxy = np.stack([x1, y1, x1 + bw, y1 + bh], axis=1).astype(np.float32)
+        keep = _nms(xyxy, scores, self.nms_threshold)
+        out = np.empty((len(keep), 5), dtype=np.float32)
+        out[:, 0] = np.clip(x1[keep], 0, W)
+        out[:, 1] = np.clip(y1[keep], 0, H)
+        out[:, 2] = bw[keep]
+        out[:, 3] = bh[keep]
+        out[:, 4] = scores[keep]
         return out
 
 
 def pick_backend(backend: str, det_size: int, score_threshold: float):
-    """backend: 'auto' | 'yunet' | 'scrfd'."""
+    """backend: 'auto' | 'yunet' | 'centerface'."""
     if backend == "auto":
         try:
             import onnxruntime as ort
             gpu = {"CUDAExecutionProvider", "TensorrtExecutionProvider"} & set(ort.get_available_providers())
-            backend = "scrfd" if gpu else "yunet"
+            backend = "centerface" if gpu else "yunet"
         except ImportError:
             backend = "yunet"
-    if backend == "scrfd":
-        return SCRFDDetector(input_size=det_size, score_threshold=score_threshold)
+    if backend == "centerface":
+        return CenterFaceDetector(input_size=det_size, score_threshold=score_threshold)
     return YuNetDetector(input_width=det_size, score_threshold=score_threshold)

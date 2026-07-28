@@ -11,7 +11,6 @@ import argparse
 import socket
 import sys
 import urllib.request
-import zipfile
 from pathlib import Path
 
 GREEN, RED, YELLOW, DIM, END = "\033[92m", "\033[91m", "\033[93m", "\033[2m", "\033[0m"
@@ -28,11 +27,13 @@ MODELS = {
         "why": "expression estimation",
         "url": "https://github.com/onnx/models/raw/main/validated/vision/body_analysis/emotion_ferplus/model/emotion-ferplus-8.onnx",
     },
-    "scrfd_10g.onnx": {
+    "centerface_dynamic.onnx": {
         "min_bytes": 5_000_000,
-        "why": "face detector (NVIDIA GPU)",
-        "zip_url": "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip",
-        "zip_member": "det_10g.onnx",
+        "why": "face detector (GPU tier)",
+        "url": "https://raw.githubusercontent.com/Star-Clouds/CenterFace/master/"
+               "models/onnx/centerface.onnx",
+        "note": "shipped copy is patched for dynamic input; the download is "
+                "the stock export and only works as a fallback on CPU",
     },
     "human_segmentation_pphumanseg_2023mar.onnx": {
         "min_bytes": 1_000_000,
@@ -47,7 +48,8 @@ MODELS = {
     },
     "rvm_mobilenetv3_fp32.onnx": {
         "min_bytes": 5_000_000,
-        "why": "people matte (best — RVM)",
+        "why": "people matte (best — RVM, internal builds only)",
+        "internal_only": True,
         "url": "https://github.com/PeterL1n/RobustVideoMatting/releases/download/"
                "v1.0.0/rvm_mobilenetv3_fp32.onnx",
     },
@@ -90,7 +92,7 @@ def check_packages() -> None:
         gpu = {"CUDAExecutionProvider", "TensorrtExecutionProvider"} & set(providers)
         if gpu:
             _report("ok", "NVIDIA GPU acceleration available",
-                    "The high-accuracy SCRFD detector will be used automatically.")
+                    "The CenterFace detector will be used automatically.")
         else:
             _report("ok", "onnxruntime installed (no NVIDIA GPU here)",
                     "The fast CPU detector (YuNet) will be used — normal on a Mac.")
@@ -108,7 +110,13 @@ def _download(url: str, dest: Path, label: str) -> None:
 
 def check_models(fix: bool) -> None:
     MODELS_DIR.mkdir(exist_ok=True)
+    try:      # RVM ships in internal builds only (GPL-3.0) — see LICENSE
+        from .edition import DISTRIBUTION
+    except ImportError:
+        DISTRIBUTION = False
     for name, info in MODELS.items():
+        if DISTRIBUTION and info.get("internal_only"):
+            continue
         path = MODELS_DIR / name
         if path.exists() and path.stat().st_size >= info["min_bytes"]:
             _report("ok", f"Model present: {name}", info["why"])
@@ -118,16 +126,7 @@ def check_models(fix: bool) -> None:
                     "Run Setup again, or: python -m facetrack.doctor --fix")
             continue
         try:
-            if "url" in info:
-                _download(info["url"], path, name)
-            else:  # inside a zip (SCRFD ships in the InsightFace pack, ~280 MB)
-                zip_tmp = MODELS_DIR / "_pack.zip"
-                _download(info["zip_url"], zip_tmp, "InsightFace model pack (~280 MB)")
-                with zipfile.ZipFile(zip_tmp) as z:
-                    member = next(m for m in z.namelist()
-                                  if m.endswith(info["zip_member"]))
-                    path.write_bytes(z.read(member))
-                zip_tmp.unlink()
+            _download(info["url"], path, name)
             _report("ok", f"Model downloaded: {name}", info["why"])
         except Exception as exc:
             _report("fail", f"Could not download {name}", f"{exc} — check your internet connection.")

@@ -24,6 +24,20 @@ from .overlay import (apply_cutout, cutout_alpha, draw_stats, draw_tracks,
 from .params import LiveParams
 from .tracker import FaceTracker
 
+
+def _people_model_choices():
+    """Which silhouette engines this build can offer (cached)."""
+    global _PEOPLE_CHOICES
+    if _PEOPLE_CHOICES is None:
+        try:
+            from .segmenter import available_people_models
+            _PEOPLE_CHOICES = available_people_models()
+        except Exception:
+            _PEOPLE_CHOICES = []
+    return _PEOPLE_CHOICES
+
+
+_PEOPLE_CHOICES = None
 PREVIEW_INTERVAL = 0.08   # ~12 fps JPEG preview for the panel
 PREVIEW_WIDTH = 640
 
@@ -834,6 +848,7 @@ class Pipeline:
                         "cpu_threads": _rt.budget(),
                         "cv_threads": _rt.cv_threads(),
                         "cpu_cores": _rt.cores(),
+                        "people_models": _people_model_choices(),
                         "error": self.last_error,
                     }
 

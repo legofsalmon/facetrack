@@ -68,8 +68,8 @@ names. That's it.
   launch-time settings left are the ones that cannot change safely
   mid-run: the panel's own port/host, the NDI feed names (renaming drops
   receivers) and the PIN.
-- **Detector** is now a panel choice: *Auto* (SCRFD on an NVIDIA GPU,
-  YuNet elsewhere), *Fast — YuNet* or *Accurate — SCRFD*. The hint shows
+- **Detector** is a panel choice: *Auto* (CenterFace on an NVIDIA GPU,
+  YuNet elsewhere), *Fast — YuNet* or *Accurate — CenterFace*. The hint shows
   which engine is actually running. Picking one that can't load falls
   back to YuNet with a panel message rather than stopping the show.
 - **The preview is switchable** — tabs under the image show *Camera +
@@ -138,7 +138,7 @@ panel port, and prints the fix for anything broken.
 | Stage | Implementation | Notes |
 |---|---|---|
 | Capture | OpenCV (camera/capture card/file) or NDI in | threaded, latest-frame-wins for low latency |
-| Detection | YuNet (OpenCV, CPU) or SCRFD-10G (ONNX Runtime, GPU) | auto-selected per machine |
+| Detection | YuNet (OpenCV, CPU) or CenterFace (ONNX Runtime, GPU-friendly) | auto-selected per machine, or pick one in the panel |
 | Tracking | SORT-style IoU + velocity tracker | stable IDs, sub-ms for hundreds of faces |
 | Expression | FER+ (8 classes), budgeted round-robin | cost stays flat as crowd grows |
 | Output | NDI via cyndilib (+ local preview window) | NDI runtime bundled |
@@ -149,11 +149,11 @@ panel port, and prints the fix for anything broken.
 - **macOS (testing)**: YuNet on CPU — ~4-5 ms detection at 640 px on an
   M2 Max; 100+ fps at 720p.
 - **Windows + NVIDIA (production, RTX 5080)**: `requirements.txt` installs
-  `onnxruntime-gpu`; the SCRFD-10G detector runs on CUDA/TensorRT
-  automatically — markedly better on dense crowds. There's headroom for
-  *Search detail: Maximum (1280)* at show resolution. First TensorRT run
-  compiles an engine (can take a minute). For capture cards try
-  `--capture-backend dshow`, then `msmf`.
+  `onnxruntime-gpu`, so the **CenterFace** detector and the matting
+  models run on CUDA/TensorRT. CenterFace is fully convolutional, so
+  raising *Search detail* to 960/1280 costs little on the GPU and is
+  where it pulls ahead of YuNet on distant faces. First TensorRT run
+  compiles an engine (can take a minute).
 
 ### Output feeds
 
@@ -211,7 +211,7 @@ override saved settings for that run. Non-panel flags:
 main.py                  entry point: flags, saved settings, banner
 facetrack/
   capture.py             camera / file / NDI-in / NO-INPUT slate, camera probe
-  detectors.py           YuNet + SCRFD backends, live-tunable
+  detectors.py           YuNet + CenterFace backends, live-tunable
   tracker.py             SORT-style multi-face tracker
   emotion.py             FER+ expression estimation (budgeted)
   overlay.py             boxes/labels/stats + alpha overlay rendering
@@ -248,12 +248,22 @@ camera signage, and keep this paragraph handy for client conversations.
 
 ### Model licences
 
-All bundled models permit commercial use except one: YuNet, PP-HumanSeg
-and MODNet are Apache-2.0, FER+ is MIT, and RVM is **GPL-3.0** — GPL
-fully allows commercial *use*; its source-sharing obligations apply only
-if you distribute facetrack itself. The one open question remains the
-SCRFD GPU face detector (InsightFace non-commercial research terms) —
-decide before a paid event, or stay on YuNet.
+Everything shipped is permissively licensed (MIT / Apache-2.0) and can be
+distributed in a commercial product — see `models/README.md` for the
+per-model table.
+
+Two deliberate exceptions:
+
+- **RVM** (the *Best* matting model) is **GPL-3.0**. Distributing it
+  would force the whole product under GPL with a source requirement, so
+  packaged builds exclude it; it stays available for in-house use. See
+  `facetrack/edition.py`.
+- **SCRFD** was removed entirely — InsightFace licenses its trained
+  models for non-commercial research only. **CenterFace** (MIT) replaced
+  it as the GPU detector.
+
+If you redistribute, also review the NDI SDK terms for the bundled NDI
+runtime.
 
 ### Keeping the machine healthy
 
@@ -268,7 +278,7 @@ swamping a machine (both are switched on by the *Power saver* preset):
   rest of the machine — and this control panel — responsive. Most
   effective on Windows, where OpenCV honours the cap too; on macOS the
   OpenCV wheel uses GCD and ignores thread limits, so only the ONNX
-  models (RVM, MODNet, SCRFD — the expensive ones) are capped.
+  models (MODNet, CenterFace — the expensive ones) are capped.
 - **Auto relief** (on by default) — if the pipeline can't hold the frame
   budget for 5 seconds it sheds quality in three steps: silhouette
   updated less often, then face finding every other frame, then the

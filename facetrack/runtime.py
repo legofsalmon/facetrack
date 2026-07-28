@@ -9,7 +9,7 @@ limit_threads() caps both to about a third of the cores. ONNX Runtime bakes
 its thread count into a session at creation, so session_options() is
 consulted when a model loads — the pipeline drops its cached models when
 the setting changes so they reload with the new budget. That path covers
-the expensive models (RVM, MODNet, SCRFD).
+the expensive models (MODNet, CenterFace, and RVM in internal builds).
 
 Caveat worth knowing: OpenCV's cap depends on the threading backend it
 was built with. TBB/OpenMP/pthreads builds (typically Windows) honour an
