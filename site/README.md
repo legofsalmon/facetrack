@@ -52,24 +52,40 @@ options:
 
 Option 1 is simpler and is what the download links should point at first.
 
-## Deploying to a subdomain
+## Deploying to your own host
 
-Any static host works. Cloudflare Pages and Netlify both build from a
-*private* repo, give free TLS, and take a custom subdomain — GitHub Pages
-does not serve from private repos on the free plan.
+The site is plain static files — no PHP, no Node, no database. Upload the
+**contents of `site/`** to the subdomain's document root:
 
-**Cloudflare Pages**
+```bash
+# example, adjust to your host
+rsync -av --delete site/ user@yourhost:/var/www/facetrack.yourdomain.com/
+```
 
-1. Pages → Create → connect this repo
-2. Build command: *(none)* · Output directory: `site`
-3. Custom domains → add e.g. `facetrack.yourdomain.com`
-4. Cloudflare adds the CNAME automatically if the domain is on Cloudflare;
-   otherwise create `facetrack` → `<project>.pages.dev` at your DNS host
+Or drag the files in over SFTP / cPanel File Manager. Then at your DNS
+host, point the subdomain at the same server (an A record to its IP, or a
+CNAME if your host gives you a hostname), and enable TLS for it — most
+control panels offer one-click Let's Encrypt.
 
-**Netlify** — same shape: publish directory `site`, then Domain settings →
-add subdomain → create the CNAME it shows you.
+Check afterwards that `img/` came across and the page loads over **https**.
 
-Both redeploy on every push to `main`.
+## Selling through Lemon Squeezy
+
+1. Create the product in Lemon Squeezy, then copy its **checkout URL** into
+   `BUY_LINK`.
+2. Customers reach receipts and re-downloads through Lemon Squeezy's own
+   customer portal — the footer already links to it. Confirm the exact URL
+   in your dashboard, as stores can have their own.
+3. **Key delivery.** Lemon Squeezy has its own licence-key feature, but
+   facetrack uses its own signed keys so activation works offline — so
+   issue keys yourself:
+   - **At launch, do it manually.** A sale emails you; open the Licence
+     Admin, issue a key against the order number, and reply with it. A
+     minute per sale, and your signing key never leaves your machine.
+   - **Automate later** with a serverless function on their `order_created`
+     webhook. Worth knowing the trade: that function needs your private
+     signing key, so a breach there means anyone can mint licences. Only
+     worth it once volume makes manual issuing annoying.
 
 ## Local preview
 

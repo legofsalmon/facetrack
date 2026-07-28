@@ -191,14 +191,24 @@ repository secrets, artefacts attached to a Release.
 
 ## Phase 3 — selling (planned)
 
-Use a **Merchant of Record** (Lemon Squeezy or Paddle) rather than raw
-Stripe: they handle global VAT/sales-tax registration and remittance,
-which is the part that quietly sinks solo-developer products. Their
-purchase webhook calls your key issuer.
+**Decided: Lemon Squeezy**, as Merchant of Record — it handles global
+VAT/sales-tax registration and remittance, which is the part that quietly
+sinks solo-developer products, and gives customers a hosted portal for
+receipts and re-downloads.
 
-Source stays private; binaries need a **public** download point, since
-private-repo release assets require a GitHub login. A public
-releases-only repository or a small website both work.
+**Key delivery starts manual.** facetrack uses its own signed keys (so
+activation works offline), not Lemon Squeezy's licence feature. On a
+sale, issue a key in the Licence Admin against the order number and reply
+with it — a minute of work, and the signing key never leaves your
+machine. Automating it via their `order_created` webhook means putting
+that private key in a cloud function, where a breach lets anyone mint
+licences; worth it only once the volume justifies the risk.
+
+**The landing page** lives in `site/` — a static page for a subdomain on
+the owner's existing host, with checkout and account links pointing at
+Lemon Squeezy. Installers need a public download URL: either upload them
+alongside the site or use a public releases-only repo, since the app
+repo is private and its release assets need a GitHub login.
 
 ## Phase 4 — online activation (optional)
 
