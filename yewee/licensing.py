@@ -52,17 +52,7 @@ _KEY_PREFIX = "YW1."
 
 # ---------------------------------------------------------------- paths
 
-def user_data_dir() -> Path:
-    """Per-user state that survives a reinstall (so does the trial)."""
-    if sys.platform == "darwin":
-        base = Path.home() / "Library" / "Application Support"
-    elif sys.platform == "win32":
-        base = Path(os.environ.get("APPDATA", Path.home()))
-    else:
-        base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-    d = base / PRODUCT
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+from .paths import user_data_dir  # noqa: E402  (one implementation)
 
 
 def _secondary_anchor() -> Path:

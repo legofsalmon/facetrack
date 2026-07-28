@@ -145,9 +145,10 @@ def check_camera() -> None:
         return
     auth = camera_authorization()
     if auth == "denied":
+        from .capture import camera_permission_holder
         _report("warn", "macOS is blocking camera access for this app",
-                "System Settings > Privacy & Security > Camera — allow your "
-                "terminal app, then run this check again.")
+                "System Settings > Privacy & Security > Camera — allow "
+                f"{camera_permission_holder()}, then run this check again.")
     elif auth in ("undetermined", "restricted"):
         _report("warn", "Camera permission not granted yet",
                 "macOS should be showing a permission prompt — click Allow, "

@@ -242,7 +242,7 @@ def main(argv=None) -> int:
         return 0
 
     from yewee.logging_setup import setup as setup_logging
-    setup_logging(os.path.dirname(os.path.abspath(__file__)))
+    setup_logging()
 
     saved = settings.load()
     params = build_params(args, saved["params"])
@@ -254,10 +254,20 @@ def main(argv=None) -> int:
         args.source = saved["source"] or "0"
 
     if sys.platform == "darwin":
-        # First-ever run: pop the macOS camera prompt right away (attributed
-        # to the terminal that launched us) instead of failing silently.
-        from yewee.capture import request_camera_access
-        request_camera_access()
+        # First-ever run: put the macOS camera prompt up now and wait for the
+        # answer, on the main thread. Opening a camera before the user has
+        # replied just fails, and the prompt needs this thread's run loop.
+        # Asked for even when starting on a non-camera source, so that
+        # listing and switching to cameras in the panel works later.
+        from yewee.capture import (camera_authorization, camera_permission_holder,
+                                   request_camera_access)
+        if camera_authorization() == "undetermined":
+            print("  Waiting for camera permission...", flush=True)
+        if request_camera_access() == "denied":
+            print("  ! Camera access is denied — System Settings > Privacy &"
+                  f" Security > Camera, allow {camera_permission_holder()}."
+                  "\n  ! Starting anyway; other source types still work.",
+                  flush=True)
 
     pipeline = Pipeline(args, params, web_enabled=not args.no_web)
     pipeline.on_source_change = lambda spec: settings.save(source=spec)
@@ -297,8 +307,9 @@ def main(argv=None) -> int:
         print(f"\n  ! {pipeline.startup_error}")
         print("  ! The app started anyway — pick a working source in the control panel.")
         if sys.platform == "darwin" and args.source.isdigit():
+            from yewee.capture import camera_permission_holder
             print("  ! If this is a permissions issue: System Settings > Privacy & Security"
-                  " > Camera, allow your terminal app, then restart.")
+                  f" > Camera, allow {camera_permission_holder()}, then restart.")
     print("  Press Ctrl-C to stop.\n", flush=True)
 
     if panel_url and not args.no_browser:

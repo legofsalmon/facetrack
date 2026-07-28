@@ -454,6 +454,60 @@ def _():
     assert dated["m"] == "deadbeef" and dated["x"]
 
 
+@run("paths: a packaged app never writes inside its own bundle")
+def _():
+    import sys
+    from yewee import paths
+    root = Path(paths._source_root())
+
+    assert not paths.is_frozen()
+    assert Path(paths.settings_path()).parent == root, "source runs stay in the checkout"
+    assert Path(paths.log_dir()).parent == root
+
+    frozen = getattr(sys, "frozen", None)
+    try:                                   # pretend to be a PyInstaller build
+        sys.frozen = True
+        assert paths.is_frozen()
+        for p in (Path(paths.settings_path()), Path(paths.log_path())):
+            assert root not in p.parents and p != root, \
+                f"{p} would be written inside the bundle"
+            assert Path(paths.user_data_dir()) in p.parents
+    finally:
+        if frozen is None:
+            del sys.frozen
+        else:
+            sys.frozen = frozen
+
+
+@run("camera: permission is settled before anything opens a camera")
+def _():
+    import os
+    import sys
+    from yewee import capture
+
+    # OpenCV would otherwise try to ask for permission from the capture
+    # thread, where it cannot work.
+    assert os.environ.get("OPENCV_AVFOUNDATION_SKIP_AUTH") == "1"
+
+    # The request must report the outcome rather than fire and forget —
+    # returning before the user answers means opening the camera too early.
+    assert capture.request_camera_access() in (
+        "authorized", "denied", "undetermined", "restricted", "unknown")
+
+    if sys.platform == "darwin":
+        holder = capture.camera_permission_holder()
+        assert holder == "your terminal app", "source runs hold no permission"
+        frozen = getattr(sys, "frozen", None)
+        try:
+            sys.frozen = True
+            assert capture.camera_permission_holder() == "Yewee"
+        finally:
+            if frozen is None:
+                del sys.frozen
+            else:
+                sys.frozen = frozen
+
+
 @run("licensing: no public key means an unrestricted build")
 def _():
     from yewee import licensing as lic

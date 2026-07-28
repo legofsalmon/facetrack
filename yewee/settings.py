@@ -14,7 +14,9 @@ from pathlib import Path
 
 from .params import SPEC
 
-SETTINGS_PATH = Path(__file__).resolve().parent.parent / "settings.json"
+from .paths import settings_path
+
+SETTINGS_PATH = settings_path()
 
 _lock = threading.Lock()
 _timer: threading.Timer | None = None

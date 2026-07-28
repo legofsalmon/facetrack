@@ -41,11 +41,16 @@ class _Tee:
         return self._stream.fileno()
 
 
-def setup(root_dir: str) -> str:
+def setup(root_dir: str | None = None) -> str:
     """Install the tee; returns the log file path (best-effort — console
-    behaviour is unchanged if the log directory can't be created)."""
-    log_dir = os.path.join(root_dir, "logs")
-    log_path = os.path.join(log_dir, "yewee.log")
+    behaviour is unchanged if the log directory can't be created).
+
+    root_dir is ignored and kept for callers that still pass it; the
+    location comes from paths.log_dir() so a packaged app never writes
+    inside its own bundle."""
+    from .paths import log_dir as _log_dir, log_path as _log_path
+    log_dir = str(_log_dir())
+    log_path = str(_log_path())
     try:
         os.makedirs(log_dir, exist_ok=True)
         handler = RotatingFileHandler(log_path, maxBytes=2_000_000,

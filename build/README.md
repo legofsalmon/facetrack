@@ -35,28 +35,54 @@ A distribution build on macOS runs standalone with no Python present:
 licensing active at 72 hours, only the two shippable silhouette models
 offered, pipeline live at ~29 fps, Syphon available.
 
-## Signing and notarisation — not done yet
+## Signing and notarisation
 
-Unsigned builds run locally but will be blocked or warned about on other
-people's machines. Both need paid certificates.
+Unsigned builds run locally but are blocked or warned about on other
+people's machines. Both platforms need paid certificates.
 
-### macOS (Apple Developer Program, $99/yr)
+### macOS (Apple Developer Program, $99/yr) — working
 
 ```bash
-codesign --deep --force --options runtime --timestamp \
-  --sign "Developer ID Application: YOUR NAME (TEAMID)" build/dist/Yewee.app
-
-hdiutil create -volname Yewee -srcfolder build/dist/Yewee.app \
-  -ov -format UDZO build/dist/Yewee-1.3.0.dmg
-
-xcrun notarytool submit build/dist/Yewee-1.3.0.dmg \
-  --apple-id you@example.com --team-id TEAMID --password <app-specific> --wait
-xcrun stapler staple build/dist/Yewee-1.3.0.dmg
+YEWEE_VERSION=1.3.0 build/sign_macos.sh
 ```
 
-Known snag: PyInstaller leaves "unsealed contents" inside
-`Syphon.framework`, which `codesign --deep` complains about. Sign that
-framework on its own first if notarisation rejects it.
+Signs every nested binary, signs the app with the hardened runtime and
+`build/entitlements.plist`, verifies, and builds the DMG. Verified with
+`Developer ID Application: Colm Hewson (PKN49VCQZQ)`.
+
+Two things the script handles that catch people out:
+
+- **Unsealed contents in `Syphon.framework`.** PyInstaller copies it with
+  `Modules/` as a real directory at the framework root instead of a
+  symlink into `Versions/Current`. `codesign --verify --strict` refuses
+  it. The script restores the symlink before signing.
+- **Camera access under the hardened runtime.** Turning the hardened
+  runtime on means `NSCameraUsageDescription` is no longer enough —
+  `com.apple.security.device.camera` is required too, or capture is
+  denied with no useful error. `disable-library-validation` is there
+  because PyInstaller loads many extension modules at runtime.
+
+Nothing is written inside the bundle at runtime (see `yewee/paths.py`) —
+that would invalidate the signature. A test in `tests/smoke.py` guards it.
+
+**Notarisation** needs credentials stored once, interactively, so that no
+password passes through a script or a terminal history:
+
+```bash
+xcrun notarytool store-credentials yewee \
+    --apple-id <your-apple-id> --team-id PKN49VCQZQ
+```
+
+Use an [app-specific password](https://appleid.apple.com), not the Apple
+ID password. Then:
+
+```bash
+YEWEE_VERSION=1.3.0 build/sign_macos.sh --notarize
+```
+
+That submits, waits, and staples the ticket to the DMG so it validates
+offline. Until it is notarised, `spctl` reports
+`source=Unnotarized Developer ID` and other machines will warn.
 
 ### Windows (code-signing certificate, ~£200–400/yr)
 

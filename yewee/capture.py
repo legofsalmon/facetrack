@@ -7,10 +7,18 @@ which keeps end-to-end latency low.
 """
 from __future__ import annotations
 
+import os
 import threading
 import time
 
-import cv2
+# OpenCV's AVFoundation backend asks for camera permission itself, from
+# whichever thread opens the device — and ours is a worker thread, so the
+# request cannot work (the prompt needs the main run loop) and it logs a
+# baffling error instead. request_camera_access() asks properly at startup,
+# so tell OpenCV not to try. Must be set before any capture is opened.
+os.environ.setdefault("OPENCV_AVFOUNDATION_SKIP_AUTH", "1")
+
+import cv2  # noqa: E402  (after the env var above, which cv2 reads on open)
 
 BACKENDS = {
     "any": cv2.CAP_ANY,
@@ -148,21 +156,47 @@ def camera_authorization() -> str:
         return "unknown"
 
 
-def request_camera_access() -> None:
-    """Triggers the macOS camera-permission prompt (no-op elsewhere or if
-    already decided). The prompt is attributed to the app that launched us
-    — normally the user's terminal."""
+def camera_permission_holder() -> str:
+    """What the user has to allow in System Settings > Camera. A packaged
+    app holds the permission itself; from source it is granted to whatever
+    launched us, which is normally a terminal."""
+    from .paths import is_frozen
+    return "Yewee" if is_frozen() else "your terminal app"
+
+
+def request_camera_access(timeout: float = 120.0) -> str:
+    """Asks macOS for camera permission and waits for the answer.
+
+    Call this on the main thread before anything opens a camera. Both
+    halves matter: the prompt only appears while the main run loop is
+    turning, and the request is asynchronous, so without waiting we would
+    race ahead and open the camera before the user had answered — which is
+    exactly how a first launch fails with a bare 'Could not open camera'.
+
+    Returns the resulting authorisation state. No-op off macOS or once the
+    question has already been settled.
+    """
     import sys
-    if sys.platform != "darwin" or camera_authorization() != "undetermined":
-        return
+    if sys.platform != "darwin":
+        return "authorized"
+    if camera_authorization() != "undetermined":
+        return camera_authorization()
     try:
         import objc
+        from Foundation import NSDate, NSRunLoop
         objc.loadBundle("AVFoundation", {},
                         bundle_path="/System/Library/Frameworks/AVFoundation.framework")
         dev = objc.lookUpClass("AVCaptureDevice")
-        dev.requestAccessForMediaType_completionHandler_("vide", lambda ok: None)
+        answered: list[bool] = []
+        dev.requestAccessForMediaType_completionHandler_(
+            "vide", lambda ok: answered.append(bool(ok)))
+        loop = NSRunLoop.currentRunLoop()
+        deadline = time.monotonic() + timeout
+        while not answered and time.monotonic() < deadline:
+            loop.runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.05))
     except Exception:
         pass
+    return camera_authorization()
 
 
 def _camera_names() -> list[str]:

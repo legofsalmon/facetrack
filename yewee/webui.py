@@ -92,7 +92,8 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None,
     def logs(request: Request):
         if not _pin_ok(request):
             return PlainTextResponse("PIN required", status_code=401)
-        log_path = STATIC_DIR.parent.parent / "logs" / "yewee.log"
+        from .paths import log_path as _log_path
+        log_path = _log_path()
         try:
             lines = log_path.read_text(errors="replace").splitlines()[-200:]
             return PlainTextResponse("\n".join(lines) or "log is empty")
