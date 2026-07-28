@@ -61,6 +61,17 @@ names. That's it.
   instant, no restart. Plug in a device and hit the ↻ rescan button; the
   camera currently in use is shown as "(in use)" and left undisturbed.
 - Every change applies live **and is remembered for next launch**.
+- **Everything you can change while running is in the panel**, grouped
+  into collapsible cards — Input, Face finding, On-screen look, Outputs,
+  Cutout shape, plus Performance and Machine load. Collapse the ones a
+  given show doesn't need; the panel remembers per browser. The only
+  launch-time settings left are the ones that cannot change safely
+  mid-run: the panel's own port/host, the NDI feed names (renaming drops
+  receivers) and the PIN.
+- **Detector** is now a panel choice: *Auto* (SCRFD on an NVIDIA GPU,
+  YuNet elsewhere), *Fast — YuNet* or *Accurate — SCRFD*. The hint shows
+  which engine is actually running. Picking one that can't load falls
+  back to YuNet with a panel message rather than stopping the show.
 - **The preview is switchable** — tabs under the image show *Camera +
   graphics*, *Clean camera*, *Overlay only*, *Faces cutout* or *Mask*,
   so you can check exactly what each feed carries; transparency shows

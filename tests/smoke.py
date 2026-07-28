@@ -350,6 +350,46 @@ def _():
     assert m2.shape == frame.shape[:2]
 
 
+@run("detector: panel choice switches engine, bad choice falls back")
+def _():
+    from main import DEFAULTS
+    from facetrack.params import LiveParams
+    from facetrack.pipeline import Pipeline
+
+    params = LiveParams(**{**DEFAULTS, "detector": "auto"})
+    pipe = Pipeline.__new__(Pipeline)      # detector logic only
+    pipe.params = params
+    pipe.last_error = ""
+    pipe._error_time = 0.0
+    pipe._detector_choice = "auto"
+    pipe.detector = None
+
+    p = params.snapshot()
+    pipe._sync_detector({**p, "detector": "yunet"})
+    assert pipe._detector_choice == "yunet"
+    assert pipe.detector is not None and "yunet" in pipe.detector.name
+
+    # a backend that cannot load must fall back, not raise
+    params.set("detector", "scrfd")
+    pipe._sync_detector({**p, "detector": "scrfd"})
+    assert pipe._detector_choice in ("scrfd", "yunet")
+    if pipe._detector_choice == "yunet":       # no GPU runtime here
+        assert params.snapshot()["detector"] == "yunet", "param must follow the fallback"
+        assert "unavailable" in pipe.last_error
+    assert pipe.detector is not None, "must always end with a working detector"
+
+
+@run("params: launch-only flags stay out of the panel")
+def _():
+    from facetrack.params import SPEC
+    # everything an operator can change at runtime should be a param
+    for key in ("detector", "out_fps", "loop_file", "cap_format", "cap_backend"):
+        assert key in SPEC, f"{key} should be panel-controllable"
+    # ...and structural/security settings should NOT be
+    for key in ("web_port", "web_host", "pin", "ndi_name"):
+        assert key not in SPEC, f"{key} must stay launch-only"
+
+
 @run("runtime: CPU limit caps OpenCV and ONNX threads")
 def _():
     import cv2 as _cv

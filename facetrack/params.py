@@ -10,6 +10,7 @@ import threading
 # name -> (type, min, max); None bounds for bools; for str params the
 # second slot is the tuple of allowed choices (first = fallback).
 SPEC = {
+    "detector": (str, ("auto", "yunet", "scrfd"), None),
     "det_threshold": (float, 0.05, 0.95),
     "det_size": (int, 160, 1920),
     "detect_every": (int, 1, 6),
@@ -27,6 +28,8 @@ SPEC = {
     # DirectShow filters on Windows, e.g. Blackmagic WDM).
     "cap_format": (str, None, None),
     "cap_backend": (str, ("any", "avfoundation", "dshow", "msmf"), None),
+    "loop_file": (bool, None, None),      # restart video files at the end
+    "out_fps": (float, 1.0, 120.0),       # declared feed rate + frame budget
     # The output matrix: four content types x two transports. NDI feeds
     # are named "<name>", "<name> Overlay/Faces/Mask"; texture servers
     # (Syphon/Spout) are "facetrack", "facetrack-overlay/-faces/-mask".

@@ -35,7 +35,8 @@ class Pipeline:
         self.web_enabled = web_enabled
 
         p = params.snapshot()
-        self.detector = pick_backend(args.backend, p["det_size"], p["det_threshold"])
+        self._detector_choice = p["detector"]
+        self.detector = pick_backend(p["detector"], p["det_size"], p["det_threshold"])
         self.tracker = FaceTracker(max_misses=p["max_misses"])
         self.emotion = EmotionEstimator(budget_per_frame=p["emotion_budget"])
 
@@ -73,7 +74,7 @@ class Pipeline:
         try:
             w, h, fps = self._cap_settings(p)
             self.source = open_source(args.source, w, h, fps,
-                                      p["cap_backend"], loop=args.loop)
+                                      p["cap_backend"], loop=p["loop_file"])
         except Exception as exc:
             self.startup_error = f"source '{args.source}': {exc}"
             self.source = NullSource(args.width or 1280, args.height or 720)
@@ -106,6 +107,7 @@ class Pipeline:
         self.heartbeat = time.monotonic()  # watchdog liveness signal
         self._t0 = time.time()
         self._color_cache: tuple[str, tuple | None] = ("", None)
+        self._out_fps_applied = p["out_fps"]   # feeds declare this at creation
         self._cpu_limited: bool | None = None  # last applied limit_cpu
         self._relief = 0                # auto-relief step, 0 = full quality
         self._over_since: float | None = None
@@ -165,12 +167,21 @@ class Pipeline:
         both transports. Cheap no-op when nothing changed. NDI is imported
         only when actually turning a feed on, so NDI-less environments
         (CI) can still run the pipeline with feeds off."""
+        if p["out_fps"] != self._out_fps_applied:
+            # NDI senders declare their rate at creation; drop them so the
+            # loop below rebuilds at the new one (receivers reconnect).
+            self._out_fps_applied = p["out_fps"]
+            for c in list(self.ndi_outs):
+                try:
+                    self.ndi_outs.pop(c).close()
+                except Exception:
+                    pass
         for c in self.CONTENTS:
             try:
                 if p[f"ndi_{c}"] and c not in self.ndi_outs:
                     from .ndi_io import NDIOutput
                     self.ndi_outs[c] = NDIOutput(self.ndi_feed_names[c],
-                                                 fps=self.args.fps)
+                                                 fps=p["out_fps"])
                 elif not p[f"ndi_{c}"] and c in self.ndi_outs:
                     self.ndi_outs.pop(c).close()
             except Exception as exc:
@@ -265,7 +276,7 @@ class Pipeline:
             base, ovl = render_test_card(w, h, [
                 "facetrack TEST CARD",
                 f"{self.hostname} · {self.ndi_name}",
-                f"{w}x{h} @ {self.args.fps:g} fps target",
+                f"{w}x{h} @ {p['out_fps']:g} fps target",
             ])
             self._card_cache = ((w, h), base, ovl)
         card = self._card_cache[1].copy()
@@ -326,7 +337,7 @@ class Pipeline:
             w, h, fps = self._cap_settings(p)
             try:
                 fresh = open_source(self.source_spec, w, h, fps,
-                                    p["cap_backend"], loop=True)
+                                    p["cap_backend"], loop=p["loop_file"])
             except Exception:
                 return  # still gone; keep the slate up
             try:
@@ -339,6 +350,26 @@ class Pipeline:
     # frame, 3 = also cap detector input. Applied as an internal override
     # so the operator's own settings are never rewritten.
     MAX_RELIEF = 3
+
+    def _sync_detector(self, p: dict) -> None:
+        """Swap the detection engine when the panel asks. A backend that
+        won't load (no GPU runtime, missing model) falls back to YuNet
+        with a panel error rather than taking the show down."""
+        if p["detector"] == self._detector_choice:
+            return
+        want = p["detector"]
+        try:
+            self.detector = pick_backend(want, p["det_size"], p["det_threshold"])
+            self._detector_choice = want
+        except Exception as exc:
+            self._detector_choice = "yunet"
+            self.params.set("detector", "yunet")
+            self.last_error = f"detector '{want}' unavailable: {exc} — using YuNet"
+            self._error_time = time.monotonic()
+            try:
+                self.detector = pick_backend("yunet", p["det_size"], p["det_threshold"])
+            except Exception:
+                pass
 
     def _apply_cpu_limit(self, p: dict) -> None:
         """Track the limit_cpu param; reload models on change so their
@@ -465,7 +496,8 @@ class Pipeline:
         p = self.params.snapshot()
         w, h, fps = self._cap_settings(p)
         try:
-            new_source = open_source(spec, w, h, fps, p["cap_backend"], loop=True)
+            new_source = open_source(spec, w, h, fps, p["cap_backend"],
+                                     loop=p["loop_file"])
         except Exception as exc:
             self.last_error = f"source '{spec}': {exc}"
             self._error_time = time.monotonic()
@@ -571,6 +603,7 @@ class Pipeline:
                         self.last_error = ""
                     t_last = time.perf_counter()  # don't count the outage in fps
                 self._apply_cpu_limit(p)
+                self._sync_detector(p)
                 p = self._relieved(p)
                 self._sync_outputs(p)
                 self._last_size = (frame.shape[1], frame.shape[0])
@@ -765,7 +798,7 @@ class Pipeline:
                 for k in set(self._perf) | set(laps):
                     self._perf[k] = (0.9 * self._perf.get(k, laps.get(k, 0.0))
                                      + 0.1 * laps.get(k, 0.0))
-                budget_ms = 1000.0 / (args.fps or 30)
+                budget_ms = 1000.0 / (p["out_fps"] or 30)
                 load_ms = sum(self._perf.values())
                 self._update_relief(p, int(round(load_ms / budget_ms * 100)),
                                     time.monotonic())
@@ -789,7 +822,7 @@ class Pipeline:
                             {"content": c, "name": self.tex_feed_names[c]}
                             for c in self.CONTENTS if c in self.tex_outs],
                         "out_res": f"{ow}x{oh}",
-                        "out_fps_target": args.fps,
+                        "out_fps_target": p["out_fps"],
                         "texture_kind": self.texture_kind,
                         "no_input": isinstance(self.source, NullSource),
                         "uptime_s": int(time.time() - self._t0),

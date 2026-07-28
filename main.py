@@ -24,7 +24,8 @@ from facetrack import settings
 from facetrack.params import LiveParams
 from facetrack.pipeline import Pipeline
 
-DEFAULTS = dict(det_threshold=0.5, det_size=640, detect_every=1, min_face=0,
+DEFAULTS = dict(detector="auto", out_fps=30.0, loop_file=True,
+                det_threshold=0.5, det_size=640, detect_every=1, min_face=0,
                 max_misses=15, emotion_enabled=True, emotion_budget=4,
                 show_ids=True, show_stats=True, overlay_color="",
                 clean_main=False, flip=False,
@@ -131,6 +132,12 @@ def build_params(args, saved_params: dict) -> LiveParams:
         return cli if cli is not None else saved_params.get(key, DEFAULTS[key])
 
     return LiveParams(
+        # CLI wins over the saved value only when explicitly given
+        detector=(args.backend if args.backend != "auto"
+                  else saved_params.get("detector", "auto")),
+        out_fps=(args.fps if args.fps != 30.0
+                 else saved_params.get("out_fps", 30.0)),
+        loop_file=True if args.loop else saved_params.get("loop_file", True),
         det_threshold=rv(args.det_threshold, "det_threshold"),
         det_size=rv(args.det_size, "det_size"),
         detect_every=rv(args.detect_every, "detect_every"),
@@ -245,8 +252,6 @@ def main(argv=None) -> int:
     limit_threads(params.snapshot()["limit_cpu"])
     if args.source is None:
         args.source = saved["source"] or "0"
-        if not args.source.isdigit() and not args.source.lower().startswith("ndi:"):
-            args.loop = True  # a saved file source loops; the app must not just stop
 
     if sys.platform == "darwin":
         # First-ever run: pop the macOS camera prompt right away (attributed

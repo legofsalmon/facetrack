@@ -67,9 +67,23 @@
   }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
           overflow: hidden; }
-  .card h2 { font-size: 11.5px; font-weight: 650; letter-spacing: 1.1px;
+  .card h2, details.card > summary {
+             font-size: 11.5px; font-weight: 650; letter-spacing: 1.1px;
              text-transform: uppercase; color: var(--dim);
              padding: 11px 14px 9px; border-bottom: 1px solid var(--line); }
+  /* collapsible cards: the panel has a lot of controls, and any given
+     show only needs some of them. State persists per browser. */
+  details.card > summary { cursor: pointer; list-style: none; user-select: none;
+                           display: flex; align-items: center; gap: 8px; }
+  details.card > summary::-webkit-details-marker { display: none; }
+  details.card > summary::after { content: "▾"; margin-left: auto; font-size: 10px;
+                                  transition: transform .15s; }
+  details.card:not([open]) > summary { border-bottom: 0; }
+  details.card:not([open]) > summary::after { transform: rotate(-90deg); }
+  details.card > summary:hover { color: var(--text); }
+  details.card > summary .tag { font-size: 10px; letter-spacing: .3px;
+                                text-transform: none; color: var(--accent); }
+  .card.off { opacity: .5; }
   .pv-wrap { position: relative; background: #000; }
   #preview { width: 100%; display: block; aspect-ratio: 16/9; object-fit: contain;
              cursor: zoom-in; }
@@ -204,15 +218,15 @@
       </div>
     </div>
 
-    <div class="card" style="margin-top: 14px">
-      <h2>Performance</h2>
+    <details class="card" data-card="perf" style="margin-top: 14px" open>
+      <summary>Performance</summary>
       <div id="perf" style="padding: 11px 14px; display: flex; flex-direction: column; gap: 7px">
         <span class="hint">waiting for data…</span>
       </div>
-    </div>
+    </details>
 
-    <div class="card" style="margin-top: 14px">
-      <h2>Machine load</h2>
+    <details class="card" data-card="machine" style="margin-top: 14px">
+      <summary>Machine load</summary>
       <div class="row">
         <div class="lbl"><label for="limit_cpu">Limit CPU use</label>
           <span class="hint" id="cpu-hint">stop the AI models taking every core, so the machine stays responsive</span></div>
@@ -224,12 +238,12 @@
         <label class="switch"><input type="checkbox" id="auto_relief"><span class="slider"></span></label>
       </div>
       <div id="relief-note" class="hint" style="padding: 0 14px 11px; display: none"></div>
-    </div>
+    </details>
   </div>
 
   <div class="controls">
-    <div class="card">
-      <h2>Input</h2>
+    <details class="card" data-card="input" open>
+      <summary>Input</summary>
       <div class="row">
         <div class="lbl"><label for="src-select">Video source</label>
           <span class="hint">cameras &amp; NDI feeds found nearby</span></div>
@@ -266,18 +280,33 @@
         </select>
       </div>
       <div class="row">
+        <div class="lbl"><label for="loop_file">Loop video files</label>
+          <span class="hint">restart a file source when it reaches the end</span></div>
+        <label class="switch"><input type="checkbox" id="loop_file"><span class="slider"></span></label>
+      </div>
+      <div class="row">
         <div class="lbl"><label>Switch input</label>
           <span class="hint">instant — re-apply the same source to reconnect with new format/driver</span></div>
         <button id="src-apply">Use this source</button>
       </div>
       <div class="row">
-        <div class="lbl"><label for="flip">Mirror image</label></div>
+        <div class="lbl"><label for="flip">Mirror image</label>
+          <span class="hint">flip left-to-right, for a camera facing the subject</span></div>
         <label class="switch"><input type="checkbox" id="flip"><span class="slider"></span></label>
       </div>
-    </div>
+    </details>
 
-    <div class="card">
-      <h2>Face finding</h2>
+    <details class="card" data-card="detect" open>
+      <summary>Face finding</summary>
+      <div class="row">
+        <div class="lbl"><label for="detector">Detector</label>
+          <span class="hint" id="detector-hint">auto picks the best engine for this machine</span></div>
+        <select id="detector">
+          <option value="auto">Auto (best for this machine)</option>
+          <option value="yunet">Fast — YuNet (any machine)</option>
+          <option value="scrfd">Accurate — SCRFD (NVIDIA GPU)</option>
+        </select>
+      </div>
       <div class="row">
         <div class="lbl"><label for="det_threshold">Strictness</label>
           <span class="hint">higher = fewer, surer faces; lower finds more (and more false ones)</span></div>
@@ -316,10 +345,10 @@
         <input type="range" id="max_misses" min="2" max="60" step="1">
         <output for="max_misses">–</output>
       </div>
-    </div>
+    </details>
 
-    <div class="card">
-      <h2>On-screen look</h2>
+    <details class="card" data-card="look" open>
+      <summary>On-screen look</summary>
       <div class="row">
         <div class="lbl"><label for="emotion_enabled">Expressions</label>
           <span class="hint">labels faces happy / surprised / …</span></div>
@@ -347,10 +376,10 @@
         <input type="color" id="overlay_color_pick" value="#50dc50">
         <label class="switch"><input type="checkbox" id="overlay-brand"><span class="slider"></span></label>
       </div>
-    </div>
+    </details>
 
-    <div class="card">
-      <h2>Outputs</h2>
+    <details class="card" data-card="outputs" open>
+      <summary>Outputs</summary>
       <div class="row" style="padding: 8px 14px 4px; border-bottom: 0">
         <div class="lbl" style="flex: 1"><span class="hint">each feed can go to NDI (network) and/or <span id="tex-col-name">Syphon</span> (this machine)</span></div>
         <span class="mx-h">NDI</span>
@@ -386,13 +415,38 @@
         <label class="switch mx tex-sw"><input type="checkbox" id="tex_mask"><span class="slider"></span></label>
       </div>
       <div class="row" id="mask-style-row">
-        <div class="lbl"><label for="mask_style">Mask style</label>
+        <div class="lbl"><label for="mask_style">&nbsp;&nbsp;↳ Mask style</label>
           <span class="hint">luma matte, or the matte carried in the alpha channel</span></div>
         <select id="mask_style">
           <option value="white">White on black</option>
           <option value="alpha">White on alpha</option>
         </select>
       </div>
+      <div class="row">
+        <div class="lbl"><label for="out_width">Output size</label>
+          <span class="hint">smaller = less network load</span></div>
+        <select id="out_width">
+          <option value="0">Match input</option>
+          <option value="1920">1920 wide</option>
+          <option value="1280">1280 wide</option>
+          <option value="960">960 wide</option>
+        </select>
+      </div>
+      <div class="row">
+        <div class="lbl"><label for="out_fps">Output frame rate</label>
+          <span class="hint">what the feeds declare — changing it reconnects receivers</span></div>
+        <select id="out_fps">
+          <option value="24">24 fps</option>
+          <option value="25">25 fps</option>
+          <option value="30">30 fps</option>
+          <option value="50">50 fps</option>
+          <option value="60">60 fps</option>
+        </select>
+      </div>
+    </details>
+
+    <details class="card" data-card="cutout" id="cutout-card">
+      <summary>Cutout shape <span class="tag" id="cutout-tag"></span></summary>
       <div class="row" id="cutout-shape-row">
         <div class="lbl"><label for="cutout_shape">Cutout shape</label>
           <span class="hint">people silhouette loads its model the first time you pick it</span></div>
@@ -436,20 +490,10 @@
         <input type="range" id="cutout_steady" min="0" max="0.9" step="0.05" value="0.55">
         <output>55%</output>
       </div>
-      <div class="row">
-        <div class="lbl"><label for="out_width">Output size</label>
-          <span class="hint">smaller = less network load</span></div>
-        <select id="out_width">
-          <option value="0">Match input</option>
-          <option value="1920">1920 wide</option>
-          <option value="1280">1280 wide</option>
-          <option value="960">960 wide</option>
-        </select>
-      </div>
-    </div>
+    </details>
 
-    <div class="card">
-      <h2>Process</h2>
+    <details class="card" data-card="process" open>
+      <summary>Process</summary>
       <div class="row">
         <div class="lbl"><label for="test_card">Test card</label>
           <span class="hint">bars + motion + clock on every feed — checks the chain end-to-end</span></div>
@@ -467,7 +511,7 @@
         <a id="log-link" href="/logs" target="_blank"
            style="color: var(--accent); text-decoration: none">view log</a>
       </div>
-    </div>
+    </details>
   </div>
 </div>
 
@@ -478,7 +522,7 @@
   const $ = (id) => document.getElementById(id);
   const conn = $("conn"), errBox = $("error"), onair = $("onair"),
         savedBadge = $("saved"), pvMsg = $("pv-msg"), pv = $("preview");
-  const params = ["det_threshold","det_size","detect_every","min_face","max_misses",
+  const params = ["detector","out_fps","loop_file","det_threshold","det_size","detect_every","min_face","max_misses",
                   "emotion_enabled","emotion_budget","show_ids","show_stats",
                   "clean_main","flip","cap_format","cap_backend",
                   "ndi_program","ndi_overlay","ndi_faces","ndi_mask",
@@ -655,6 +699,9 @@
     $("mask_style").disabled = !maskOn;
     const cutActive = p.ndi_faces || p.tex_faces || maskOn
                       || p.preview_source === "faces";
+    const SHAPES = { rectangle: "rectangles", oval: "soft ovals", people: "people silhouette" };
+    $("cutout-tag").textContent = cutActive ? SHAPES[p.cutout_shape] || "" : "no feed using it";
+    $("cutout-card").classList.toggle("off", !cutActive);
     $("cutout-shape-row").classList.toggle("dimmed", !cutActive);
     $("cutout_shape").disabled = !cutActive;
     const marginOn = cutActive && p.cutout_shape !== "people";
@@ -769,6 +816,14 @@
       el.classList.toggle("unavail", !kindName);
       el.title = kindName ? "" : "texture share unavailable on this machine";
     });
+    // which detector is actually running (auto resolves at launch)
+    if (s.backend) {
+      const nice = s.backend.startsWith("scrfd") ? "SCRFD" : "YuNet";
+      const where = s.backend.includes("cuda") || s.backend.includes("tensorrt")
+                  ? "NVIDIA GPU" : "CPU";
+      $("detector-hint").textContent = `running: ${nice} on ${where}`;
+    }
+
     // machine-load state
     if (s.cpu_cores) {
       $("cpu-hint").textContent = s.cpu_threads
@@ -808,6 +863,15 @@
   pv.title = "click to open full-size";
   pv.addEventListener("click", () =>
     window.open("/preview.mjpg?t=" + Date.now() + pinQ(), "_blank"));
+
+  // ---- collapsible cards: remember what each operator keeps open ----
+  document.querySelectorAll("details.card[data-card]").forEach((d) => {
+    const key = "facetrack_card_" + d.dataset.card;
+    const saved = localStorage.getItem(key);
+    if (saved !== null) d.open = saved === "1";
+    d.addEventListener("toggle", () =>
+      localStorage.setItem(key, d.open ? "1" : "0"));
+  });
 
   // ---- preview view tabs ----
   document.querySelectorAll("#pv-tabs button").forEach((b) => {
