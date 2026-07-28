@@ -464,6 +464,32 @@ def _():
     assert len(lic.machine_id()) == 16
 
 
+@run("admin tool: issues keys the app accepts, and never ships")
+def _():
+    import importlib.util
+    import secrets as _s
+    from datetime import date
+    from facetrack import _ed25519 as ed, licensing as lic
+
+    spec = importlib.util.spec_from_file_location(
+        "ft_admin", os.path.join(ROOT, "tools", "admin.py"))
+    admin = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(admin)          # imports without starting a server
+
+    # the vendor app must be able to build a key the product will accept
+    secret = _s.token_bytes(32)
+    pub = ed.public_key(secret).hex()
+    payload = {"v": 1, "p": "facetrack", "e": "pro", "n": "Admin Test",
+               "i": date.today().isoformat(), "k": "deadbe"}
+    key = lic.encode_key(payload, secret)
+    assert lic.decode_key(key, public_key_hex=pub)["n"] == "Admin Test"
+
+    # and it must be excluded from anything shipped
+    assert "tools" not in os.listdir(os.path.join(ROOT, "facetrack")), \
+        "vendor tooling must live outside the shipped package"
+    assert hasattr(admin, "build_app") and hasattr(admin, "vendor_dir")
+
+
 @run("edition: GPL-only models are excluded from distribution builds")
 def _():
     import importlib

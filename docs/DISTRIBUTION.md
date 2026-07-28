@@ -94,7 +94,27 @@ the RFC 8032 reference (verification takes ~4 ms and runs once at
 startup, so a compiled crypto library would only add installer weight).
 The official RFC test vectors are asserted in the smoke tests.
 
-### Issuing keys
+### Issuing keys — the admin app
+
+Double-click **`Licence Admin.command`** (Mac) or **`Licence Admin.bat`**
+(Windows), or run `python tools/admin.py`. It opens a local page at
+`127.0.0.1:8091` that:
+
+- generates your signing keypair on first run (with a back-it-up warning)
+  and shows the **public key** to build with;
+- issues keys from a form — licensee, your own reference (order number
+  or email), purchase vs reviewer, optional expiry, optional machine
+  lock — and hands back a copyable key;
+- keeps a **ledger** of everything issued, so you can look up who has
+  what and re-copy a key a customer has lost;
+- checks any key against your signing key.
+
+**Never distribute it.** It holds the private key that mints licences.
+It binds to localhost only, lives outside the `facetrack` package so
+packaging can't sweep it in, and the signing key is written `chmod 600`
+into a vendor folder separate from the app's own settings.
+
+The same operations are available from the terminal if you prefer:
 
 ```bash
 python tools/issue_key.py keygen                 # once — store the private key safely
@@ -153,7 +173,9 @@ on the environment.
   activation, seat counting and revocation are Phase 4; the key format
   already carries a key id (`k`) for it.
 - **Purchase → key delivery** is Phase 3 (the payment provider's webhook
-  calls `issue_key.py`).
+  calls `issue_key.py`; the admin's ledger is the record until then).
+- **Revocation** shows in the ledger but cannot be enforced without the
+  Phase 4 server — a key already issued keeps working offline.
 
 ## Phase 2 — installers (planned)
 
