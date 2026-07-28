@@ -52,22 +52,60 @@ options:
 
 Option 1 is simpler and is what the download links should point at first.
 
-## Deploying to your own host
+## Deploying on Vercel
 
-The site is plain static files — no PHP, no Node, no database. Upload the
-**contents of `site/`** to the subdomain's document root:
+The site is plain static files — no build step, no framework. `vercel.json`
+here sets clean URLs (so `/privacy` works), long cache headers on images,
+and a few sensible security headers.
+
+### Link the project (once)
+
+1. Vercel → **Add New… → Project** → import `legofsalmon/facetrack`.
+2. **Root Directory: `site`** — this is the important one. Without it Vercel
+   looks at the repo root and finds a Python app.
+3. Framework Preset: **Other**. Leave build and output commands empty.
+4. Deploy. You get a `…vercel.app` URL straight away.
+
+### Don't rebuild on every app commit
+
+Most commits to this repo don't touch the site. Under
+Settings → Git → **Ignored Build Step**, use:
 
 ```bash
-# example, adjust to your host
-rsync -av --delete site/ user@yourhost:/var/www/facetrack.yourdomain.com/
+git diff --quiet HEAD^ HEAD -- .
 ```
 
-Or drag the files in over SFTP / cPanel File Manager. Then at your DNS
-host, point the subdomain at the same server (an A record to its IP, or a
-CNAME if your host gives you a hostname), and enable TLS for it — most
-control panels offer one-click Let's Encrypt.
+Vercel skips the build when that exits 0 (no changes inside `site/`) and
+builds when it exits 1.
 
-Check afterwards that `img/` came across and the page loads over **https**.
+### The subdomain
+
+Settings → **Domains** → add `facetrack.yourdomain.com`, then create the
+CNAME Vercel shows you at your DNS host (or, if the domain's nameservers are
+already on Vercel, it wires itself up). TLS is automatic.
+
+**Hold this step until the page is finished** — see the checklist below.
+Until then the `…vercel.app` URL is fine for review and for sending to
+colleagues.
+
+### A note on repo access
+
+Linking this repo gives Vercel read access to the whole private
+product source, and it clones ~200 MB (the models) on each build. Nothing
+secret lives in the repo — your signing key stays on your machine — so this
+is a normal trade to accept. If you'd rather Vercel never saw the product
+source, put `site/` in its own small repo and point Vercel at that instead.
+
+## Before you attach the subdomain
+
+- [ ] Real crowd shot from your own camera (see above)
+- [ ] `PRICE`, `BUY_LINK`, `DOWNLOAD_MAC`, `DOWNLOAD_WIN`, `VERSION`,
+      `EMAIL`, `COPYRIGHT_YEAR` filled in
+- [ ] `privacy.html` and `terms.html` written (footer links to them)
+- [ ] Installers actually exist to download (Phase 2)
+
+A live page with a broken Buy button and no price does more harm than no
+page at all.
 
 ## Selling through Lemon Squeezy
 
