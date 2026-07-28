@@ -94,6 +94,22 @@ def main(argv=None) -> int:
     print("  models included: " + ", ".join(shipped))
     if args.distribution and any(n.startswith("rvm_") for n in shipped):
         return _fail("RVM is in a distribution build — it must not ship.")
+
+    if sys.platform == "darwin":
+        import plistlib
+        plist = plistlib.loads((out / "Contents" / "Info.plist").read_bytes())
+        # A background-only app has no window-server connection, so macOS
+        # will not show it the camera prompt — it just denies, and the app
+        # can never see a camera. PyInstaller sets this for console apps,
+        # so it has to be turned off deliberately every time.
+        if plist.get("LSBackgroundOnly"):
+            return _fail("LSBackgroundOnly is set — the camera prompt can "
+                         "never appear. Fix info_plist in yewee.spec.")
+        if not plist.get("NSCameraUsageDescription"):
+            return _fail("NSCameraUsageDescription is missing — macOS kills "
+                         "the app when it opens a camera.")
+        print("  Info.plist: foreground app, camera usage described")
+
     print("\n  next: sign and package (build/README.md)\n")
     return 0
 

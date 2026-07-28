@@ -9,6 +9,7 @@ anywhere (CI included).
 """
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import tempfile
@@ -491,8 +492,23 @@ def _():
 
     # The request must report the outcome rather than fire and forget —
     # returning before the user answers means opening the camera too early.
-    assert capture.request_camera_access() in (
-        "authorized", "denied", "undetermined", "restricted", "unknown")
+    logs = []
+    handler = logging.Handler()
+    handler.emit = lambda r: logs.append(r.getMessage())
+    log = logging.getLogger("yewee")
+    log.addHandler(handler)
+    try:
+        assert capture.request_camera_access(timeout=1.0) in (
+            "authorized", "denied", "undetermined", "restricted", "unknown")
+    finally:
+        log.removeHandler(handler)
+
+    # It asked macOS for real. PyObjC refuses a Python callable where a block
+    # is expected unless the selector's signature is registered, and for a
+    # long time that failure was swallowed — so the prompt never appeared and
+    # the camera could never be authorised. Never again silently.
+    assert not any("camera permission" in m for m in logs), \
+        f"the permission request failed: {logs}"
 
     if sys.platform == "darwin":
         holder = capture.camera_permission_holder()

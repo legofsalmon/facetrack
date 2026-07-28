@@ -7,6 +7,7 @@ which keeps end-to-end latency low.
 """
 from __future__ import annotations
 
+import logging
 import os
 import threading
 import time
@@ -164,7 +165,7 @@ def camera_permission_holder() -> str:
     return "Yewee" if is_frozen() else "your terminal app"
 
 
-def request_camera_access(timeout: float = 120.0) -> str:
+def request_camera_access(timeout: float = 45.0) -> str:
     """Asks macOS for camera permission and waits for the answer.
 
     Call this on the main thread before anything opens a camera. Both
@@ -174,7 +175,10 @@ def request_camera_access(timeout: float = 120.0) -> str:
     exactly how a first launch fails with a bare 'Could not open camera'.
 
     Returns the resulting authorisation state. No-op off macOS or once the
-    question has already been settled.
+    question has already been settled — so this costs nothing after the
+    first launch. The timeout is a backstop against the app looking hung
+    if nobody is at the keyboard; permission granted later still takes
+    effect, it just needs the source re-picked in the panel.
     """
     import sys
     if sys.platform != "darwin":
@@ -186,16 +190,37 @@ def request_camera_access(timeout: float = 120.0) -> str:
         from Foundation import NSDate, NSRunLoop
         objc.loadBundle("AVFoundation", {},
                         bundle_path="/System/Library/Frameworks/AVFoundation.framework")
+        # The completion handler is an Objective-C block, and PyObjC will not
+        # pass a Python callable as one without knowing its signature — it
+        # raises "no signature available". The proper AVFoundation bindings
+        # carry this metadata; we register just the one selector we need
+        # rather than ship the whole framework wrapper.
+        objc.registerMetaDataForSelector(
+            b"AVCaptureDevice", b"requestAccessForMediaType:completionHandler:",
+            {"arguments": {3: {"callable": {
+                "retval": {"type": b"v"},
+                "arguments": {0: {"type": b"^v"}, 1: {"type": objc._C_BOOL}}}}}})
+
         dev = objc.lookUpClass("AVCaptureDevice")
         answered: list[bool] = []
         dev.requestAccessForMediaType_completionHandler_(
             "vide", lambda ok: answered.append(bool(ok)))
+
+        # Wait on the recorded status rather than only the callback: the
+        # status is what every later camera open actually consults, and it
+        # keeps us honest if the block ever stops firing. Pumping the run
+        # loop is what lets the prompt draw in the first place.
         loop = NSRunLoop.currentRunLoop()
         deadline = time.monotonic() + timeout
-        while not answered and time.monotonic() < deadline:
+        while (not answered and camera_authorization() == "undetermined"
+               and time.monotonic() < deadline):
             loop.runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.05))
-    except Exception:
-        pass
+    except Exception as exc:
+        # Worth saying out loud: silently swallowing this is how the request
+        # went unnoticed as broken, leaving users with a camera that could
+        # never be authorised.
+        logging.getLogger("yewee").warning(
+            "could not ask for camera permission: %s", exc)
     return camera_authorization()
 
 

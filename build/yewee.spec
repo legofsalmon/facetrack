@@ -95,6 +95,11 @@ if MACOS:
             "NSCameraUsageDescription":
                 "Yewee reads your camera to find and follow faces. "
                 "Video is processed on this machine and never stored.",
+            # PyInstaller marks console apps background-only, and a
+            # background-only app has no window-server connection — so macOS
+            # cannot show it the camera prompt and silently denies instead.
+            # The app must be a normal foreground app to ever get permission.
+            "LSBackgroundOnly": False,
             "NSHighResolutionCapable": True,
             "LSMinimumSystemVersion": "11.0",
             "CFBundleShortVersionString": os.environ.get("YEWEE_VERSION", "0.0.0"),

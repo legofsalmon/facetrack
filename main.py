@@ -262,7 +262,8 @@ def main(argv=None) -> int:
         from yewee.capture import (camera_authorization, camera_permission_holder,
                                    request_camera_access)
         if camera_authorization() == "undetermined":
-            print("  Waiting for camera permission...", flush=True)
+            print("  Waiting for camera permission — click Allow on the"
+                  " macOS prompt.", flush=True)
         if request_camera_access() == "denied":
             print("  ! Camera access is denied — System Settings > Privacy &"
                   f" Security > Camera, allow {camera_permission_holder()}."
