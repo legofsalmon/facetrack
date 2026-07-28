@@ -25,6 +25,14 @@ ROOT = Path(__file__).resolve().parent.parent
 BUILD = ROOT / "build"
 BUILDINFO = ROOT / "yewee" / "_buildinfo.py"
 
+# The public half of the vendor signing key — safe to commit, and the whole
+# point of it is to be published. It lives here rather than in an environment
+# variable because a distribution build carrying the wrong key produces
+# software that looks perfect and cannot be activated by anybody, and that is
+# not a mistake you want resting on remembering to export a shell variable.
+# The private half never leaves the Licence Admin's data directory.
+VENDOR_PUBLIC_KEY = "409208784ace937f8ac9687aa489315f45aa6e2cba33466d3a0d21f695ac9ae2"
+
 
 def write_buildinfo(distribution: bool, pubkey: str, version: str) -> None:
     BUILDINFO.write_text(
@@ -40,8 +48,9 @@ def main(argv=None) -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--distribution", action="store_true",
                     help="build what you sell: licensing on, GPL models left out")
-    ap.add_argument("--pubkey", default=os.environ.get("YEWEE_PUBKEY", ""),
-                    help="licence public key hex (from the Licence Admin)")
+    ap.add_argument("--pubkey",
+                    default=os.environ.get("YEWEE_PUBKEY", VENDOR_PUBLIC_KEY),
+                    help="licence public key hex (defaults to the vendor key)")
     ap.add_argument("--version", default="0.0.0")
     ap.add_argument("--keep-buildinfo", action="store_true",
                     help="leave yewee/_buildinfo.py in place afterwards")
@@ -109,6 +118,11 @@ def main(argv=None) -> int:
             return _fail("NSCameraUsageDescription is missing — macOS kills "
                          "the app when it opens a camera.")
         print("  Info.plist: foreground app, camera usage described")
+
+    if args.distribution:
+        whose = ("the vendor key" if args.pubkey == VENDOR_PUBLIC_KEY
+                 else "NOT the vendor key — nothing you issue will activate this")
+        print(f"  licence key:  {args.pubkey[:16]}...  ({whose})")
 
     print("\n  next: sign and package (build/README.md)\n")
     return 0

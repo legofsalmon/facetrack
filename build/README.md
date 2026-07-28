@@ -29,6 +29,23 @@ don't survive packaging.
 
 The build fails if RVM ever ends up in a distribution bundle.
 
+## The licence key
+
+`build.py` bakes the vendor **public** key into every distribution build,
+defaulting to the one recorded at the top of the script. It prints which
+key it used — check that line says "the vendor key" before you ship
+anything, because a build carrying the wrong key looks perfect and cannot
+be activated by anybody.
+
+The **private** half lives only in the Licence Admin's data directory
+(`~/Library/Application Support/yewee-vendor/signing.key`, mode 0600) and
+must never be committed, emailed or pasted anywhere. Back it up somewhere
+durable and offline: every installed copy verifies against its public
+half, so losing it means no existing install can ever be activated again,
+and there is no recovery path. That is the design — activation works with
+no server and no internet — and the cost of it is that this one file
+matters more than the rest of the repository put together.
+
 ## Verified so far
 
 A distribution build on macOS runs standalone with no Python present:
