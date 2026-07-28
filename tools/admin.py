@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""facetrack licence admin — a small local web app for issuing keys.
+"""yewee licence admin — a small local web app for issuing keys.
 
     python tools/admin.py            # opens http://127.0.0.1:8091
 
@@ -9,8 +9,8 @@ builds (see docs/DISTRIBUTION.md).
 
 State lives in a vendor folder separate from the app's own settings:
 
-    <user data>/facetrack-vendor/signing.key   private key, chmod 600
-    <user data>/facetrack-vendor/issued.json   ledger of everything issued
+    <user data>/yewee-vendor/signing.key   private key, chmod 600
+    <user data>/yewee-vendor/issued.json   ledger of everything issued
 """
 # NOTE: no `from __future__ import annotations` — FastAPI resolves the
 # `Request` type hint for dependency injection, and a stringified
@@ -27,8 +27,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from facetrack import _ed25519 as ed                      # noqa: E402
-from facetrack.licensing import decode_key, encode_key    # noqa: E402
+from yewee import _ed25519 as ed                      # noqa: E402
+from yewee.licensing import decode_key, encode_key    # noqa: E402
 
 
 def vendor_dir() -> Path:
@@ -38,7 +38,7 @@ def vendor_dir() -> Path:
         base = Path(os.environ.get("APPDATA", Path.home()))
     else:
         base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-    d = base / "facetrack-vendor"
+    d = base / "yewee-vendor"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -76,7 +76,7 @@ def record(entry: dict) -> None:
 
 
 PAGE = """<!doctype html><html lang=en><head><meta charset=utf-8>
-<title>facetrack licence admin</title>
+<title>yewee licence admin</title>
 <meta name=viewport content="width=device-width,initial-scale=1">
 <style>
 :root{--bg:#0e1014;--panel:#161a21;--panel2:#1d222c;--line:#262c38;--text:#e8ebf0;
@@ -138,7 +138,7 @@ function render(){
   $('#app').innerHTML=`
   <div class=card><h2>Your public key</h2>
     <div class=hint style="padding:11px 14px 0">Build the app with this so it accepts your keys:
-      <span class=mono>FACETRACK_PUBKEY=…</span></div>
+      <span class=mono>YEWEE_PUBKEY=…</span></div>
     <div class="keyout mono" style="margin-top:10px">${esc(state.public_key)}</div>
     <div class=row><button class=ghost onclick="copy('${esc(state.public_key)}')">Copy public key</button>
       <span class=hint>private key: <span class=mono>${esc(state.key_path)}</span></span></div>
@@ -167,7 +167,7 @@ function render(){
   </div>
 
   <div class=card><h2>Check a key</h2>
-    <div class=row><input id=chk placeholder="FT1.…"><button class=ghost onclick=check()>Check</button></div>
+    <div class=row><input id=chk placeholder="YW1.…"><button class=ghost onclick=check()>Check</button></div>
     <div id=chkout class=msg></div>
   </div>
 
@@ -216,7 +216,7 @@ def build_app():
     from fastapi import FastAPI, Request
     from fastapi.responses import HTMLResponse, JSONResponse
 
-    app = FastAPI(title="facetrack licence admin")
+    app = FastAPI(title="yewee licence admin")
 
     @app.get("/")
     def index():
@@ -249,7 +249,7 @@ def build_app():
         if not name:
             return JSONResponse({"ok": False, "error": "Licensee name is required."})
         days = int(body.get("days") or 0)
-        payload = {"v": 1, "p": "facetrack", "e": body.get("edition") or "pro",
+        payload = {"v": 1, "p": "yewee", "e": body.get("edition") or "pro",
                    "n": name, "i": date.today().isoformat(),
                    "k": secrets.token_hex(6)}
         if days > 0:
@@ -285,9 +285,9 @@ def build_app():
 
 def main() -> int:
     import uvicorn
-    port = int(os.environ.get("FACETRACK_ADMIN_PORT", "8091"))
+    port = int(os.environ.get("YEWEE_ADMIN_PORT", "8091"))
     url = f"http://127.0.0.1:{port}"
-    print(f"\n  facetrack licence admin -> {url}")
+    print(f"\n  yewee licence admin -> {url}")
     print(f"  vendor folder: {vendor_dir()}")
     print("  (local only — never expose this; it can mint licences)\n")
     threading.Timer(1.0, webbrowser.open, args=(url,)).start()

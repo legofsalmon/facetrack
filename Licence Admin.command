@@ -1,10 +1,10 @@
 #!/bin/bash
-# facetrack licence admin — double-click to issue licence keys.
+# yewee licence admin — double-click to issue licence keys.
 # Vendor tool: never distribute this or the signing key it creates.
 cd "$(dirname "$0")"
 
 if [ ! -x .venv/bin/python ]; then
-  echo "Run the Facetrack launcher once first so the environment exists."
+  echo "Run the Yewee launcher once first so the environment exists."
   read -n 1 -s -r -p "Press any key to close..."
   exit 1
 fi

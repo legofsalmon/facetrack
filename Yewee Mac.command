@@ -1,10 +1,10 @@
 #!/bin/bash
-# facetrack — double-click to run. Sets itself up on first launch (a few
+# yewee — double-click to run. Sets itself up on first launch (a few
 # minutes); after that it starts in seconds. Re-runs setup automatically
 # if an update changed the requirements or a model file is missing.
 cd "$(dirname "$0")"
 
-MARKER=".venv/.facetrack-ready"
+MARKER=".venv/.yewee-ready"
 REQHASH="$(shasum -a 256 requirements.txt 2>/dev/null | cut -d' ' -f1)"
 
 pause_exit() { echo ""; read -n 1 -s -r -p "Press any key to close..."; exit 1; }
@@ -42,7 +42,7 @@ install_uv() {
 
 setup() {
   echo ""
-  echo "=== facetrack setup (first run / after an update) ==="
+  echo "=== yewee setup (first run / after an update) ==="
   echo ""
 
   # Environment strategy: `uv` provides a self-contained Python 3.12 —
@@ -100,11 +100,11 @@ setup() {
   ./.venv/bin/pip install -r requirements.txt --quiet || { echo "Install failed — check your internet connection and re-run."; pause_exit; }
 
   echo "3/3 Checking everything works..."
-  ./.venv/bin/python -m facetrack.doctor --fix
+  ./.venv/bin/python -m yewee.doctor --fix
 
   echo "$REQHASH" > "$MARKER"
   echo ""
-  echo "Setup finished — launching facetrack."
+  echo "Setup finished — launching yewee."
   echo "(macOS will ask for camera permission the first time — click Allow.)"
   echo ""
 }
@@ -119,8 +119,8 @@ while true; do
   status=$?
   [ $status -eq 0 ] && break
   echo ""
-  echo "facetrack crashed (exit $status) — restarting in 3 seconds. Ctrl-C to stop."
-  echo "Details are in logs/facetrack.log. If it keeps crashing, delete the"
+  echo "yewee crashed (exit $status) — restarting in 3 seconds. Ctrl-C to stop."
+  echo "Details are in logs/yewee.log. If it keeps crashing, delete the"
   echo ".venv folder and double-click this again to repair."
   sleep 3 || break
 done

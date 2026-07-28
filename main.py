@@ -8,7 +8,7 @@ Examples:
   python main.py                              # camera -> NDI, panel on :8089
   python main.py --doctor                     # run the self-check
   python main.py --source "ndi:PTZ Cam 1"    # take an NDI feed as input
-  python main.py --clean-main --ndi-overlay "FaceTracker Overlay"
+  python main.py --clean-main --ndi-overlay "Yewee Overlay"
 """
 from __future__ import annotations
 
@@ -20,9 +20,9 @@ import threading
 import time
 import webbrowser
 
-from facetrack import settings
-from facetrack.params import LiveParams
-from facetrack.pipeline import Pipeline
+from yewee import settings
+from yewee.params import LiveParams
+from yewee.pipeline import Pipeline
 
 DEFAULTS = dict(detector="auto", out_fps=30.0, loop_file=True,
                 det_threshold=0.5, det_size=640, detect_every=1, min_face=0,
@@ -80,7 +80,7 @@ def parse_args(argv=None):
                      help="max faces scored for expression per frame")
 
     out = p.add_argument_group("output")
-    out.add_argument("--ndi-name", default="FaceTracker", help="NDI source name")
+    out.add_argument("--ndi-name", default="Yewee", help="NDI source name")
     out.add_argument("--ndi-overlay", default="", metavar="NAME",
                      help="also send a second NDI source with ONLY the tracking graphics "
                           "on transparency (alpha), for keying downstream")
@@ -208,18 +208,18 @@ def _start_watchdog(pipeline) -> None:
             time.sleep(5)
             if (not pipeline.stopped
                     and time.monotonic() - pipeline.heartbeat > 30):
-                print("[facetrack] watchdog: pipeline stalled for 30s — "
+                print("[yewee] watchdog: pipeline stalled for 30s — "
                       "exiting so the launcher can restart", flush=True)
                 os._exit(3)
-    threading.Thread(target=watch, daemon=True, name="facetrack-watchdog").start()
+    threading.Thread(target=watch, daemon=True, name="yewee-watchdog").start()
 
 
 def _already_running(port: int) -> bool:
-    """True if another facetrack instance already serves the panel port."""
+    """True if another yewee instance already serves the panel port."""
     import urllib.request
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=0.8) as r:
-            return b"facetrack" in r.read(2048)
+            return b"yewee" in r.read(2048)
     except Exception:
         return False
 
@@ -227,28 +227,28 @@ def _already_running(port: int) -> bool:
 def main(argv=None) -> int:
     args = parse_args(argv)
     if args.doctor:
-        from facetrack.doctor import main as doctor_main
+        from yewee.doctor import main as doctor_main
         return doctor_main([])
 
     # Double-launch guard: a second instance with the same feed names can
-    # crash inside the NDI library, so if facetrack already serves the
+    # crash inside the NDI library, so if yewee already serves the
     # panel port, just show the existing panel instead of starting again.
     # (Deliberate multi-instance setups use --web-port / --ndi-name.)
     if not args.no_web and _already_running(args.web_port):
         url = f"http://localhost:{args.web_port}"
-        print(f"facetrack is already running on this machine — control panel: {url}")
+        print(f"yewee is already running on this machine — control panel: {url}")
         if not args.no_browser:
             webbrowser.open(url)
         return 0
 
-    from facetrack.logging_setup import setup as setup_logging
+    from yewee.logging_setup import setup as setup_logging
     setup_logging(os.path.dirname(os.path.abspath(__file__)))
 
     saved = settings.load()
     params = build_params(args, saved["params"])
     # Apply the CPU budget before any model loads — ONNX Runtime bakes its
     # thread count into each session at creation.
-    from facetrack.runtime import limit_threads
+    from yewee.runtime import limit_threads
     limit_threads(params.snapshot()["limit_cpu"])
     if args.source is None:
         args.source = saved["source"] or "0"
@@ -256,7 +256,7 @@ def main(argv=None) -> int:
     if sys.platform == "darwin":
         # First-ever run: pop the macOS camera prompt right away (attributed
         # to the terminal that launched us) instead of failing silently.
-        from facetrack.capture import request_camera_access
+        from yewee.capture import request_camera_access
         request_camera_access()
 
     pipeline = Pipeline(args, params, web_enabled=not args.no_web)
@@ -266,14 +266,14 @@ def main(argv=None) -> int:
     web_server = None
     panel_pin = args.pin or saved["pin"]
     if not args.no_web:
-        from facetrack.webui import create_app, start_in_thread
+        from yewee.webui import create_app, start_in_thread
         app = create_app(pipeline, params,
                          on_params_change=settings.save_debounced,
                          pin=panel_pin)
         web_server = start_in_thread(app, args.web_host, args.web_port)
         panel_url = f"http://localhost:{args.web_port}"
 
-    print("\n  facetrack is running")
+    print("\n  yewee is running")
     if panel_url:
         lan = _lan_ip()
         extra = f"   (from other devices: http://{lan}:{args.web_port})" \
@@ -320,7 +320,7 @@ def main(argv=None) -> int:
 
     if pipeline.restart_requested:
         # Relaunch ourselves with the same command line (panel "Restart").
-        print("[facetrack] restarting...", flush=True)
+        print("[yewee] restarting...", flush=True)
         if web_server is not None:
             web_server.should_exit = True  # release the panel port first
             time.sleep(0.7)

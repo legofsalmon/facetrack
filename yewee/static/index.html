@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>facetrack control</title>
+<title>yewee control</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎯</text></svg>">
 <style>
   :root {
@@ -213,7 +213,7 @@
       </div>
       <div class="row">
         <div class="lbl"><label for="local_preview">Window on the machine</label>
-          <span class="hint">the preview window on the facetrack computer itself</span></div>
+          <span class="hint">the preview window on the yewee computer itself</span></div>
         <label class="switch"><input type="checkbox" id="local_preview"><span class="slider"></span></label>
       </div>
     </div>
@@ -498,7 +498,7 @@
       <div class="row" id="lic-entry-row">
         <div class="lbl"><label for="lic-key">Licence key</label>
           <span class="hint">paste the key from your email — works offline</span></div>
-        <input type="text" id="lic-key" placeholder="FT1.…" spellcheck="false">
+        <input type="text" id="lic-key" placeholder="YW1.…" spellcheck="false">
       </div>
       <div class="row" style="gap:8px">
         <button id="lic-activate" style="flex:1">Activate</button>
@@ -521,7 +521,7 @@
       </div>
       <div class="hint" style="padding: 0 14px 11px">
         pause keeps the feeds up with a standby slate · restart relaunches
-        with saved settings · quit stops facetrack (start it again with the
+        with saved settings · quit stops yewee (start it again with the
         launcher on the machine) ·
         <a id="log-link" href="/logs" target="_blank"
            style="color: var(--accent); text-decoration: none">view log</a>
@@ -530,7 +530,7 @@
   </div>
 </div>
 
-<footer>facetrack · finds and follows faces — does not identify people · settings save automatically<span id="uptime"></span></footer>
+<footer>yewee · finds and follows faces — does not identify people · settings save automatically<span id="uptime"></span></footer>
 
 <script>
 (function () {
@@ -560,7 +560,7 @@
   };
   let ws = null, sendTimer = null, pendingSets = {}, lastParams = {}, lastFps = 30;
   let savedTimer = null, lastState = "live", sentQuit = false, sentRestart = false;
-  let pin = localStorage.getItem("facetrack_pin") || "";
+  let pin = localStorage.getItem("yewee_pin") || "";
   const pinQ = () => (pin ? "&pin=" + encodeURIComponent(pin) : "");
   document.body.classList.add("offline");  // controls unlock when connected
 
@@ -669,7 +669,7 @@
       if (d.blocked_cameras && d.blocked_cameras.length) {
         srcHint.style.color = "var(--warn)";
         srcHint.textContent = d.camera_auth === "denied"
-          ? "macOS blocks the camera for this app: System Settings › Privacy & Security › Camera → allow the app that starts facetrack, restart, then rescan"
+          ? "macOS blocks the camera for this app: System Settings › Privacy & Security › Camera → allow the app that starts yewee, restart, then rescan"
           : "macOS is asking for camera permission — click Allow on the prompt, then rescan";
       } else {
         srcHint.style.color = "";
@@ -936,7 +936,7 @@
 
   // ---- collapsible cards: remember what each operator keeps open ----
   document.querySelectorAll("details.card[data-card]").forEach((d) => {
-    const key = "facetrack_card_" + d.dataset.card;
+    const key = "yewee_card_" + d.dataset.card;
     const saved = localStorage.getItem(key);
     if (saved !== null) d.open = saved === "1";
     d.addEventListener("toggle", () =>
@@ -957,12 +957,12 @@
     send({ type: "control", data: lastState === "paused" ? "resume" : "pause" });
   });
   $("btn-restart").addEventListener("click", () => {
-    if (!confirm("Restart facetrack? Feeds drop for a few seconds.")) return;
+    if (!confirm("Restart yewee? Feeds drop for a few seconds.")) return;
     sentRestart = true;
     send({ type: "control", data: "restart" });
   });
   $("btn-quit").addEventListener("click", () => {
-    if (!confirm("Quit facetrack? The panel goes offline until you start it "
+    if (!confirm("Quit yewee? The panel goes offline until you start it "
                  + "again with the launcher on the machine.")) return;
     sentQuit = true;
     send({ type: "control", data: "quit" });
@@ -990,12 +990,12 @@
       conn.classList.remove("on");
       document.body.classList.add("offline");
       if (e.code === 4001) {  // wrong/missing PIN — forget it and re-prompt
-        localStorage.removeItem("facetrack_pin");
+        localStorage.removeItem("yewee_pin");
         pin = "";
         pvMsg.textContent = "Locked — enter the PIN";
       } else {
         pvMsg.textContent = sentQuit
-          ? "facetrack has quit — start it again with the launcher on the machine"
+          ? "yewee has quit — start it again with the launcher on the machine"
           : sentRestart ? "Restarting…" : "Reconnecting…";
       }
       pvMsg.classList.remove("hide");
@@ -1005,7 +1005,7 @@
       const msg = JSON.parse(e.data);
       if (msg.type === "auth_required") {
         if (!pin) pin = prompt("Control panel PIN:") || "";
-        if (pin) localStorage.setItem("facetrack_pin", pin);
+        if (pin) localStorage.setItem("yewee_pin", pin);
         send({ type: "auth", data: pin });
         pv.src = "/preview.mjpg?t=" + Date.now() + pinQ();
         loadSources();

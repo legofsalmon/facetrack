@@ -5,11 +5,11 @@ embedded public key, so activation needs no server — the same key works
 whether the machine is online or air-gapped, which covers both
 activation paths and makes free reviewer keys trivial to issue.
 
-    FT1.<base64url payload>.<base64url signature>
+    YW1.<base64url payload>.<base64url signature>
 
 The payload is compact JSON:
 
-    {"v":1, "p":"facetrack", "e":"pro", "n":"Jane Smith",
+    {"v":1, "p":"yewee", "e":"pro", "n":"Jane Smith",
      "i":"2026-07-28", "x":"2027-07-28", "m":"<machine>", "k":"<id>"}
 
 `x` (expiry) and `m` (machine binding) are optional — a key without
@@ -18,7 +18,7 @@ one-off purchase gets. `k` is a key id, so a future server can revoke.
 
 Enforcement only switches on when VENDOR_PUBLIC_KEY is set, which the
 packaging step does for a distributed build. Repo and internal builds
-leave it empty and run unrestricted — see facetrack/edition.py.
+leave it empty and run unrestricted — see yewee/edition.py.
 
 Honest limitation: this is Python, so a determined user can edit the
 check out. The goal is keeping honest people honest, not DRM.
@@ -39,11 +39,11 @@ from . import _ed25519 as ed
 
 # Set by the packaging step for a sold build (hex, 64 chars). Empty here
 # so the repo never carries product keys and internal builds run free.
-VENDOR_PUBLIC_KEY = os.environ.get("FACETRACK_PUBKEY", "")
+VENDOR_PUBLIC_KEY = os.environ.get("YEWEE_PUBKEY", "")
 
 TRIAL_HOURS = 72
-PRODUCT = "facetrack"
-_KEY_PREFIX = "FT1."
+PRODUCT = "yewee"
+_KEY_PREFIX = "YW1."
 
 
 # ---------------------------------------------------------------- paths
@@ -157,7 +157,7 @@ def activate(key: str) -> tuple[bool, str]:
         return False, "This build does not use licence keys."
     payload = decode_key(key)
     if payload is None:
-        return False, "That key isn't valid for facetrack."
+        return False, "That key isn't valid for yewee."
     bound = payload.get("m")
     if bound and bound != machine_id():
         return False, "That key is registered to a different machine."

@@ -3,19 +3,19 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>Facetrack</string>
+    <string>Yewee</string>
     <key>CFBundleDisplayName</key>
-    <string>Facetrack</string>
+    <string>Yewee</string>
     <key>CFBundleIdentifier</key>
-    <string>com.colmhewson.facetrack.launcher</string>
+    <string>com.colmhewson.yewee.launcher</string>
     <key>CFBundleVersion</key>
     <string>1.0</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleExecutable</key>
-    <string>facetrack</string>
+    <string>yewee</string>
     <key>CFBundleIconFile</key>
-    <string>facetrack</string>
+    <string>yewee</string>
     <key>LSMinimumSystemVersion</key>
     <string>11.0</string>
 </dict>

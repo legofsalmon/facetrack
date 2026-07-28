@@ -38,7 +38,7 @@ def run(name):
 
 @run("params: clamping and unknown keys")
 def _():
-    from facetrack.params import LiveParams, SPEC
+    from yewee.params import LiveParams, SPEC
     p = LiveParams(**{k: (False if SPEC[k][0] is bool else 1) for k in SPEC})
     assert p.set("det_threshold", 5.0) == 0.95
     assert p.set("det_threshold", -1) == 0.05
@@ -52,7 +52,7 @@ def _():
 
 @run("settings: roundtrip, pin and unknown keys preserved")
 def _():
-    from facetrack import settings
+    from yewee import settings
     with tempfile.TemporaryDirectory() as td:
         old = settings.SETTINGS_PATH
         settings.SETTINGS_PATH = Path(td) / "settings.json"
@@ -72,7 +72,7 @@ def _():
 
 @run("capture: format strings parse safely")
 def _():
-    from facetrack.capture import parse_cap_format
+    from yewee.capture import parse_cap_format
     assert parse_cap_format("1920x1080@50") == (1920, 1080, 50.0)
     assert parse_cap_format("1280x720@29.97") == (1280, 720, 29.97)
     assert parse_cap_format("auto") == (0, 0, 0.0)
@@ -82,7 +82,7 @@ def _():
 
 @run("tracker: stable IDs on moving boxes")
 def _():
-    from facetrack.tracker import FaceTracker
+    from yewee.tracker import FaceTracker
     trk = FaceTracker()
     ids = set()
     for i in range(60):
@@ -115,7 +115,7 @@ def _first_frame():
 
 @run("detector: YuNet finds the synthetic faces")
 def _():
-    from facetrack.detectors import YuNetDetector
+    from yewee.detectors import YuNetDetector
     dets = YuNetDetector(score_threshold=0.4).detect(_first_frame())
     assert len(dets) >= 6, f"expected >=6 faces, got {len(dets)}"
     assert (dets[:, 4] >= 0.4).all()
@@ -123,9 +123,9 @@ def _():
 
 @run("overlay: alpha only where graphics are drawn")
 def _():
-    from facetrack.detectors import YuNetDetector
-    from facetrack.overlay import render_overlay_bgra
-    from facetrack.tracker import FaceTracker
+    from yewee.detectors import YuNetDetector
+    from yewee.overlay import render_overlay_bgra
+    from yewee.tracker import FaceTracker
     frame = _first_frame()
     trk = FaceTracker(min_hits=1)
     tracks = trk.step(YuNetDetector(score_threshold=0.4).detect(frame))
@@ -138,8 +138,8 @@ def _():
 
 @run("overlay: brand colour overrides the palette")
 def _():
-    from facetrack.overlay import render_overlay_bgra
-    from facetrack.tracker import Track
+    from yewee.overlay import render_overlay_bgra
+    from yewee.tracker import Track
     tracks = []
     for i in range(3):
         t = Track.__new__(Track)
@@ -158,9 +158,9 @@ def _():
 
 @run("faces cutout: picture inside boxes, transparent outside")
 def _():
-    from facetrack.detectors import YuNetDetector
-    from facetrack.overlay import render_faces_cutout
-    from facetrack.tracker import FaceTracker
+    from yewee.detectors import YuNetDetector
+    from yewee.overlay import render_faces_cutout
+    from yewee.tracker import FaceTracker
     frame = _first_frame()
     trk = FaceTracker(min_hits=1)
     tracks = trk.step(YuNetDetector(score_threshold=0.4).detect(frame))
@@ -182,9 +182,9 @@ def _():
 
 @run("cutout shapes: ovals, feathering, premultiplied alpha")
 def _():
-    from facetrack.detectors import YuNetDetector
-    from facetrack.overlay import render_faces_cutout
-    from facetrack.tracker import FaceTracker
+    from yewee.detectors import YuNetDetector
+    from yewee.overlay import render_faces_cutout
+    from yewee.tracker import FaceTracker
     frame = _first_frame()
     trk = FaceTracker(min_hits=1)
     tracks = trk.step(YuNetDetector(score_threshold=0.4).detect(frame))
@@ -209,8 +209,8 @@ def _():
 
 @run("mask feed: white-on-black and white-on-alpha styles")
 def _():
-    from facetrack.overlay import cutout_alpha, render_mask
-    from facetrack.tracker import Track
+    from yewee.overlay import cutout_alpha, render_mask
+    from yewee.tracker import Track
     t = Track.__new__(Track)
     t.id = 0
     t.bbox = (100, 80, 60, 70)
@@ -227,7 +227,7 @@ def _():
 
 @run("settings: old output params migrate to the feed matrix")
 def _():
-    from facetrack import settings
+    from yewee import settings
     with tempfile.TemporaryDirectory() as td:
         old = settings.SETTINGS_PATH
         settings.SETTINGS_PATH = Path(td) / "settings.json"
@@ -244,7 +244,7 @@ def _():
 
 @run("silhouette margin: grows and shrinks the people mask")
 def _():
-    from facetrack.overlay import cutout_alpha, grow_alpha
+    from yewee.overlay import cutout_alpha, grow_alpha
     disc = np.zeros((360, 640), dtype=np.uint8)
     cv2.circle(disc, (320, 180), 100, 255, -1)
     base = (disc > 127).sum()
@@ -270,7 +270,7 @@ def _():
 
 @run("people cutout: feather slider actually controls edge width")
 def _():
-    from facetrack.overlay import render_faces_cutout
+    from yewee.overlay import render_faces_cutout
     frame = np.full((360, 640, 3), 200, dtype=np.uint8)
     disc = np.zeros((360, 640), dtype=np.uint8)
     cv2.circle(disc, (320, 180), 100, 255, -1)
@@ -292,8 +292,8 @@ def _():
 
 @run("people segmenter: loads and produces a full-frame mask")
 def _():
-    from facetrack.overlay import render_faces_cutout
-    from facetrack.segmenter import PeopleSegmenter
+    from yewee.overlay import render_faces_cutout
+    from yewee.segmenter import PeopleSegmenter
     frame = _first_frame()
     seg = PeopleSegmenter()
     mask = seg.mask(frame)
@@ -312,8 +312,8 @@ def _():
     except ImportError:
         print("        (onnxruntime not installed — skipped)")
         return
-    from facetrack.overlay import render_faces_cutout
-    from facetrack.segmenter import ModnetMatter, RvmMatter
+    from yewee.overlay import render_faces_cutout
+    from yewee.segmenter import ModnetMatter, RvmMatter
     frame = _first_frame()
     for cls in (ModnetMatter, RvmMatter):
         model = cls()
@@ -335,7 +335,7 @@ def _():
 
 @run("people segmenter: ROI keeps the matte inside the region")
 def _():
-    from facetrack.segmenter import PeopleSegmenter
+    from yewee.segmenter import PeopleSegmenter
     frame = _first_frame()
     seg = PeopleSegmenter()
     H, W = frame.shape[:2]
@@ -353,8 +353,8 @@ def _():
 @run("detector: panel choice switches engine, bad choice falls back")
 def _():
     from main import DEFAULTS
-    from facetrack.params import LiveParams
-    from facetrack.pipeline import Pipeline
+    from yewee.params import LiveParams
+    from yewee.pipeline import Pipeline
 
     params = LiveParams(**{**DEFAULTS, "detector": "auto"})
     pipe = Pipeline.__new__(Pipeline)      # detector logic only
@@ -381,7 +381,7 @@ def _():
 
 @run("params: launch-only flags stay out of the panel")
 def _():
-    from facetrack.params import SPEC
+    from yewee.params import SPEC
     # everything an operator can change at runtime should be a param
     for key in ("detector", "out_fps", "loop_file", "cap_format", "cap_backend"):
         assert key in SPEC, f"{key} should be panel-controllable"
@@ -392,7 +392,7 @@ def _():
 
 @run("ed25519: matches the RFC 8032 test vectors")
 def _():
-    from facetrack import _ed25519 as ed
+    from yewee import _ed25519 as ed
     vectors = [
         ("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
          "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
@@ -424,14 +424,14 @@ def _():
 @run("licensing: keys verify, expire, bind, and reject tampering")
 def _():
     import secrets as _s
-    from facetrack import _ed25519 as ed, licensing as lic
+    from yewee import _ed25519 as ed, licensing as lic
     secret = _s.token_bytes(32)
     pub = ed.public_key(secret).hex()
     other = ed.public_key(_s.token_bytes(32)).hex()
     from datetime import date, timedelta
 
     def key(**over):
-        payload = {"v": 1, "p": "facetrack", "e": "pro", "n": "Test",
+        payload = {"v": 1, "p": "yewee", "e": "pro", "n": "Test",
                    "i": date.today().isoformat(), "k": "abc123"}
         payload.update(over)
         return lic.encode_key(payload, secret)
@@ -439,7 +439,7 @@ def _():
     good = key()
     assert lic.decode_key(good, public_key_hex=pub)["n"] == "Test"
     assert lic.decode_key(good, public_key_hex=other) is None, "wrong key accepted"
-    assert lic.decode_key("FT1.nonsense.nonsense", public_key_hex=pub) is None
+    assert lic.decode_key("YW1.nonsense.nonsense", public_key_hex=pub) is None
     assert lic.decode_key("", public_key_hex=pub) is None
     # a flipped payload byte must fail the signature
     head, body, sig = good.split(".", 2)
@@ -456,7 +456,7 @@ def _():
 
 @run("licensing: no public key means an unrestricted build")
 def _():
-    from facetrack import licensing as lic
+    from yewee import licensing as lic
     assert lic.VENDOR_PUBLIC_KEY == "", "repo must not carry a product key"
     st = lic.status()
     assert st["state"] == "unrestricted", "internal builds must not be gated"
@@ -469,7 +469,7 @@ def _():
     import importlib.util
     import secrets as _s
     from datetime import date
-    from facetrack import _ed25519 as ed, licensing as lic
+    from yewee import _ed25519 as ed, licensing as lic
 
     spec = importlib.util.spec_from_file_location(
         "ft_admin", os.path.join(ROOT, "tools", "admin.py"))
@@ -479,13 +479,13 @@ def _():
     # the vendor app must be able to build a key the product will accept
     secret = _s.token_bytes(32)
     pub = ed.public_key(secret).hex()
-    payload = {"v": 1, "p": "facetrack", "e": "pro", "n": "Admin Test",
+    payload = {"v": 1, "p": "yewee", "e": "pro", "n": "Admin Test",
                "i": date.today().isoformat(), "k": "deadbe"}
     key = lic.encode_key(payload, secret)
     assert lic.decode_key(key, public_key_hex=pub)["n"] == "Admin Test"
 
     # and it must be excluded from anything shipped
-    assert "tools" not in os.listdir(os.path.join(ROOT, "facetrack")), \
+    assert "tools" not in os.listdir(os.path.join(ROOT, "yewee")), \
         "vendor tooling must live outside the shipped package"
     assert hasattr(admin, "build_app") and hasattr(admin, "vendor_dir")
 
@@ -493,7 +493,7 @@ def _():
 @run("edition: GPL-only models are excluded from distribution builds")
 def _():
     import importlib
-    from facetrack import edition, segmenter
+    from yewee import edition, segmenter
 
     internal = {m["value"] for m in segmenter.available_people_models()}
     assert "rvm" in internal, "internal builds keep RVM (it is not distributed)"
@@ -517,9 +517,9 @@ def _():
 
 @run("detector: no non-distributable model is referenced")
 def _():
-    from facetrack import doctor
-    from facetrack.detectors import CenterFaceDetector, YuNetDetector  # noqa: F401
-    from facetrack.params import SPEC
+    from yewee import doctor
+    from yewee.detectors import CenterFaceDetector, YuNetDetector  # noqa: F401
+    from yewee.params import SPEC
     assert "scrfd" not in SPEC["detector"][1], "SCRFD is non-commercial; must be gone"
     assert not any("scrfd" in name for name in doctor.MODELS)
 
@@ -527,7 +527,7 @@ def _():
 @run("runtime: CPU limit caps OpenCV and ONNX threads")
 def _():
     import cv2 as _cv
-    from facetrack import runtime
+    from yewee import runtime
     default = _cv.getNumThreads()
     try:
         n = runtime.limit_threads(True)
@@ -555,8 +555,8 @@ def _():
 @run("auto relief: steps down under load, recovers with headroom")
 def _():
     from main import DEFAULTS
-    from facetrack.params import LiveParams
-    from facetrack.pipeline import Pipeline
+    from yewee.params import LiveParams
+    from yewee.pipeline import Pipeline
 
     pipe = Pipeline.__new__(Pipeline)          # logic only, no capture/models
     pipe._relief = 0
@@ -595,8 +595,8 @@ def _():
 
 @run("test card: bars on program, markers on alpha")
 def _():
-    from facetrack.overlay import render_test_card
-    card, ovl = render_test_card(640, 360, ["facetrack TEST CARD", "MAC", "640x360"])
+    from yewee.overlay import render_test_card
+    card, ovl = render_test_card(640, 360, ["yewee TEST CARD", "MAC", "640x360"])
     assert card.shape == (360, 640, 3) and ovl.shape == (360, 640, 4)
     bar_row = card[10]
     uniques = len(np.unique(bar_row.reshape(-1, 3), axis=0))
@@ -610,7 +610,7 @@ def _():
 
 @run("params: string choices validate")
 def _():
-    from facetrack.params import LiveParams, SPEC
+    from yewee.params import LiveParams, SPEC
     vals = {}
     for k, (typ, lo, _hi) in SPEC.items():
         if typ is bool:
@@ -632,8 +632,8 @@ def _():
     import time
 
     from main import DEFAULTS, parse_args
-    from facetrack.params import LiveParams
-    from facetrack.pipeline import Pipeline
+    from yewee.params import LiveParams
+    from yewee.pipeline import Pipeline
 
     class FlakySource:
         is_live = True
@@ -690,9 +690,9 @@ def _():
 
 @run("emotion: FER+ labels a face")
 def _():
-    from facetrack.detectors import YuNetDetector
-    from facetrack.emotion import EMOTIONS, EmotionEstimator
-    from facetrack.tracker import FaceTracker
+    from yewee.detectors import YuNetDetector
+    from yewee.emotion import EMOTIONS, EmotionEstimator
+    from yewee.tracker import FaceTracker
     frame = _first_frame()
     trk = FaceTracker(min_hits=1)
     tracks = trk.step(YuNetDetector(score_threshold=0.4).detect(frame))

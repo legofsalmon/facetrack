@@ -43,7 +43,7 @@ def probe() -> tuple[str, str]:
 class SyphonOutput:
     kind = "syphon"
 
-    def __init__(self, name: str = "facetrack"):
+    def __init__(self, name: str = "yewee"):
         import syphon
         from Cocoa import NSDate, NSDefaultRunLoopMode, NSRunLoop
         from syphon.utils.numpy import copy_image_to_mtl_texture
@@ -84,7 +84,7 @@ class SyphonOutput:
 class SpoutOutput:
     kind = "spout"
 
-    def __init__(self, name: str = "facetrack"):
+    def __init__(self, name: str = "yewee"):
         import SpoutGL
         self.sender = SpoutGL.SpoutSender()
         self.sender.setSenderName(name)
@@ -106,7 +106,7 @@ class SpoutOutput:
             pass
 
 
-def create(name: str = "facetrack"):
+def create(name: str = "yewee"):
     kind, err = probe()
     if not kind:
         raise RuntimeError(err)

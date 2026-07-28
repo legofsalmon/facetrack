@@ -70,8 +70,8 @@ class Pipeline:
         }
         # Syphon/Spout server names follow --ndi-name so a second instance
         # (which must use its own --ndi-name) can't collide; the default
-        # stays plain "facetrack" to keep existing VJ patches working.
-        tex_base = "facetrack" if base == "FaceTracker" else f"facetrack-{base}"
+        # stays plain "yewee" to keep existing VJ patches working.
+        tex_base = "yewee" if base == "Yewee" else f"yewee-{base}"
         self.tex_feed_names = {
             "program": tex_base,
             "overlay": f"{tex_base}-overlay",
@@ -290,7 +290,7 @@ class Pipeline:
         w, h = self._last_size
         if self._card_cache is None or self._card_cache[0] != (w, h):
             base, ovl = render_test_card(w, h, [
-                "facetrack TEST CARD",
+                "yewee TEST CARD",
                 f"{self.hostname} · {self.ndi_name}",
                 f"{w}x{h} @ {p['out_fps']:g} fps target",
             ])
@@ -829,7 +829,7 @@ class Pipeline:
                     laps["preview"] = (time.perf_counter() - t0) * 1000.0
                 if p["local_preview"] and display is not None:
                     try:
-                        cv2.imshow("facetrack (q to quit)", _scaled(display))
+                        cv2.imshow("yewee (q to quit)", _scaled(display))
                         window_open = True
                         if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
                             break
@@ -914,7 +914,7 @@ class Pipeline:
 
                 frame_idx += 1
                 if not args.quiet and frame_idx % 150 == 0:
-                    print(f"[facetrack] {fps_ema:5.1f} fps | faces {len(tracks):3d} | "
+                    print(f"[yewee] {fps_ema:5.1f} fps | faces {len(tracks):3d} | "
                           f"proc {proc_ema:5.1f} ms | frame {frame_idx}")
                 if args.max_frames and frame_idx >= args.max_frames:
                     break
@@ -934,6 +934,6 @@ class Pipeline:
                 cv2.destroyAllWindows()
 
         if dt_ema is not None:
-            print(f"[facetrack] done: {frame_idx} frames, {fps_ema:.1f} fps avg (ema), "
+            print(f"[yewee] done: {frame_idx} frames, {fps_ema:.1f} fps avg (ema), "
                   f"proc {proc_ema:.1f} ms")
         return frame_idx

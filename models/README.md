@@ -30,7 +30,7 @@ restores it, or run:
 - **RVM is deliberately excluded from distributed builds.** GPL-3.0
   would require shipping the whole product under GPL with source, which
   is incompatible with a paid closed-source licence. It stays available
-  in internal builds — see `facetrack/edition.py`.
+  in internal builds — see `yewee/edition.py`.
 - **SCRFD was removed** (was the GPU detector). InsightFace's models are
   licensed for non-commercial research only, so it could not ship in a
   product. CenterFace replaces it.

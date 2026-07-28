@@ -1,4 +1,4 @@
-"""Self-check for facetrack: `python -m facetrack.doctor [--fix] [--no-camera]`
+"""Self-check for yewee: `python -m yewee.doctor [--fix] [--no-camera]`
 
 Verifies Python, packages, models, camera access, detector backend, NDI,
 and the control-panel port, in plain language with a fix for anything
@@ -123,7 +123,7 @@ def check_models(fix: bool) -> None:
             continue
         if not fix:
             _report("fail", f"Model missing: {name} ({info['why']})",
-                    "Run Setup again, or: python -m facetrack.doctor --fix")
+                    "Run Setup again, or: python -m yewee.doctor --fix")
             continue
         try:
             _download(info["url"], path, name)
@@ -167,7 +167,7 @@ def check_ndi() -> None:
         vf.set_resolution(160, 90)
         vf.set_frame_rate(Fraction(30, 1))
         vf.set_fourcc(FourCC.BGRA)
-        s = Sender(ndi_name="FACETRACK-DOCTOR")
+        s = Sender(ndi_name="YEWEE-DOCTOR")
         s.set_video_frame(vf)
         s.open()
         s.close()
@@ -196,7 +196,7 @@ def check_port(port: int = 8089) -> None:
         _report("ok", f"Control panel port {port} is free")
     except OSError:
         _report("warn", f"Port {port} is in use",
-                "facetrack may already be running — or launch with --web-port <other>.")
+                "yewee may already be running — or launch with --web-port <other>.")
     finally:
         sock.close()
 
@@ -205,12 +205,12 @@ def main(argv=None) -> int:
     if sys.platform == "win32":
         import os
         os.system("")  # switches legacy consoles into ANSI-colour mode
-    ap = argparse.ArgumentParser(description="facetrack self-check")
+    ap = argparse.ArgumentParser(description="yewee self-check")
     ap.add_argument("--fix", action="store_true", help="download any missing model files")
     ap.add_argument("--no-camera", action="store_true", help="skip the camera probe")
     args = ap.parse_args(argv)
 
-    print("\nfacetrack self-check\n" + "-" * 40)
+    print("\nyewee self-check\n" + "-" * 40)
     check_python()
     check_packages()
     check_models(args.fix)

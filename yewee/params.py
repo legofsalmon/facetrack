@@ -32,7 +32,7 @@ SPEC = {
     "out_fps": (float, 1.0, 120.0),       # declared feed rate + frame budget
     # The output matrix: four content types x two transports. NDI feeds
     # are named "<name>", "<name> Overlay/Faces/Mask"; texture servers
-    # (Syphon/Spout) are "facetrack", "facetrack-overlay/-faces/-mask".
+    # (Syphon/Spout) are "yewee", "yewee-overlay/-faces/-mask".
     "ndi_program": (bool, None, None),
     "ndi_overlay": (bool, None, None),
     "ndi_faces": (bool, None, None),

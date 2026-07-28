@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""facetrack licence keys — vendor tool. Keep the private key secret.
+"""yewee licence keys — vendor tool. Keep the private key secret.
 
     # once: make your signing keypair
     python tools/issue_key.py keygen
@@ -14,9 +14,9 @@
     python tools/issue_key.py issue --name "Big Venue" --machine a1b2c3d4e5f6a7b8
 
     # check a key the way the app will
-    python tools/issue_key.py check FT1.xxx.yyy
+    python tools/issue_key.py check YW1.xxx.yyy
 
-The private key is read from FACETRACK_SECRET (hex) or --secret-file.
+The private key is read from YEWEE_SECRET (hex) or --secret-file.
 Never commit it; anyone holding it can mint licences.
 """
 from __future__ import annotations
@@ -31,8 +31,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from facetrack import _ed25519 as ed          # noqa: E402
-from facetrack.licensing import decode_key, encode_key  # noqa: E402
+from yewee import _ed25519 as ed          # noqa: E402
+from yewee.licensing import decode_key, encode_key  # noqa: E402
 
 
 def _secret(args) -> bytes:
@@ -40,14 +40,14 @@ def _secret(args) -> bytes:
     if args.secret_file:
         raw = Path(args.secret_file).read_text().strip()
     else:
-        raw = os.environ.get("FACETRACK_SECRET", "").strip()
+        raw = os.environ.get("YEWEE_SECRET", "").strip()
     if not raw:
-        sys.exit("No signing key. Set FACETRACK_SECRET=<hex> or pass "
+        sys.exit("No signing key. Set YEWEE_SECRET=<hex> or pass "
                  "--secret-file, or run `keygen` first.")
     try:
         key = bytes.fromhex(raw)
     except ValueError:
-        sys.exit("FACETRACK_SECRET must be 64 hex characters.")
+        sys.exit("YEWEE_SECRET must be 64 hex characters.")
     if len(key) != 32:
         sys.exit("Signing key must be 32 bytes (64 hex characters).")
     return key
@@ -58,11 +58,11 @@ def cmd_keygen(args) -> int:
     public = ed.public_key(secret)
     print("\nPRIVATE key — store securely, never commit, never ship:\n")
     print(f"  {secret.hex()}\n")
-    print("PUBLIC key — put this in the build (FACETRACK_PUBKEY):\n")
+    print("PUBLIC key — put this in the build (YEWEE_PUBKEY):\n")
     print(f"  {public.hex()}\n")
     print("Suggested use:")
-    print("  export FACETRACK_SECRET=<private>     # when issuing keys")
-    print("  export FACETRACK_PUBKEY=<public>      # when building/running\n")
+    print("  export YEWEE_SECRET=<private>     # when issuing keys")
+    print("  export YEWEE_PUBKEY=<public>      # when building/running\n")
     return 0
 
 
@@ -70,7 +70,7 @@ def cmd_issue(args) -> int:
     secret = _secret(args)
     payload = {
         "v": 1,
-        "p": "facetrack",
+        "p": "yewee",
         "e": args.edition,
         "n": args.name,
         "i": date.today().isoformat(),
@@ -88,14 +88,14 @@ def cmd_issue(args) -> int:
     print("\nLicence key — send this to the customer:\n")
     print(key + "\n")
     print("They paste it into the control panel (Licence card), or drop it")
-    print("in a file called licence.key in the facetrack data folder.\n")
+    print("in a file called licence.key in the yewee data folder.\n")
     return 0
 
 
 def cmd_check(args) -> int:
-    pub = args.public or os.environ.get("FACETRACK_PUBKEY", "")
+    pub = args.public or os.environ.get("YEWEE_PUBKEY", "")
     if not pub:
-        sys.exit("Need the public key: --public <hex> or FACETRACK_PUBKEY.")
+        sys.exit("Need the public key: --public <hex> or YEWEE_PUBKEY.")
     payload = decode_key(args.key, public_key_hex=pub)
     if payload is None:
         print("INVALID — signature does not match this public key.")
@@ -122,7 +122,7 @@ def main(argv=None) -> int:
 
     p = sub.add_parser("check", help="verify a key")
     p.add_argument("key")
-    p.add_argument("--public", default="", help="public key hex (or FACETRACK_PUBKEY)")
+    p.add_argument("--public", default="", help="public key hex (or YEWEE_PUBKEY)")
     p.set_defaults(fn=cmd_check)
 
     args = ap.parse_args(argv)

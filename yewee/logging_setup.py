@@ -1,4 +1,4 @@
-"""Mirror console output to a rotating log file (logs/facetrack.log).
+"""Mirror console output to a rotating log file (logs/yewee.log).
 
 Everything printed to stdout/stderr — including tracebacks — also lands
 in the log, so there's a record to check after an unattended crash.
@@ -45,13 +45,13 @@ def setup(root_dir: str) -> str:
     """Install the tee; returns the log file path (best-effort — console
     behaviour is unchanged if the log directory can't be created)."""
     log_dir = os.path.join(root_dir, "logs")
-    log_path = os.path.join(log_dir, "facetrack.log")
+    log_path = os.path.join(log_dir, "yewee.log")
     try:
         os.makedirs(log_dir, exist_ok=True)
         handler = RotatingFileHandler(log_path, maxBytes=2_000_000,
                                       backupCount=3, encoding="utf-8")
         handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
-        console = logging.getLogger("facetrack.console")
+        console = logging.getLogger("yewee.console")
         console.setLevel(logging.INFO)
         console.addHandler(handler)
         console.propagate = False

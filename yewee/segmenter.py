@@ -161,7 +161,7 @@ class RvmMatter:
 
 # The people-cutout engines. `distributable` marks whether a model may
 # ship in a sold/distributed build — RVM is GPL-3.0, so it stays in
-# internal builds only (see facetrack/edition.py and LICENSE).
+# internal builds only (see yewee/edition.py and LICENSE).
 PEOPLE_MODELS = {
     "pphumanseg": {"cls": PeopleSegmenter, "path": MODEL_PATH,
                    "label": "Fast — PP-HumanSeg", "licence": "Apache-2.0",

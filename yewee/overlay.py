@@ -244,7 +244,7 @@ def render_test_card(w: int, h: int, lines: list[str]) -> tuple[np.ndarray, np.n
         cv2.line(ovl, (cx, cy), (cx, cy + dy * L), white, t2, cv2.LINE_AA)
     cv2.line(ovl, (w // 2 - L, h // 2), (w // 2 + L, h // 2), white, t2, cv2.LINE_AA)
     cv2.line(ovl, (w // 2, h // 2 - L), (w // 2, h // 2 + L), white, t2, cv2.LINE_AA)
-    label = "facetrack ALPHA TEST"
+    label = "yewee ALPHA TEST"
     (tw, _), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, fscale, th)
     cv2.putText(ovl, label, ((w - tw) // 2, h // 2 - L - 12),
                 cv2.FONT_HERSHEY_SIMPLEX, fscale, white, th, cv2.LINE_AA)

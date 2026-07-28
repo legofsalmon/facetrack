@@ -1,11 +1,11 @@
 @echo off
-rem facetrack - double-click to run. Sets itself up on first launch (a few
+rem yewee - double-click to run. Sets itself up on first launch (a few
 rem minutes); after that it starts in seconds. Re-runs setup automatically
 rem if an update changed the requirements or a model file is missing.
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
-set "MARKER=.venv\.facetrack-ready"
+set "MARKER=.venv\.yewee-ready"
 set "REQHASH="
 for /f "skip=1 tokens=1" %%h in ('certutil -hashfile requirements.txt SHA256 2^>nul') do if not defined REQHASH set "REQHASH=%%h"
 
@@ -31,15 +31,15 @@ rem Run, and auto-restart on crashes (clean quits end the loop).
 .venv\Scripts\python main.py %*
 if %errorlevel%==0 exit /b 0
 echo.
-echo facetrack crashed (exit %errorlevel%) - restarting in 3 seconds. Close this
-echo window to stop. Details are in logs\facetrack.log. If it keeps crashing,
+echo yewee crashed (exit %errorlevel%) - restarting in 3 seconds. Close this
+echo window to stop. Details are in logs\yewee.log. If it keeps crashing,
 echo delete the .venv folder and double-click this again to repair.
 timeout /t 3 /nobreak >nul
 goto :runapp
 
 :setup
 echo.
-echo === facetrack setup (first run / after an update) ===
+echo === yewee setup (first run / after an update) ===
 echo.
 
 rem Environment strategy: uv (if present) provides a self-contained
@@ -95,10 +95,10 @@ if errorlevel 1 (
 )
 
 echo 3/3 Checking everything works...
-.venv\Scripts\python -m facetrack.doctor --fix
+.venv\Scripts\python -m yewee.doctor --fix
 
 echo %REQHASH%>"%MARKER%"
 echo.
-echo Setup finished - launching facetrack.
+echo Setup finished - launching yewee.
 echo.
 exit /b 0

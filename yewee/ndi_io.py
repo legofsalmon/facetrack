@@ -20,7 +20,7 @@ class NDIOutput:
     """Sends BGR frames as an NDI video source. Handles resolution changes
     by transparently re-opening the sender."""
 
-    def __init__(self, name: str = "FaceTracker", fps: float = 30.0):
+    def __init__(self, name: str = "Yewee", fps: float = 30.0):
         self.name = name
         self.fps = float(fps)
         self.sender: Sender | None = None

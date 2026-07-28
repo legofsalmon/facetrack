@@ -1,4 +1,4 @@
-# facetrack — live face tracking to NDI
+# yewee — live face tracking to NDI
 
 Points a camera at a crowd, finds and follows faces, and sends the result
 over **NDI** to your vision mixer — with a browser control panel for
@@ -27,9 +27,9 @@ To update later: `git pull` (or re-download), then run Setup again.
 
 ### Run it
 
-- **Mac** — double-click **`Facetrack.app`** (drag it to your Dock for
+- **Mac** — double-click **`Yewee.app`** (drag it to your Dock for
   one-click starts). It opens Terminal running the launcher.
-- **Windows** — double-click **`Facetrack Windows.bat`**, or run
+- **Windows** — double-click **`Yewee Windows.bat`**, or run
   **`Create Desktop Icon.bat`** once to get a proper desktop icon.
 
 One launcher does everything:
@@ -47,7 +47,7 @@ folder, no admin password) which fetches a self-contained Python — 3.12
 on Mac, 3.13 on Windows. First run needs internet.
 
 The **control panel opens in your browser** automatically. Your mixer will
-see NDI sources named like `MAC (FaceTracker)` — the panel shows the exact
+see NDI sources named like `MAC (Yewee)` — the panel shows the exact
 names. That's it.
 
 ### The control panel
@@ -76,7 +76,7 @@ names. That's it.
   graphics*, *Clean camera*, *Overlay only*, *Faces cutout* or *Mask*,
   so you can check exactly what each feed carries; transparency shows
   as a checkerboard.
-- **Previews** (the panel thumbnail and the window on the facetrack
+- **Previews** (the panel thumbnail and the window on the yewee
   machine) can be switched off during the show to save processing — the
   NDI/Syphon/Spout feeds keep running. With *Keep program clean* on and
   previews off, the annotation pass is skipped entirely.
@@ -88,7 +88,7 @@ names. That's it.
 - **If the input dies mid-show** (unplugged camera, dead NDI feed) the
   outputs cut to plain black — graceful on a live screen — while the
   panel preview shows a NO SIGNAL slate and the header a red pill.
-  facetrack reconnects automatically the moment the source returns.
+  yewee reconnects automatically the moment the source returns.
 - **Number badges / expressions** draw in a per-person colour palette, or
   flip on **Brand colour** to draw every box in one colour that matches
   the event's look.
@@ -114,13 +114,13 @@ names. That's it.
 - **It crashed?** The launcher restarts it automatically after 3 seconds
   (clean quits don't restart). A watchdog also force-restarts the app if
   the pipeline wedges for 30 seconds (stalled driver, blocked I/O).
-  Everything the app printed is also in `logs/facetrack.log` for
+  Everything the app printed is also in `logs/yewee.log` for
   after-the-fact diagnosis — or the *view log* link in the panel.
-- **The machine can't sleep** while facetrack runs (caffeinate on macOS,
+- **The machine can't sleep** while yewee runs (caffeinate on macOS,
   the equivalent power override on Windows) — no dead feed because a
   screensaver kicked in.
 - **It's wedged?** Delete the `.venv` folder and double-click the
-  Facetrack file again — it rebuilds everything. Or, from a terminal:
+  Yewee file again — it rebuilds everything. Or, from a terminal:
 
 ```bash
 .venv/bin/python main.py --doctor
@@ -169,9 +169,9 @@ identical controls — no more transport-specific options:
 | Mask | the cutout's matte itself | *Mask style*: **White on black** (classic luma matte for external keying) or **White on alpha** (alpha-aware chains) |
 
 NDI feeds are named `<name>`, `<name> Overlay`, `<name> Faces`,
-`<name> Mask`; texture feeds appear as `facetrack`,
-`facetrack-overlay/-faces/-mask` (with a custom `--ndi-name`, the base
-becomes `facetrack-<name>`, so two instances never collide).
+`<name> Mask`; texture feeds appear as `yewee`,
+`yewee-overlay/-faces/-mask` (with a custom `--ndi-name`, the base
+becomes `yewee-<name>`, so two instances never collide).
 
 Feed *names* are fixed at launch because renaming mid-show would drop
 receivers. NDI's codec is lossy, so keyed NDI graphics gain a pixel of
@@ -179,8 +179,8 @@ soft fringe — normal for all NDI alpha sources; the Syphon/Spout path is
 uncompressed and keys perfectly. Feeds are emitted together; your mixer's
 frame sync aligns them.
 
-**Syphon/Spout notes:** the texture share appears as `facetrack` (or
-`facetrack-<name>` with a custom `--ndi-name`, so two instances never
+**Syphon/Spout notes:** the texture share appears as `yewee` (or
+`yewee-<name>` with a custom `--ndi-name`, so two instances never
 collide) in
 Resolume / VDMX / MadMapper / TouchDesigner on the same machine. *What
 it carries* switches it between the full picture, the graphics-with-alpha
@@ -209,7 +209,7 @@ override saved settings for that run. Non-panel flags:
 
 ```
 main.py                  entry point: flags, saved settings, banner
-facetrack/
+yewee/
   capture.py             camera / file / NDI-in / NO-INPUT slate, camera probe
   detectors.py           YuNet + CenterFace backends, live-tunable
   tracker.py             SORT-style multi-face tracker
@@ -221,7 +221,7 @@ facetrack/
   settings.py            auto-persistence (settings.json)
   webui.py               FastAPI app: panel, WebSocket, MJPEG, /sources
   static/index.html      the control panel
-  doctor.py              self-check (python -m facetrack.doctor)
+  doctor.py              self-check (python -m yewee.doctor)
 models/                  ONNX models (doctor --fix re-downloads)
 ```
 
@@ -230,8 +230,8 @@ models/                  ONNX models (doctor --fix re-downloads)
 Each instance needs its own panel port and NDI name:
 
 ```bash
-python main.py --source 0 --ndi-name "FaceTracker A" --web-port 8089
-python main.py --source 1 --ndi-name "FaceTracker B" --web-port 8090
+python main.py --source 0 --ndi-name "Yewee A" --web-port 8089
+python main.py --source 1 --ndi-name "Yewee B" --web-port 8090
 ```
 
 Settings are shared per folder — for fully independent settings, keep a
@@ -240,7 +240,7 @@ flags doesn't start a duplicate: it just opens the existing panel.
 
 ### Privacy
 
-facetrack detects and follows faces; it performs no identity recognition,
+yewee detects and follows faces; it performs no identity recognition,
 no matching against any database, and records nothing — frames are
 processed and discarded in memory. Expression labels are a cosmetic
 overlay estimate. For public events, follow your usual venue practice on
@@ -267,7 +267,7 @@ Two deliberate exceptions:
 - **RVM** (the *Best* matting model) is **GPL-3.0**. Distributing it
   would force the whole product under GPL with a source requirement, so
   packaged builds exclude it; it stays available for in-house use. See
-  `facetrack/edition.py`.
+  `yewee/edition.py`.
 - **SCRFD** was removed entirely — InsightFace licenses its trained
   models for non-commercial research only. **CenterFace** (MIT) replaced
   it as the GPU detector.
@@ -277,7 +277,7 @@ runtime.
 
 ### Keeping the machine healthy
 
-facetrack is compute-hungry by nature — on a 12-core Mac the heaviest
+yewee is compute-hungry by nature — on a 12-core Mac the heaviest
 setup (RVM silhouette + expressions + several feeds) draws about 4.5
 cores. Two guards in the panel's **Machine load** card keep that from
 swamping a machine (both are switched on by the *Power saver* preset):
@@ -296,7 +296,7 @@ swamping a machine (both are switched on by the *Power saver* preset):
   headroom, and the panel says what it's doing. Your own settings are
   never rewritten — relief is an internal override.
 
-facetrack also never runs faster than the source supplies: a 30 fps
+yewee also never runs faster than the source supplies: a 30 fps
 camera caps the loop at 30 fps, a 50 fps one at 50.
 
 ### Capture cards (Blackmagic, Magewell, Elgato, AVerMedia, AJA)
@@ -322,16 +322,16 @@ try the other Windows driver, and check the vendor utility sees signal.
 
 Native software ST 2110 needs PTP-timed NICs and a vendor stack (NVIDIA
 Rivermax + ConnectX, or Intel's DPDK-based MTL) — a systems project, not
-a patch, so facetrack does not speak 2110 directly. The production-grade
+a patch, so yewee does not speak 2110 directly. The production-grade
 routes that work today:
 
 - **2110 in**: a **DeckLink IP** card presents 2110 flows as a normal
   DeckLink capture device → works via the DirectShow path above. Or a
-  2110→NDI gateway (Magewell Pro Convert, BirdDog) feeds facetrack's
+  2110→NDI gateway (Magewell Pro Convert, BirdDog) feeds yewee's
   NDI input.
 - **2110 / IP10 out**: Blackmagic's **IP10** codec exists only inside
   their hardware (no public SDK), so "output IP10" = put a Blackmagic
-  2110 IP converter or NDI→2110 gateway on facetrack's output. NDI out
+  2110 IP converter or NDI→2110 gateway on yewee's output. NDI out
   → gateway is the normal pattern for graphics/utility sources in 2110
   plants; the gateway owns PTP timing.
 - A native DeckLink SDK playout module (SDI/2110 out from the app) is
@@ -340,12 +340,12 @@ routes that work today:
 ### Start on boot (show machines)
 
 - **macOS**: System Settings → General → Login Items → add
-  `Facetrack.app` from the project folder.
+  `Yewee.app` from the project folder.
 - **Windows**: run `Create Desktop Icon.bat` once, press Win+R, type
-  `shell:startup`, Enter, and copy the desktop's Facetrack shortcut into
+  `shell:startup`, Enter, and copy the desktop's Yewee shortcut into
   the folder that opens.
 
-The machine then boots straight into facetrack: the launcher self-heals,
+The machine then boots straight into yewee: the launcher self-heals,
 the watchdog and crash-restart keep it alive, and the panel reconnects
 from any browser.
 
@@ -356,4 +356,4 @@ from any browser.
 - The panel has no authentication — it's meant for a closed production
   LAN. Use `--web-host 127.0.0.1` to keep it local-only.
 - macOS camera permission belongs to the *terminal app* that launches
-  facetrack; grant it once when prompted.
+  yewee; grant it once when prompted.

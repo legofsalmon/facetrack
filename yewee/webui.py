@@ -31,7 +31,7 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None,
 
     from .capture import _camera_names, camera_authorization, probe_cameras
 
-    app = FastAPI(title="facetrack")
+    app = FastAPI(title="yewee")
     index_html = (STATIC_DIR / "index.html").read_text()
 
     def _pin_ok(request: Request) -> bool:
@@ -92,7 +92,7 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None,
     def logs(request: Request):
         if not _pin_ok(request):
             return PlainTextResponse("PIN required", status_code=401)
-        log_path = STATIC_DIR.parent.parent / "logs" / "facetrack.log"
+        log_path = STATIC_DIR.parent.parent / "logs" / "yewee.log"
         try:
             lines = log_path.read_text(errors="replace").splitlines()[-200:]
             return PlainTextResponse("\n".join(lines) or "log is empty")
@@ -221,6 +221,6 @@ def start_in_thread(app, host: str, port: int):
                 time.sleep(0.25)
         server.run()
 
-    thread = threading.Thread(target=run, daemon=True, name="facetrack-web")
+    thread = threading.Thread(target=run, daemon=True, name="yewee-web")
     thread.start()
     return server

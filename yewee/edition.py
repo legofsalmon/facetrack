@@ -1,4 +1,4 @@
-"""Which build of facetrack this is.
+"""Which build of yewee this is.
 
 Repo and self-built copies are INTERNAL: everything is available,
 including components that may not be redistributed in a paid product.
@@ -17,4 +17,4 @@ import os
 
 # Overwritten to True by the packaging step; the env var is for testing
 # the distribution build without repacking.
-DISTRIBUTION = os.environ.get("FACETRACK_DISTRIBUTION", "") == "1"
+DISTRIBUTION = os.environ.get("YEWEE_DISTRIBUTION", "") == "1"
