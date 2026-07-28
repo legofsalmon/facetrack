@@ -1,7 +1,7 @@
 # Distributing facetrack commercially
 
-Working notes for turning facetrack into a sold product. Phase 0 is
-done; the rest is planned but not built.
+Working notes for turning facetrack into a sold product. Phases 0 and 1
+are done; 2-4 are planned but not built.
 
 *Not legal advice — the licence positions below quote the upstream terms
 directly so a solicitor can check them quickly.*
