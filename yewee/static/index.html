@@ -643,7 +643,9 @@
         });
         srcSelect.appendChild(g);
       };
-      addGroup("Cameras", d.cameras.map((c) => [String(c.index), c.label]));
+      // Prefer the name spec ("cam:...") — indices shuffle when devices
+      // come and go, and a name still means the same physical box.
+      addGroup("Cameras", d.cameras.map((c) => [c.spec || String(c.index), c.label]));
       if (d.blocked_cameras && d.blocked_cameras.length) {
         const g = document.createElement("optgroup");
         g.label = "Cameras (blocked by macOS)";

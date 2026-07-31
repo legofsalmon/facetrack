@@ -225,18 +225,29 @@ def request_camera_access(timeout: float = 45.0) -> str:
 
 
 def _camera_names() -> list[str]:
-    """Best-effort device names in index order (macOS: system_profiler,
-    Windows: DirectShow via pygrabber). Virtual cameras that the OS doesn't
-    list still get probed — they just fall back to a generic label."""
+    """Device names in OpenCV's index order — from the same API OpenCV
+    enumerates with, because no other list is safe to pair with its
+    indices. The names used to come from system_profiler, whose order is
+    unstable and unrelated: when the two lists crossed, the entry labelled
+    "Blackmagic UltraStudio" opened the FaceTime camera, with no error
+    anywhere because a camera did open. Windows pairs pygrabber with
+    CAP_DSHOW the same way (both walk DirectShow filters in system order).
+    """
     import sys
     try:
         if sys.platform == "darwin":
-            import json
-            import subprocess
-            out = subprocess.run(["system_profiler", "SPCameraDataType", "-json"],
-                                 capture_output=True, timeout=8)
-            data = json.loads(out.stdout or b"{}")
-            return [c.get("_name", "") for c in data.get("SPCameraDataType", [])]
+            import objc
+            objc.loadBundle(
+                "AVFoundation", {},
+                bundle_path="/System/Library/Frameworks/AVFoundation.framework")
+            # The same call the shipped OpenCV's AVFoundation backend makes
+            # (deprecated, but it is what cap_avfoundation indexes into).
+            # Even so, this order is only good for the moment it was taken —
+            # resolve_camera() re-runs it at open time rather than trusting
+            # a list from earlier.
+            dev = objc.lookUpClass("AVCaptureDevice")
+            return [str(d.localizedName())
+                    for d in dev.devicesWithMediaType_("vide")]
         if sys.platform == "win32":
             from pygrabber.dshow_graph import FilterGraph
             return FilterGraph().get_input_devices()
@@ -255,16 +266,20 @@ def probe_cameras(max_index: int = 8, backend: str = "any",
     found = []
     misses = 0
     for i in range(max_index):
-        name = names[i] if i < len(names) and names[i] else f"Camera {i}"
+        name = names[i] if i < len(names) and names[i] else ""
+        # Select by name whenever the OS gave us one: the index is only
+        # valid until the enumeration order shifts, and it does shift.
+        spec = f"cam:{name}" if name else str(i)
+        label = name or f"Camera {i}"
         if skip is not None and i == skip:
-            found.append({"index": i, "label": f"{name} (in use)"})
+            found.append({"index": i, "spec": spec, "label": f"{label} (in use)"})
             misses = 0
             continue
         cap = cv2.VideoCapture(i, BACKENDS.get(backend, cv2.CAP_ANY))
         if cap.isOpened():
             w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            found.append({"index": i, "label": f"{name} ({w}x{h})"})
+            found.append({"index": i, "spec": spec, "label": f"{label} ({w}x{h})"})
             misses = 0
         else:
             misses += 1
@@ -284,11 +299,37 @@ def parse_cap_format(fmt: str) -> tuple[int, int, float]:
         return 0, 0, 0.0
 
 
+def resolve_camera(name: str) -> int:
+    """Find the current index of a camera by device name.
+
+    Camera indices are positions in an enumeration whose order genuinely
+    changes — between processes, and when devices are plugged or unplugged.
+    A saved index that meant the capture card yesterday can mean the
+    built-in camera today, which on a live output is not a small mistake.
+    The device name is the only stable handle, so it is resolved against a
+    fresh enumeration every time a camera is opened, never cached.
+    """
+    names = _camera_names()
+    if name in names:
+        return names.index(name)
+    want = name.strip().lower()
+    loose = [i for i, n in enumerate(names) if want and want in n.lower()]
+    if len(loose) == 1:
+        return loose[0]
+    raise RuntimeError(
+        f"camera '{name}' not found — connected now: {names or 'none'}")
+
+
 def open_source(spec: str, width: int = 0, height: int = 0, fps: float = 0.0,
                 backend: str = "any", loop: bool = False):
-    """spec: camera index ('0'), video file/URL, or 'ndi:<source name>'."""
+    """spec: camera by name ('cam:<device name>'), camera index ('0'),
+    video file/URL, or 'ndi:<source name>'. Prefer cam: — an index is only
+    meaningful within one enumeration, a name survives replugs and reboots.
+    """
     if spec.lower().startswith("ndi:"):
         return NDISource(spec[4:])
+    if spec.lower().startswith("cam:"):
+        return CameraSource(resolve_camera(spec[4:]), width, height, fps, backend)
     if spec.isdigit():
         return CameraSource(int(spec), width, height, fps, backend)
     return FileSource(spec, loop=loop)

@@ -55,12 +55,25 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None,
             return PlainTextResponse("PIN required", status_code=401)
         current = pipeline.source_spec
         in_use = int(current) if current.isdigit() else None
+        if current.lower().startswith("cam:"):
+            try:
+                from .capture import resolve_camera
+                in_use = resolve_camera(current[4:])
+            except Exception:
+                in_use = None
         try:
             cameras = probe_cameras(
                 backend=params.snapshot().get("cap_backend", "any"),
                 skip=in_use)
         except Exception:
             cameras = []
+        # Report the current source as the same spec the picker offers, so
+        # a camera opened by bare index still highlights its cam:<name> row.
+        if in_use is not None:
+            for c in cameras:
+                if c["index"] == in_use:
+                    current = c["spec"]
+                    break
         # If nothing opened because macOS blocks this process, still list
         # the devices the OS knows about so the picker can explain itself.
         camera_auth = camera_authorization()

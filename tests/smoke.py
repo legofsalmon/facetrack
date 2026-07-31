@@ -524,6 +524,51 @@ def _():
                 sys.frozen = frozen
 
 
+@run("camera: devices are chosen by name, not by position in a list")
+def _():
+    from yewee import capture
+
+    real_names = capture._camera_names
+    try:
+        # The Blackmagic scenario: the enumeration order flips between two
+        # moments (it really does — per process and per replug). A saved
+        # index silently becomes a different physical device; a name must
+        # either find the right one or refuse loudly.
+        capture._camera_names = lambda: ["Blackmagic UltraStudio Recorder 3G",
+                                         "FaceTime HD Camera"]
+        assert capture.resolve_camera("FaceTime HD Camera") == 1
+        assert capture.resolve_camera("blackmagic") == 0, "loose match works"
+
+        capture._camera_names = lambda: ["FaceTime HD Camera",
+                                         "Blackmagic UltraStudio Recorder 3G"]
+        assert capture.resolve_camera("FaceTime HD Camera") == 0, \
+            "same name, new order, still the right device"
+
+        try:
+            capture.resolve_camera("DeckLink 8K Pro")
+            raise AssertionError("an absent camera must refuse, not guess")
+        except RuntimeError as exc:
+            assert "connected now" in str(exc), "the error lists what exists"
+
+        # Ambiguity must refuse too — two Blackmagic boxes, 'blackmagic'
+        # could be either, and guessing wrong feeds the wrong camera to a
+        # live output.
+        capture._camera_names = lambda: ["Blackmagic UltraStudio Recorder 3G",
+                                         "Blackmagic UltraStudio 4K"]
+        try:
+            capture.resolve_camera("blackmagic")
+            raise AssertionError("ambiguous names must not be guessed")
+        except RuntimeError:
+            pass
+    finally:
+        capture._camera_names = real_names
+
+    # The probe hands the panel name specs, so what the user clicks is a
+    # device, not a position.
+    entries = capture.probe_cameras(max_index=0)
+    assert entries == []  # no devices probed, but the call shape holds
+
+
 @run("onnx: a provider that is listed but cannot load falls back")
 def _():
     import onnxruntime as ort
