@@ -18,6 +18,7 @@ distributed build — see LICENSE.
 """
 from __future__ import annotations
 
+import logging
 import os
 
 import cv2
@@ -105,17 +106,8 @@ class CenterFaceDetector:
     def __init__(self, model_path: str = CENTERFACE_MODEL, input_size: int = 640,
                  score_threshold: float = 0.5, nms_threshold: float = 0.35,
                  providers: list[str] | None = None):
-        import onnxruntime as ort
-
-        from .runtime import session_options
-        if providers is None:
-            avail = ort.get_available_providers()
-            providers = [p for p in ("TensorrtExecutionProvider",
-                                     "CUDAExecutionProvider",
-                                     "CPUExecutionProvider") if p in avail]
-        self.session = ort.InferenceSession(model_path,
-                                            sess_options=session_options(),
-                                            providers=providers)
+        from .runtime import make_session
+        self.session = make_session(model_path, providers)
         active = self.session.get_providers()[0]
         self.name = "centerface-" + active.replace("ExecutionProvider", "").lower()
         self.input_name = self.session.get_inputs()[0].name
@@ -168,10 +160,22 @@ def pick_backend(backend: str, det_size: int, score_threshold: float):
     if backend == "auto":
         try:
             import onnxruntime as ort
-            gpu = {"CUDAExecutionProvider", "TensorrtExecutionProvider"} & set(ort.get_available_providers())
-            backend = "centerface" if gpu else "yunet"
+            listed = set(ort.get_available_providers())
         except ImportError:
-            backend = "yunet"
+            listed = set()
+        if not ({"CUDAExecutionProvider", "TensorrtExecutionProvider"} & listed):
+            return YuNetDetector(input_width=det_size, score_threshold=score_threshold)
+        # Those providers are only listed, not proven — onnxruntime-gpu
+        # advertises them on a machine with no CUDA installed. CenterFace
+        # reports the provider it actually got, and on CPU it is slower than
+        # YuNet, so a fallback to CPU means "auto" should not have chosen it.
+        detector = CenterFaceDetector(input_size=det_size,
+                                      score_threshold=score_threshold)
+        if not detector.name.endswith("cpu"):
+            return detector
+        logging.getLogger("yewee").info(
+            "no working GPU provider — using the CPU detector (YuNet) instead")
+        return YuNetDetector(input_width=det_size, score_threshold=score_threshold)
     if backend == "centerface":
         return CenterFaceDetector(input_size=det_size, score_threshold=score_threshold)
     return YuNetDetector(input_width=det_size, score_threshold=score_threshold)

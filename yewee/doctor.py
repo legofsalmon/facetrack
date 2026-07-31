@@ -90,12 +90,32 @@ def check_packages() -> None:
         import onnxruntime as ort
         providers = ort.get_available_providers()
         gpu = {"CUDAExecutionProvider", "TensorrtExecutionProvider"} & set(providers)
-        if gpu:
-            _report("ok", "NVIDIA GPU acceleration available",
-                    "The CenterFace detector will be used automatically.")
-        else:
+        if not gpu:
             _report("ok", "onnxruntime installed (no NVIDIA GPU here)",
                     "The fast CPU detector (YuNet) will be used — normal on a Mac.")
+        else:
+            # Listed is not the same as working: onnxruntime-gpu advertises
+            # these on a machine with no CUDA, and only opening a session
+            # finds out. Do that here — this is the check that is meant to
+            # tell you the truth.
+            from .detectors import CENTERFACE_MODEL
+            from .runtime import make_session
+            try:
+                active = make_session(CENTERFACE_MODEL).get_providers()[0]
+            except Exception as exc:                      # noqa: BLE001
+                active, err = "", exc
+            if active and not active.startswith("CPU"):
+                _report("ok", f"NVIDIA GPU acceleration working ({active})",
+                        "The CenterFace detector will be used automatically.")
+            elif active:
+                _report("warn", "GPU providers are advertised but do not load",
+                        "onnxruntime-gpu is installed without a matching CUDA "
+                        "runtime, so it falls back to the CPU. Install the "
+                        "CUDA 12 runtime and cuDNN, or use the CPU detector "
+                        "(YuNet) and ignore this.")
+            else:
+                _report("warn", "onnxruntime cannot open a model at all",
+                        f"{str(err).strip().splitlines()[0][:160]}")
     except ImportError:
         _report("warn", "onnxruntime not installed",
                 "Only needed for the GPU detector; fine to ignore on a Mac.")

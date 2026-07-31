@@ -19,6 +19,7 @@ rather than what we asked for.
 """
 from __future__ import annotations
 
+import logging
 import os
 
 _limited = False
@@ -63,6 +64,47 @@ def limit_threads(enabled: bool) -> int:
     except Exception:
         pass
     return n
+
+
+#: Tried in order. TensorRT is deliberately not here: it needs a matching
+#: TensorRT install on top of CUDA, and it compiles an engine per model and
+#: input shape on first use — a stall of a minute or more, which is the last
+#: thing you want when a show is about to start. Pass it explicitly if you
+#: want it.
+DEFAULT_PROVIDERS = ("CUDAExecutionProvider", "CPUExecutionProvider")
+
+
+def make_session(model_path, providers=None):
+    """Open an ONNX Runtime session on the best provider that actually works.
+
+    onnxruntime.get_available_providers() reports what the package was
+    *compiled* with, not what can load on this machine. A Windows
+    onnxruntime-gpu build happily lists TensorrtExecutionProvider and
+    CUDAExecutionProvider on a machine with no CUDA at all, and asking for
+    one then dies with a missing cublas64_12.dll. The only honest test is
+    to try, so try in order and fall back to whatever loads.
+    """
+    import onnxruntime as ort
+
+    listed = ort.get_available_providers()
+    chain = [p for p in (providers or DEFAULT_PROVIDERS) if p in listed]
+    if "CPUExecutionProvider" not in chain:
+        chain.append("CPUExecutionProvider")   # always leave a way to run
+
+    log = logging.getLogger("yewee")
+    last: Exception | None = None
+    for i, provider in enumerate(chain):
+        try:
+            return ort.InferenceSession(str(model_path),
+                                        sess_options=session_options(),
+                                        providers=chain[i:])
+        except Exception as exc:                        # noqa: BLE001
+            last = exc
+            nxt = chain[i + 1] if i + 1 < len(chain) else None
+            log.warning("%s could not load (%s)%s", provider,
+                        str(exc).strip().splitlines()[0][:160],
+                        f"; falling back to {nxt}" if nxt else "")
+    raise RuntimeError(f"no usable ONNX Runtime provider for {model_path}") from last
 
 
 def session_options():

@@ -524,6 +524,46 @@ def _():
                 sys.frozen = frozen
 
 
+@run("onnx: a provider that is listed but cannot load falls back")
+def _():
+    import onnxruntime as ort
+    from yewee import runtime
+    from yewee.detectors import CENTERFACE_MODEL
+
+    real_available = ort.get_available_providers
+    real_session = ort.InferenceSession
+    tried = []
+
+    # Exactly the Windows failure: onnxruntime-gpu advertises CUDA and
+    # TensorRT, then loading them dies on a missing cublas64_12.dll.
+    def fake_available():
+        return ["TensorrtExecutionProvider", "CUDAExecutionProvider",
+                *real_available()]
+
+    def fake_session(path, **kw):
+        wanted = (kw.get("providers") or ["CPUExecutionProvider"])[0]
+        tried.append(wanted)
+        if wanted != "CPUExecutionProvider":
+            raise RuntimeError(
+                "Error loading onnxruntime_providers_tensorrt.dll which "
+                "depends on cublas64_12.dll which is missing")
+        return real_session(path, **kw)
+
+    ort.get_available_providers, ort.InferenceSession = fake_available, fake_session
+    try:
+        session = runtime.make_session(CENTERFACE_MODEL,
+                                       ["TensorrtExecutionProvider",
+                                        "CUDAExecutionProvider",
+                                        "CPUExecutionProvider"])
+    finally:
+        ort.get_available_providers = real_available
+        ort.InferenceSession = real_session
+
+    assert tried[0] == "TensorrtExecutionProvider", "should try the best first"
+    assert tried[-1] == "CPUExecutionProvider", f"should end on CPU, tried {tried}"
+    assert session.get_providers(), "a working session must come back"
+
+
 @run("licensing: no public key means an unrestricted build")
 def _():
     from yewee import licensing as lic

@@ -20,8 +20,16 @@ SpoutGL; sys_platform == "win32" and python_version < "3.14"
 # Detector acceleration:
 #   macOS / CPU-only machines: the default YuNet backend needs nothing extra,
 #   but plain onnxruntime lets you test the CenterFace backend on CPU.
-#   Windows + NVIDIA (RTX 5080): onnxruntime-gpu gives CenterFace and the
-#   CUDA/TensorRT-accelerated CenterFace detector. Requires a CUDA 12.8+ capable
-#   onnxruntime-gpu build (>= 1.21) for Blackwell cards.
+#   Windows + NVIDIA (RTX 5080): onnxruntime-gpu adds the CUDA-accelerated
+#   CenterFace detector. Needs a CUDA 12.8+ capable onnxruntime-gpu build
+#   (>= 1.21) for Blackwell cards, and the NVIDIA CUDA 12 runtime and cuDNN
+#   installed separately — pip does not bring those.
+#
+#   onnxruntime-gpu installs whether or not CUDA is present and advertises
+#   providers it cannot actually load, so a machine without the CUDA runtime
+#   fails with "onnxruntime_providers_tensorrt.dll ... cublas64_12.dll is
+#   missing". yewee treats that as a fallback to the CPU rather than an
+#   error (see runtime.make_session), so it runs either way — just on the
+#   CPU detector until CUDA is installed. `--doctor` says which you have.
 onnxruntime; sys_platform == "darwin"
 onnxruntime-gpu; sys_platform == "win32"
