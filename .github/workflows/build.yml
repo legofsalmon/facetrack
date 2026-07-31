@@ -71,7 +71,32 @@ jobs:
           test -d build/dist || { echo "nothing was built"; exit 1; }
           du -sh build/dist/* || true
 
+      # Turn the PyInstaller folder into a real installer. Inno Setup is
+      # preinstalled on the windows-latest image. Unsigned for now — a
+      # code-signing certificate gets added here when there is one.
+      - name: Build the Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" `
+            /DVersion=$env:VERSION build\yewee.iss
+          if (!(Test-Path "build\dist\yewee-setup-$env:VERSION.exe")) {
+            throw "installer was not produced"
+          }
+          Get-Item "build\dist\yewee-setup-$env:VERSION.exe" |
+            Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB)}}
+
+      # Ship only the finished goods: the installer on Windows, the app
+      # bundle on macOS — not the loose PyInstaller folder next to them.
       - uses: actions/upload-artifact@v4
+        if: runner.os == 'Windows'
+        with:
+          name: ${{ matrix.artefact }}-${{ env.VERSION }}
+          path: build/dist/yewee-setup-*.exe
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'macOS'
         with:
           name: ${{ matrix.artefact }}-${{ env.VERSION }}
           path: build/dist/
