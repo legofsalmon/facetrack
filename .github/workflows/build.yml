@@ -13,6 +13,10 @@ on:
         required: false
         default: "0.0.0"
 
+# The release step needs to write releases; everything else only reads.
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
@@ -76,3 +80,35 @@ jobs:
           name: ${{ matrix.artefact }}-${{ env.VERSION }}
           path: build/dist/
           retention-days: 14
+
+      # A release is the easy download: repo front page → Releases.
+      # Tag builds attach to their tag's release; manual runs go to a
+      # rolling "build-latest" prerelease whose assets get replaced.
+      # ditto (not zip) on macOS so the .app keeps its symlinks and
+      # executable bits — a plain zip unpacks broken.
+      - name: Zip for the release
+        shell: bash
+        run: |
+          cd build/dist
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            ditto -c -k --keepParent Yewee.app "../../${{ matrix.artefact }}-${VERSION}.zip"
+          else
+            7z a "../../${{ matrix.artefact }}-${VERSION}.zip" yewee
+          fi
+
+      - name: Publish to a release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            TAG="${GITHUB_REF_NAME}"
+            gh release create "$TAG" --title "yewee $VERSION" \
+              --notes "Unsigned build — signing is done locally, see build/README.md." || true
+          else
+            TAG="build-latest"
+            gh release create "$TAG" --prerelease --target "$GITHUB_SHA" \
+              --title "Latest build" \
+              --notes "Rolling unsigned build from the most recent manual run." || true
+          fi
+          gh release upload "$TAG" "${{ matrix.artefact }}-${VERSION}.zip" --clobber
