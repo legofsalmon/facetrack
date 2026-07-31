@@ -240,14 +240,19 @@ def _camera_names() -> list[str]:
             objc.loadBundle(
                 "AVFoundation", {},
                 bundle_path="/System/Library/Frameworks/AVFoundation.framework")
-            # The same call the shipped OpenCV's AVFoundation backend makes
-            # (deprecated, but it is what cap_avfoundation indexes into).
-            # Even so, this order is only good for the moment it was taken —
-            # resolve_camera() re-runs it at open time rather than trusting
-            # a list from earlier.
+            # Mirror OpenCV's cap_avfoundation_mac.mm exactly: video devices,
+            # then muxed devices appended, then the whole list SORTED BY
+            # uniqueID — that sort is the part nobody expects, and it is why
+            # the raw enumeration (whose order genuinely wobbles between
+            # calls) still opens the same camera at the same index every
+            # time in OpenCV. Skip any step, including keeping duplicates
+            # when a device appears under both media types, and the indices
+            # here stop being OpenCV's indices.
             dev = objc.lookUpClass("AVCaptureDevice")
-            return [str(d.localizedName())
-                    for d in dev.devicesWithMediaType_("vide")]
+            devs = list(dev.devicesWithMediaType_("vide")) \
+                + list(dev.devicesWithMediaType_("muxe"))
+            devs.sort(key=lambda d: str(d.uniqueID()))
+            return [str(d.localizedName()) for d in devs]
         if sys.platform == "win32":
             from pygrabber.dshow_graph import FilterGraph
             return FilterGraph().get_input_devices()
