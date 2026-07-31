@@ -51,19 +51,19 @@ jobs:
             echo "VERSION=${{ inputs.version }}" >> "$GITHUB_ENV"
           fi
 
-      # YEWEE_PUBKEY is the licence public key from the Licence Admin.
-      # Without it this produces an internal (unlicensed) build, which is
-      # what you want for testing but not for release.
+      # Always --distribution. Falling back to an internal build produced
+      # artefacts with licensing switched off that also carried RVM, which is
+      # GPL-3.0 and must not ship in a paid product — a quietly downgraded
+      # build is far worse than a failed one. build/build.py defaults to the
+      # vendor public key held in the repo; the secret only overrides it.
       - name: Build
         shell: bash
         run: |
+          EXTRA=""
           if [ -n "${{ secrets.YEWEE_PUBKEY }}" ]; then
-            python build/build.py --distribution \
-              --pubkey "${{ secrets.YEWEE_PUBKEY }}" --version "$VERSION"
-          else
-            echo "::warning::No YEWEE_PUBKEY secret — building an internal, unlicensed app"
-            python build/build.py --version "$VERSION"
+            EXTRA="--pubkey ${{ secrets.YEWEE_PUBKEY }}"
           fi
+          python build/build.py --distribution --version "$VERSION" $EXTRA
 
       - name: Check the bundle
         shell: bash
