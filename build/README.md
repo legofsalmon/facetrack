@@ -103,12 +103,16 @@ offline. Until it is notarised, `spctl` reports
 
 ### Windows (code-signing certificate, ~£200–400/yr)
 
-Build an installer with [Inno Setup](https://jrsoftware.org/isinfo.php)
-from `build/dist/yewee/`, then:
+The installer builds itself: CI compiles `build/yewee.iss` with Inno
+Setup on every tag and uploads `yewee-setup-<version>.exe` as an
+artefact. Locally it is the same two steps on a Windows machine:
+`build.py --distribution`, then `ISCC.exe /DVersion=<v> build\yewee.iss`.
+
+**Not done: signing.** With a certificate in place:
 
 ```
 signtool sign /tr http://timestamp.digicert.com /td sha256 /fd sha256 ^
-  /a build\dist\yewee-setup.exe
+  /a build\dist\yewee-setup-<version>.exe
 ```
 
 Without a signature SmartScreen warns users off. Reputation builds over

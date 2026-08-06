@@ -5,7 +5,7 @@ with no external downloads. If one is deleted or corrupted the launcher
 restores it, or run:
 
 ```bash
-.venv/bin/python -m facetrack.doctor --fix
+.venv/bin/python -m yewee.doctor --fix
 ```
 
 ## What's here, and under what terms

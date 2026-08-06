@@ -14,6 +14,11 @@ people and stores nothing.
 
 ## Quick start
 
+**Just want to run it?** Ready-made installers (macOS `.dmg`, Windows
+setup) are at [yeweetracker.letissier.ie](https://yeweetracker.letissier.ie)
+— full app, free for 72 hours. The rest of this section is for running
+from source.
+
 ### Get it onto the machine
 
 Either clone with git:
@@ -196,9 +201,9 @@ override saved settings for that run. Non-panel flags:
 
 | Flag | Purpose |
 |---|---|
-| `--source` | camera index / file / URL / `ndi:<name>` |
+| `--source` | `cam:<device name>` (survives replugs) / camera index / file / URL / `ndi:<name>` |
 | `--width --height --fps` | capture request (default 1280x720@30) |
-| `--backend yunet\|scrfd` | force a detector |
+| `--backend auto\|yunet\|centerface` | force a detector |
 | `--ndi-name` / `--ndi-overlay` / `--no-ndi` | feed naming |
 | `--out-width` | downscale the NDI send |
 | `--no-web` / `--web-host` / `--web-port` / `--no-browser` | panel control |
@@ -310,7 +315,8 @@ new settings.
 | Card | How it appears | Notes |
 |---|---|---|
 | Elgato Cam Link / HD60, Magewell USB Capture, AVerMedia USB, AJA U-TAP | standard webcam (UVC) | works everywhere, any driver setting |
-| Blackmagic DeckLink / UltraStudio | Windows: DirectShow device via Desktop Video ("Blackmagic WDM Capture") | install Blackmagic Desktop Video; set Capture driver = DirectShow; set the exact Capture format. No macOS path — use NDI or a UVC converter there |
+| Blackmagic UltraStudio (Thunderbolt) | macOS: normal camera device via Desktop Video | verified live with a Recorder 3G — appears by name in the source list like any camera |
+| Blackmagic DeckLink (PCIe) | Windows: DirectShow device via Desktop Video ("Blackmagic WDM Capture") | install Blackmagic Desktop Video; set Capture driver = DirectShow; set the exact Capture format. DeckLink PCIe has no macOS path — UltraStudio, NDI or a UVC converter there |
 | Magewell Pro Capture (PCIe) | Windows DirectShow/WDM | driver = DirectShow; excellent auto-format |
 | AVerMedia PCIe | Windows DirectShow | driver = DirectShow |
 | AJA KONA | Windows DirectShow filters via AJA software | driver = DirectShow; U-TAP models are plain UVC |

@@ -1,7 +1,8 @@
 # Distributing yewee commercially
 
-Working notes for turning yewee into a sold product. Phases 0 and 1
-are done; 2-4 are planned but not built.
+Working notes for turning yewee into a sold product. Phases 0–2 are
+done: v1.4 is released with public downloads on the site and licensing
+active. Phase 3 (checkout) is next; keys go by email meanwhile.
 
 *Not legal advice — the licence positions below quote the upstream terms
 directly so a solicitor can check them quickly.*
@@ -177,27 +178,33 @@ on the environment.
 - **Revocation** shows in the ledger but cannot be enforced without the
   Phase 4 server — a key already issued keeps working offline.
 
-## Phase 2 — installers 🔨 packaging done, signing pending
+## Phase 2 — installers ✅ done (two credentials outstanding)
 
-**Done:** `build/build.py` + `build/yewee.spec` produce a standalone
-bundle, and `.github/workflows/build.yml` builds both platforms on every
-tag. A macOS distribution build is verified running with no Python
-present: licensing active at 72 hours, RVM absent, ~29 fps. **338 MB** —
-OpenCV 118, models 72, ONNX Runtime 64.
+**Shipping since v1.4:** `build/build.py` + `build/yewee.spec` produce a
+standalone bundle; CI builds both platforms on every tag (always
+`--distribution` — an internal fallback once shipped RVM by accident,
+so it no longer exists). The vendor public key lives in `build.py` and
+is baked into every build; the private key stays in the Licence Admin's
+data directory — back it up, losing it strands every install.
 
-A distribution build bakes `yewee/_buildinfo.py` (public key, version,
-distribution flag) because environment variables don't survive
-packaging, and the build aborts if RVM ever lands in the bundle.
+- **macOS**: signed (Developer ID, hardened runtime, camera entitlement)
+  by `build/sign_macos.sh`, which also repairs the unsealed
+  `Syphon.framework` PyInstaller leaves and builds the `.dmg`.
+  **Outstanding: notarisation** — needs `notarytool store-credentials`
+  run once by the account holder, then `sign_macos.sh --notarize`.
+  Until then, other Macs need right-click → Open on first launch.
+- **Windows**: Inno Setup installer built in CI (per-user, no admin,
+  uninstall keeps licence + settings). **Outstanding: a code-signing
+  certificate** (~£200–400/yr) — until then SmartScreen warns.
 
-**Still to do — both need paid certificates:**
+Signing exposed and fixed two packaged-only bugs worth remembering: the
+app wrote logs inside its own bundle (breaks the signature; see
+`yewee/paths.py`), and the camera-permission prompt never appeared
+(needs the main run loop, a registered PyObjC block signature, and a
+non-`LSBackgroundOnly` app — `build.py` fails the build if that
+regresses).
 
-- **macOS**: Developer ID signing → notarisation → `.dmg`. $99/yr.
-  Unsigned, Gatekeeper blocks it on other machines. Known snag:
-  PyInstaller leaves unsealed contents in `Syphon.framework`.
-- **Windows**: Inno Setup installer → `signtool`. ~£200–400/yr. Unsigned,
-  SmartScreen warns users off.
-
-Commands for both are in `build/README.md`.
+Commands and details in `build/README.md`.
 
 ## Phase 3 — selling (planned)
 
@@ -221,9 +228,16 @@ needs read access to this product source, and site deploys don't drag
 ~200 MB of models through a build. Checkout and account links point at
 Lemon Squeezy.
 
-Installers need a public download URL. The app repo is private, so its
-release assets need a GitHub login — use a public releases-only repo, or
-object storage, and point the site's download buttons there.
+**Downloads are live** (since v1.4): the site's Download section links
+straight to this repo's GitHub release assets, which are public because
+the repo itself is public — a deliberate decision (July 2026), revisit
+if source-runs bypassing the licence starts to matter commercially. If
+the repo ever goes private, move the installers to a public
+releases-only repo (the `crewbox-dist` pattern) and repoint the two
+links on the site.
+
+**Until checkout opens**, licence keys go out by email — the site says
+so under the price line.
 
 ## Phase 4 — online activation (optional)
 

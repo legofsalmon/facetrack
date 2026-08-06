@@ -1,6 +1,6 @@
 #!/bin/bash
-# Facetrack launcher app: opens Terminal running the real launcher script,
+# Yewee launcher app: opens Terminal running the real launcher script,
 # so output stays visible and camera permission belongs to Terminal.
 # The .app lives in the repo root; resolve it relative to this bundle.
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-exec open -a Terminal "$ROOT/Facetrack Mac.command"
+exec open -a Terminal "$ROOT/Yewee Mac.command"

@@ -25,7 +25,7 @@ SOFTWARE.
 Note: the ONNX model files in models/ are third-party works with their own
 licenses. models/README.md lists each one with its source and terms.
 
-Summary for anyone redistributing facetrack:
+Summary for anyone redistributing yewee:
 
   Shippable (permissive)  YuNet (MIT), CenterFace (MIT), FER+ (MIT),
                           PP-HumanSeg (Apache-2.0), MODNet (Apache-2.0)
@@ -33,7 +33,7 @@ Summary for anyone redistributing facetrack:
   NOT shippable           RVM (GPL-3.0). Distributing it would put this
                           entire product under GPL-3.0 with a source
                           requirement, so it is excluded from packaged
-                          builds (facetrack/edition.py) and remains
+                          builds (yewee/edition.py) and remains
                           available for in-house use only.
 
   Removed                 SCRFD. InsightFace licenses its trained models
