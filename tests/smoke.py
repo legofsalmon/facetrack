@@ -571,7 +571,11 @@ def _():
 
 @run("onnx: a provider that is listed but cannot load falls back")
 def _():
-    import onnxruntime as ort
+    try:
+        import onnxruntime as ort
+    except ImportError:
+        print("        (onnxruntime not installed — skipped)")
+        return
     from yewee import runtime
     from yewee.detectors import CENTERFACE_MODEL
 
