@@ -769,19 +769,33 @@ def _():
 
 @run("outputs: flip is per-transport and never mutates the shared frame")
 def _():
-    from yewee.ndi_io import NDIOutput
     from yewee.texture_out import SpoutOutput, SyphonOutput
 
-    # One frame goes to every feed, so a flip must produce a new array —
-    # flipping in place would turn the picture over for the other transport
-    # too, and again on the next feed that shares it.
+    # Both transports must start the right way up, and each carries its own
+    # setting — a shared one would fix whichever feed was wrong and invert
+    # the other. (Texture share flips by inverting its publish flag, which
+    # needs a live Syphon/Spout server to exercise; the default is what can
+    # be checked anywhere.)
+    for cls in (SyphonOutput, SpoutOutput):
+        assert cls.flip is False, f"{cls.__name__} must default to no flip"
+
+    try:
+        from yewee.ndi_io import NDIOutput
+    except ImportError:
+        print("        (cyndilib not installed — NDI half skipped)")
+        return
+    assert NDIOutput.flip is False, "NDI must default to no flip"
+
+    # One frame is shared by every feed, so flipping must produce a new
+    # array. In place, it would turn the picture over for the other
+    # transport too — and again for each feed that reuses the frame.
     frame = np.zeros((8, 8, 3), np.uint8)
-    frame[0, :] = 255                       # a bright top row to track
+    frame[0, :] = 255                       # a bright top row to follow
     original = frame.copy()
 
     sent = {}
     out = NDIOutput.__new__(NDIOutput)      # no NDI runtime needed here
-    out.size, out._hold, out.sender = (8, 8), None, None
+    out.size, out._hold = (8, 8), None
     out._reopen = lambda w, h: None
     out.sender = type("S", (), {"write_video_async": lambda self, buf:
                                 sent.__setitem__("buf", buf.copy())})()
@@ -795,11 +809,6 @@ def _():
     flipped = sent["buf"].reshape(8, 8, 4)
     assert flipped[7, 0, 0] == 255 and flipped[0, 0, 0] == 0, "flipped: top row goes bottom"
     assert np.array_equal(frame, original), "send() must not modify the caller's frame"
-
-    # Texture share flips by inverting its publish flag, not by copying —
-    # so the flag must actually track `flip` in both directions.
-    for cls in (SyphonOutput, SpoutOutput):
-        assert cls.flip is False, f"{cls.__name__} must default to no flip"
 
 
 @run("params: string choices validate")
