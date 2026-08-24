@@ -767,6 +767,41 @@ def _():
     assert ovl[alpha == 0].max() == 0, "alpha card must be empty where transparent"
 
 
+@run("outputs: flip is per-transport and never mutates the shared frame")
+def _():
+    from yewee.ndi_io import NDIOutput
+    from yewee.texture_out import SpoutOutput, SyphonOutput
+
+    # One frame goes to every feed, so a flip must produce a new array —
+    # flipping in place would turn the picture over for the other transport
+    # too, and again on the next feed that shares it.
+    frame = np.zeros((8, 8, 3), np.uint8)
+    frame[0, :] = 255                       # a bright top row to track
+    original = frame.copy()
+
+    sent = {}
+    out = NDIOutput.__new__(NDIOutput)      # no NDI runtime needed here
+    out.size, out._hold, out.sender = (8, 8), None, None
+    out._reopen = lambda w, h: None
+    out.sender = type("S", (), {"write_video_async": lambda self, buf:
+                                sent.__setitem__("buf", buf.copy())})()
+
+    out.flip = False
+    out.send(frame)
+    assert sent["buf"].reshape(8, 8, 4)[0, 0, 0] == 255, "unflipped: top row stays top"
+
+    out.flip = True
+    out.send(frame)
+    flipped = sent["buf"].reshape(8, 8, 4)
+    assert flipped[7, 0, 0] == 255 and flipped[0, 0, 0] == 0, "flipped: top row goes bottom"
+    assert np.array_equal(frame, original), "send() must not modify the caller's frame"
+
+    # Texture share flips by inverting its publish flag, not by copying —
+    # so the flag must actually track `flip` in both directions.
+    for cls in (SyphonOutput, SpoutOutput):
+        assert cls.flip is False, f"{cls.__name__} must default to no flip"
+
+
 @run("params: string choices validate")
 def _():
     from yewee.params import LiveParams, SPEC

@@ -216,6 +216,16 @@ class Pipeline:
             elif not want_tex and c in self.tex_outs:
                 self.tex_outs.pop(c).close()
 
+        # Orientation is a per-send setting, not a property of the feed, so
+        # toggling it mid-show costs nothing and never drops a receiver —
+        # which recreating an NDI sender would. Applied on the outputs
+        # themselves so the standby, test-card and no-signal slates come out
+        # the same way up as the picture they replace.
+        for out in self.ndi_outs.values():
+            out.flip = p["flip_ndi"]
+        for out in self.tex_outs.values():
+            out.flip = p["flip_tex"]
+
     def _receiver_counts(self, frame_idx: int) -> dict:
         """Connected-receiver counts per NDI feed, refreshed ~3x/second."""
         if frame_idx - self._conn_check_frame >= 10:

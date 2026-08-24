@@ -423,6 +423,12 @@
         </select>
       </div>
       <div class="row">
+        <div class="lbl"><label for="flip_ndi">Flip upside down</label>
+          <span class="hint">only if a feed arrives inverted — the preview here stays upright</span></div>
+        <label class="switch mx"><input type="checkbox" id="flip_ndi"><span class="slider"></span></label>
+        <label class="switch mx tex-sw"><input type="checkbox" id="flip_tex"><span class="slider"></span></label>
+      </div>
+      <div class="row">
         <div class="lbl"><label for="out_width">Output size</label>
           <span class="hint">smaller = less network load</span></div>
         <select id="out_width">
@@ -542,6 +548,7 @@
                   "clean_main","flip","cap_format","cap_backend",
                   "ndi_program","ndi_overlay","ndi_faces","ndi_mask",
                   "tex_program","tex_overlay","tex_faces","tex_mask","mask_style",
+                  "flip_ndi","flip_tex",
                   "cutout_shape","cutout_margin","cutout_feather","cutout_grow","cutout_steady",
                   "people_model","out_width",
                   "limit_cpu","auto_relief",

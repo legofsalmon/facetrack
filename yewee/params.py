@@ -42,6 +42,13 @@ SPEC = {
     "tex_faces": (bool, None, None),
     "tex_mask": (bool, None, None),
     "mask_style": (str, ("white", "alpha"), None),  # luma matte / on alpha
+    # Turn the outgoing picture upside down, per transport. Separate flags
+    # because the two disagree by nature: NDI is top-down and usually right
+    # already, while texture share is GL bottom-up and some receivers flip
+    # again on their side, landing you upside down. One shared toggle would
+    # fix whichever is wrong and break the other.
+    "flip_ndi": (bool, None, None),
+    "flip_tex": (bool, None, None),
     "out_width": (int, 0, 3840),          # 0 = match input resolution
     "cutout_shape": (str, ("rectangle", "oval", "people"), None),
     "cutout_margin": (float, 0.0, 0.5),   # extra room around each face box

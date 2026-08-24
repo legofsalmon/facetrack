@@ -20,6 +20,11 @@ class NDIOutput:
     """Sends BGR frames as an NDI video source. Handles resolution changes
     by transparently re-opening the sender."""
 
+    #: Turn the outgoing picture upside down. Unlike texture share there is
+    #: no flag for it in NDI, so this costs a real copy — hence it only
+    #: happens when switched on. Set live by the pipeline.
+    flip = False
+
     def __init__(self, name: str = "Yewee", fps: float = 30.0):
         self.name = name
         self.fps = float(fps)
@@ -42,6 +47,10 @@ class NDIOutput:
 
     def send(self, frame: np.ndarray) -> None:
         """Accepts BGR (opaque) or BGRA (e.g. overlay-on-transparency)."""
+        if self.flip:
+            # New array, never in-place: the caller shares this frame with
+            # the texture feeds, which have their own flip setting.
+            frame = cv2.flip(frame, 0)
         h, w = frame.shape[:2]
         if self.size != (w, h):
             self._reopen(w, h)

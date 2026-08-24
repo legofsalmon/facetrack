@@ -178,6 +178,18 @@ NDI feeds are named `<name>`, `<name> Overlay`, `<name> Faces`,
 `yewee-overlay/-faces/-mask` (with a custom `--ndi-name`, the base
 becomes `yewee-<name>`, so two instances never collide).
 
+**Flip upside down** (Outputs card) turns the outgoing picture over, with
+a separate switch per transport — they disagree by nature. NDI is
+top-down and normally arrives the right way up; texture share is GL
+bottom-up, and a receiver that flips again on its own side lands you
+inverted. One shared switch would fix whichever was wrong and break the
+other. Toggling is live and never drops a receiver, and it carries the
+standby, test-card and no-signal slates too, so they come out the same
+way up as the picture they replace. The panel preview deliberately stays
+upright — it is your monitor, not the feed; check the receiving app.
+Flipping texture share is free (a publish flag); flipping NDI costs a
+copy, measured at 0.36 ms per 1080p frame.
+
 Feed *names* are fixed at launch because renaming mid-show would drop
 receivers. NDI's codec is lossy, so keyed NDI graphics gain a pixel of
 soft fringe — normal for all NDI alpha sources; the Syphon/Spout path is

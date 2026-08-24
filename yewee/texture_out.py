@@ -42,6 +42,9 @@ def probe() -> tuple[str, str]:
 
 class SyphonOutput:
     kind = "syphon"
+    #: Turn the published picture upside down. Free here — it inverts the
+    #: publish flag rather than moving any pixels. Set live by the pipeline.
+    flip = False
 
     def __init__(self, name: str = "yewee"):
         import syphon
@@ -67,8 +70,10 @@ class SyphonOutput:
         self._copy(rgba, self._texture)
         # is_flipped: our frames are top-down (OpenCV) while Syphon's
         # convention is GL bottom-up — without this flag receivers show
-        # the picture upside down.
-        self.server.publish_frame_texture(self._texture, is_flipped=True)
+        # the picture upside down. Receivers that flip again on their own
+        # side land upside down anyway, which is what `flip` undoes.
+        self.server.publish_frame_texture(self._texture,
+                                          is_flipped=not self.flip)
         # Service the run loop so Syphon's discovery handshake (distributed
         # notifications) works — otherwise apps started after us never see
         # the server.
@@ -83,6 +88,8 @@ class SyphonOutput:
 
 class SpoutOutput:
     kind = "spout"
+    #: See SyphonOutput.flip — same story, same zero cost.
+    flip = False
 
     def __init__(self, name: str = "yewee"):
         import SpoutGL
@@ -95,9 +102,9 @@ class SpoutOutput:
         h, w = rgba.shape[:2]
         if not rgba.flags["C_CONTIGUOUS"]:
             rgba = np.ascontiguousarray(rgba)
-        # bInvert=True for the same reason as Syphon's is_flipped: the
-        # buffer is top-down, GL/Spout convention is bottom-up.
-        self.sender.sendImage(rgba.tobytes(), w, h, GL_RGBA, True, 0)
+        # bInvert for the same reason as Syphon's is_flipped: the buffer is
+        # top-down, GL/Spout convention is bottom-up.
+        self.sender.sendImage(rgba.tobytes(), w, h, GL_RGBA, not self.flip, 0)
 
     def close(self) -> None:
         try:
