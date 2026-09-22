@@ -14,6 +14,7 @@ and the import lives inside create_app).
 import asyncio
 import json
 import threading
+import time
 from pathlib import Path
 
 from .params import LiveParams
@@ -152,12 +153,14 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None,
                     str(msg.get("data", "")), pin):
                 await sock.close(code=4001)
                 return
+        last_tick = 0.0
         try:
             while not pipeline.stopped:
                 try:
                     msg = await asyncio.wait_for(sock.receive_text(), timeout=0.5)
                 except asyncio.TimeoutError:
                     msg = None
+                kind = None
                 if msg is not None:
                     try:  # a malformed message must not kill the socket
                         data = json.loads(msg)
@@ -203,11 +206,20 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None,
                             pipeline.request_restart()
                         elif action == "quit":
                             pipeline.stop()
-                await sock.send_text(json.dumps({
-                    "type": "tick",
-                    "stats": pipeline.get_stats(),
-                    "params": params.snapshot(),
-                }))
+                # Ticks keep their own cadence rather than answering every
+                # inbound message: a slider drag arrives as a burst of
+                # `set` messages, and replying to each with a full stats
+                # frame turned one drag into a flood of them. A control
+                # action still gets an immediate tick, because the panel
+                # is waiting to see the state actually change.
+                now = time.monotonic()
+                if kind == "control" or now - last_tick >= 0.25:
+                    last_tick = now
+                    await sock.send_text(json.dumps({
+                        "type": "tick",
+                        "stats": pipeline.get_stats(),
+                        "params": params.snapshot(),
+                    }))
         except WebSocketDisconnect:
             pass
 

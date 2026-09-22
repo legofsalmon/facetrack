@@ -969,6 +969,83 @@ def _():
     assert FileSource.self_paced is False    # reads as fast as it is asked
 
 
+@run("panel: a slider drag does not flood the socket with stats")
+def _():
+    """Every inbound message used to be answered with a full stats
+    frame, so one drag of a slider became a burst of them. Ticks keep
+    their own cadence now — but the panel must still get one promptly
+    afterwards, or it looks frozen."""
+    import asyncio
+    import json
+    import threading
+    import time
+
+    try:
+        import websockets
+    except ImportError:
+        print("        (websockets not installed — skipped)")
+        return
+
+    from main import DEFAULTS, parse_args
+    from yewee.params import LiveParams
+    from yewee.pipeline import Pipeline
+    from yewee.webui import create_app, start_in_thread
+
+    port = 8391
+    args = parse_args(["--source", os.path.join(ROOT, "test_media", "synth.mp4"),
+                       "--no-ndi", "--no-preview", "--no-browser", "--quiet",
+                       "--backend", "yunet", "--web-port", str(port)])
+    params = LiveParams(**{**DEFAULTS, "ndi_program": False, "panel_preview": False,
+                           "local_preview": False, "emotion_enabled": False,
+                           "loop_file": True})
+    pipe = Pipeline(args, params, web_enabled=True)
+    server = start_in_thread(create_app(pipe, params), "127.0.0.1", port)
+    runner = threading.Thread(target=pipe.run, daemon=True)
+    runner.start()
+
+    async def session():
+        uri = f"ws://127.0.0.1:{port}/ws"
+        for _ in range(40):                       # wait for the port to bind
+            try:
+                sock = await websockets.connect(uri)
+                break
+            except OSError:
+                await asyncio.sleep(0.25)
+        else:
+            raise AssertionError("the panel never came up")
+        async with sock:
+            async def ticks(seconds, per_recv=1.0):
+                n, end = 0, time.monotonic() + seconds
+                while time.monotonic() < end:
+                    try:
+                        m = await asyncio.wait_for(sock.recv(), timeout=per_recv)
+                    except asyncio.TimeoutError:
+                        continue
+                    if json.loads(m).get("type") == "tick":
+                        n += 1
+                return n
+
+            idle = await ticks(1.5)
+            for i in range(40):                   # a slider drag
+                await sock.send(json.dumps(
+                    {"type": "set", "data": {"det_threshold": 0.3 + i * 0.005}}))
+            during = await ticks(1.0, per_recv=0.2)
+            after = await ticks(1.5)
+            return idle, during, after
+
+    try:
+        idle, during, after = asyncio.run(session())
+    finally:
+        pipe.stop()
+        runner.join(timeout=5)
+        server.should_exit = True
+
+    assert idle >= 2, f"only {idle} ticks in 1.5s while idle — the panel is starved"
+    assert during <= 8, f"a 40-message drag drew {during} stats frames back"
+    assert after >= 2, f"only {after} ticks after the drag — the panel looks frozen"
+    assert params.snapshot()["det_threshold"] > 0.3, "the drag did not apply"
+
+
 @run("panel: a control panel on the network is not left open")
 def _():
     """It binds to every interface by default and carries a live camera

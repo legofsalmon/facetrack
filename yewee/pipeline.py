@@ -815,14 +815,23 @@ class Pipeline:
                 scale_cache: dict = {}  # same image scaled once per frame
 
                 def _scaled(img):
+                    """Downscale once per distinct image per frame — the
+                    same picture goes to both transports, and at 1080p
+                    the resize is nearly 3 ms.
+
+                    The cache keys on id(), which is only an identity
+                    while the object is alive; the entry keeps a
+                    reference to the image itself and checks it, so a
+                    recycled id can never return the wrong picture."""
                     if not out_width or img.shape[1] == out_width:
                         return img
-                    got = scale_cache.get(id(img))
-                    if got is None:
-                        oh = int(round(img.shape[0] * out_width / img.shape[1]))
-                        got = cv2.resize(img, (out_width, oh),
-                                         interpolation=cv2.INTER_AREA)
-                        scale_cache[id(img)] = got
+                    hit = scale_cache.get(id(img))
+                    if hit is not None and hit[0] is img:
+                        return hit[1]
+                    oh = int(round(img.shape[0] * out_width / img.shape[1]))
+                    got = cv2.resize(img, (out_width, oh),
+                                     interpolation=cv2.INTER_AREA)
+                    scale_cache[id(img)] = (img, got)
                     return got
 
                 t0 = time.perf_counter()
