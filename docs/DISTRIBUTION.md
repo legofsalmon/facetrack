@@ -173,8 +173,8 @@ on the environment.
   same operation: paste the key you were emailed. Server-backed
   activation, seat counting and revocation are Phase 4; the key format
   already carries a key id (`k`) for it.
-- **Purchase → key delivery** is Phase 3 (the payment provider's webhook
-  calls `issue_key.py`; the admin's ledger is the record until then).
+- **Purchase → key delivery** is Phase 3, and now lives outside this repo
+  (see below); the admin's ledger is the record until then.
 - **Revocation** shows in the ledger but cannot be enforced without the
   Phase 4 server — a key already issued keeps working offline.
 
@@ -208,25 +208,49 @@ Commands and details in `build/README.md`.
 
 ## Phase 3 — selling (planned)
 
-**Decided: Lemon Squeezy**, as Merchant of Record — it handles global
-VAT/sales-tax registration and remittance, which is the part that quietly
-sinks solo-developer products, and gives customers a hosted portal for
-receipts and re-downloads.
+**Selling moves out of this repo.** Accounts, payment, licensing and
+subscriptions for yewee are handled by
+[`legofsalmon/letissier.ie`](https://github.com/legofsalmon/letissier.ie),
+with **Paddle as Merchant of Record**. Paddle registers and remits VAT and
+sales tax worldwide, which is the part that quietly sinks solo-developer
+products, and gives customers a hosted portal for receipts and re-downloads.
+letissier.ie is an Irish limited company and is VAT registered.
 
-**Key delivery starts manual.** yewee uses its own signed keys (so
-activation works offline), not Lemon Squeezy's licence feature. On a
-sale, issue a key in the Licence Admin against the order number and reply
-with it — a minute of work, and the signing key never leaves your
-machine. Automating it via their `order_created` webhook means putting
-that private key in a cloud function, where a breach lets anyone mint
-licences; worth it only once the volume justifies the risk.
+**What this repo keeps** is minting keys. `tools/admin.py` and
+`tools/issue_key.py` are unchanged: yewee verifies its own Ed25519 keys
+offline, so whatever the storefront does, activation never needs a server
+and the signing key never leaves your machine.
+
+**What does not exist yet.** Nothing here has been built, and this repo
+cannot build it — the storefront side is letissier.ie's work. The gaps, so
+they are not mistaken for oversights:
+
+- **No checkout.** There is no product, no price and no checkout URL
+  anywhere. The site's pricing card says the price is announced at launch.
+- **No customer portal.** Nothing to link for receipts and re-downloads, so
+  the site's footer carries no orders link.
+- **No purchase → key delivery.** Nothing turns a completed sale into a
+  licence key. Until something does, a sale is an email and the Licence
+  Admin's ledger is the only record of what was issued.
+- **No account model.** Whether a yewee purchase creates a letissier.ie
+  account, and whether "subscriptions" applies to yewee at all — it is sold
+  as a perpetual one-off — is undecided.
+- **No Paddle specifics on the site.** `privacy.html` and `terms.html` name
+  Paddle as merchant of record, which is the decision, but carry no Paddle
+  links or entity details. Those need filling in from the letissier.ie side
+  before anyone can buy.
+
+When key delivery is automated it will be on a webhook from the storefront
+calling `issue_key.py`. Note the trade before doing it: that function needs
+the private signing key, so a breach there lets anyone mint licences. Manual
+issuing is a minute per sale and is worth keeping until volume says otherwise.
 
 **The landing page** lives in its own repository,
 [`legofsalmon/facetrack-site`](https://github.com/legofsalmon/facetrack-site),
 deployed on Vercel. It is kept separate deliberately: Vercel then never
 needs read access to this product source, and site deploys don't drag
-~200 MB of models through a build. Checkout and account links point at
-Lemon Squeezy.
+~200 MB of models through a build. Checkout and account links will point at
+whatever letissier.ie exposes; today the page carries neither.
 
 **Downloads are live** (since v1.4): the site's Download section links
 straight to this repo's GitHub release assets, which are public because
