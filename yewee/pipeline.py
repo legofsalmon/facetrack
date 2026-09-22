@@ -117,7 +117,8 @@ class Pipeline:
         self._pv_jpeg: bytes | None = None
         self._pv_time = 0.0
         self._checker: np.ndarray | None = None  # alpha-preview backdrop
-        self.preview_clients = 0        # MJPEG viewers (maintained by webui)
+        self._pv_clients = 0            # MJPEG viewers (maintained by webui)
+        self._pv_clients_lock = threading.Lock()
         self.heartbeat = time.monotonic()  # watchdog liveness signal
         self._t0 = time.time()
         self._color_cache: tuple[str, tuple | None] = ("", None)
@@ -163,6 +164,29 @@ class Pipeline:
     def get_stats(self) -> dict:
         with self._stats_lock:
             return dict(self._stats)
+
+    @property
+    def preview_clients(self) -> int:
+        with self._pv_clients_lock:
+            return self._pv_clients
+
+    def add_preview_client(self, delta: int) -> None:
+        """Called by the panel's MJPEG endpoint as viewers come and go."""
+        with self._pv_clients_lock:
+            self._pv_clients = max(0, self._pv_clients + delta)
+
+    def _preview_wanted(self, p: dict) -> bool:
+        """Whether anything should be rendered for the panel preview.
+
+        `panel_preview` is a setting; it says the operator left the
+        preview switched on, not that a browser is streaming it. Those
+        came apart the moment a show started and the tab was closed —
+        with the preview set to Faces or Mask the loop kept running a
+        full segmentation and cutout every frame, and _publish_preview
+        threw the result away on its first line. The viewer count is the
+        honest signal, so the work follows it."""
+        return (self.web_enabled and p["panel_preview"]
+                and self.preview_clients > 0)
 
     def wait_preview(self, last_seq: int, timeout: float = 1.0):
         """Blocks until a preview newer than last_seq exists. -> (seq, jpeg) | None"""
@@ -286,7 +310,7 @@ class Pipeline:
         self._sync_outputs(p)
         slate, _ = self._standby_frames()
         self._send_idle(p, slate)
-        if self.web_enabled and p["panel_preview"]:
+        if self._preview_wanted(p):
             self._publish_preview(slate)
         with self._stats_lock:
             self._stats.update({"state": "paused", "fps": 0.0, "faces": 0,
@@ -331,7 +355,7 @@ class Pipeline:
                     out.send(table[c])
                 except Exception:
                     pass
-        if self.web_enabled and p["panel_preview"]:
+        if self._preview_wanted(p):
             self._publish_preview(card)
         with self._stats_lock:
             self._stats.update({"state": "test-card", "fps": 0.0, "faces": 0,
@@ -363,7 +387,7 @@ class Pipeline:
         slate, _ = self._standby_frames(
             "TRIAL ENDED", "enter a licence key in the control panel")
         self._send_idle(p, slate)
-        if self.web_enabled and p["panel_preview"]:
+        if self._preview_wanted(p):
             self._publish_preview(slate)
         with self._stats_lock:
             self._stats.update({"state": "unlicensed", "fps": 0.0, "faces": 0,
@@ -381,7 +405,7 @@ class Pipeline:
         # preview keeps the diagnostic slate for the operator.
         black, _ = self._standby_frames("")
         self._send_idle(p, black)
-        if self.web_enabled and p["panel_preview"]:
+        if self._preview_wanted(p):
             slate, _ = self._standby_frames(
                 "NO SIGNAL", f"input '{self.source_spec}' lost - reconnecting")
             self._publish_preview(slate)
@@ -699,7 +723,7 @@ class Pipeline:
                 proc_ms = sum(laps.values())
                 proc_ema = proc_ms if frame_idx == 0 else 0.9 * proc_ema + 0.1 * proc_ms
 
-                pv_on = self.web_enabled and p["panel_preview"]
+                pv_on = self._preview_wanted(p)
                 pv_src = p["preview_source"]
 
                 def wants(c):
@@ -943,6 +967,10 @@ class Pipeline:
             self._stop.set()
             with self._pv_cond:
                 self._pv_cond.notify_all()
+            try:
+                self.emotion.close()
+            except Exception:
+                pass
             self.source.close()
             for outs in (self.ndi_outs, self.tex_outs):
                 for out in outs.values():

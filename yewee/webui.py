@@ -121,7 +121,9 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None,
 
         def gen():
             last = -1
-            pipeline.preview_clients += 1  # JPEG encoding pauses at zero viewers
+            # At zero viewers the pipeline skips the preview's render work
+            # entirely, not just the JPEG encode.
+            pipeline.add_preview_client(+1)
             try:
                 while not pipeline.stopped:
                     item = pipeline.wait_preview(last, timeout=1.0)
@@ -132,7 +134,7 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None,
                            b"Content-Length: " + str(len(jpg)).encode() + b"\r\n\r\n"
                            + jpg + b"\r\n")
             finally:
-                pipeline.preview_clients -= 1
+                pipeline.add_preview_client(-1)
 
         return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")
 

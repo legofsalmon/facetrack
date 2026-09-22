@@ -969,6 +969,53 @@ def _():
     assert FileSource.self_paced is False    # reads as fast as it is asked
 
 
+@run("preview: nothing is rendered for a preview nobody is watching")
+def _():
+    """`panel_preview` says the operator left the preview on, not that a
+    browser is streaming it. With the preview set to Faces and the tab
+    closed — the normal state once a show starts — the loop used to run
+    the cutout every frame and then throw the result away."""
+    import threading
+    import time
+
+    from main import DEFAULTS, parse_args
+    from yewee.params import LiveParams
+    from yewee.pipeline import Pipeline
+
+    args = parse_args(["--source", os.path.join(ROOT, "test_media", "synth.mp4"),
+                       "--no-ndi", "--no-preview", "--no-browser", "--quiet",
+                       "--backend", "yunet"])
+    params = LiveParams(**{**DEFAULTS, "ndi_program": False, "ndi_faces": False,
+                           "tex_faces": False, "local_preview": False,
+                           "emotion_enabled": False, "loop_file": True,
+                           "panel_preview": True, "preview_source": "faces",
+                           "cutout_shape": "oval", "cutout_feather": 8})
+    # web_enabled=True is the point: the panel is up, just unwatched.
+    pipe = Pipeline(args, params, web_enabled=True)
+    t = threading.Thread(target=pipe.run, daemon=True)
+    t.start()
+    try:
+        def perf_after(seconds):
+            start = pipe.get_stats().get("frame", 0)
+            deadline = time.monotonic() + seconds
+            while time.monotonic() < deadline:
+                if pipe.get_stats().get("frame", 0) > start + 15:
+                    break
+                time.sleep(0.05)
+            return pipe.get_stats().get("perf", {})
+
+        assert "cutout" not in perf_after(5), \
+            "the cutout ran with no browser streaming the preview"
+
+        pipe.add_preview_client(+1)          # a browser opens the preview
+        assert "cutout" in perf_after(5), \
+            "the cutout did not run once a viewer was watching"
+        pipe.add_preview_client(-1)
+    finally:
+        pipe.stop()
+        t.join(timeout=5)
+
+
 @run("emotion: FER+ labels a face")
 def _():
     from yewee.detectors import YuNetDetector
@@ -978,10 +1025,54 @@ def _():
     trk = FaceTracker(min_hits=1)
     tracks = trk.step(YuNetDetector(score_threshold=0.4).detect(frame))
     est = EmotionEstimator(budget_per_frame=2)
-    est.update(frame, tracks, 100)
-    labelled = [t for t in tracks if t.emotion is not None]
-    assert labelled, "no track got an emotion label"
-    assert all(t.emotion[0] in EMOTIONS for t in labelled)
+    try:
+        est.update(frame, tracks, 100)
+        assert est.wait_idle(20), "expression worker never finished"
+        labelled = [t for t in tracks if t.emotion is not None]
+        assert labelled, "no track got an emotion label"
+        assert all(t.emotion[0] in EMOTIONS for t in labelled)
+    finally:
+        est.close()
+
+
+@run("emotion: scoring stays off the show loop")
+def _():
+    """FER+ costs ~7.6 ms a face and the default budget is four, which
+    was most of a 30 fps frame spent inside the loop on labels that only
+    refresh every twelve frames. update() must now only crop and hand
+    over."""
+    import time
+
+    from yewee.detectors import YuNetDetector
+    from yewee.emotion import EmotionEstimator
+    from yewee.tracker import FaceTracker
+    frame = _first_frame()
+    trk = FaceTracker(min_hits=1)
+    tracks = trk.step(YuNetDetector(score_threshold=0.4).detect(frame))
+    assert len(tracks) >= 2, "need a couple of faces to make this meaningful"
+
+    inline = EmotionEstimator(budget_per_frame=4, threaded=False)
+    threaded = EmotionEstimator(budget_per_frame=4)
+    try:
+        t0 = time.perf_counter()
+        inline.update(frame, list(tracks), 100)
+        inline_ms = (time.perf_counter() - t0) * 1000
+
+        for t in tracks:
+            t.emotion, t.emotion_frame = None, -(10 ** 9)
+        t0 = time.perf_counter()
+        threaded.update(frame, tracks, 100)
+        dispatch_ms = (time.perf_counter() - t0) * 1000
+
+        assert dispatch_ms < inline_ms / 2, (
+            f"dispatch cost {dispatch_ms:.1f} ms against {inline_ms:.1f} ms "
+            "inline — scoring is still on the show loop")
+        assert threaded.wait_idle(20), "expression worker never finished"
+        assert any(t.emotion is not None for t in tracks), \
+            "worker never labelled anything"
+    finally:
+        inline.close()
+        threaded.close()
 
 
 if FAILURES:
