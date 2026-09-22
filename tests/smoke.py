@@ -969,6 +969,53 @@ def _():
     assert FileSource.self_paced is False    # reads as fast as it is asked
 
 
+@run("tracking: numbers survive a detector dropout")
+def _():
+    """A face lost for longer than the miss window and then found again
+    used to mint a fresh number every time. Retired tracks are reclaimed
+    on geometry now — see tests/idbench.py for the scenes."""
+    from tests.idbench import evaluate
+    from yewee.tracker import FaceTracker
+
+    kw = dict(n_people=12, kind="dropout", frames=400)
+    without = evaluate(lambda: FaceTracker(reid=False), **kw)["switches"]
+    with_reid = evaluate(lambda: FaceTracker(reid=True), **kw)["switches"]
+    assert without >= 15, (f"the dropout scene only produced {without} "
+                           "switches without re-identification — it has "
+                           "stopped exercising the case it exists for")
+    assert with_reid <= 5, f"re-identification left {with_reid} switches"
+
+
+@run("tracking: crossing faces keep their numbers")
+def _():
+    """Association quality proper, with re-identification out of the way.
+    Measured rather than assumed: a globally optimal assignment over the
+    same costs gives an identical count here, which is why the greedy
+    pass stayed."""
+    from tests.idbench import evaluate
+    from yewee.tracker import FaceTracker
+
+    for kw in (dict(n_people=12), dict(n_people=12, miss_rate=0.30),
+               dict(n_people=12, detect_every=3)):
+        r = evaluate(lambda: FaceTracker(reid=False), **kw)
+        assert r["matched"] > 500, "the scene produced almost no matches"
+        assert r["switches"] == 0, f"{r['switches']} switches on {kw}"
+
+
+@run("tracking: a crowd nothing matches stays inside the frame budget")
+def _():
+    """When auto-relief raises detect_every, tracks coast, coasting makes
+    IoU miss, and every track falls through to the centre-distance pass.
+    As a pair of Python loops that cost 40 ms at 120 faces and 75 ms at
+    200 — a frame and a half, at the exact moment the machine was
+    already struggling."""
+    from tests.idbench import unmatched_cost
+
+    ms = unmatched_cost(120)
+    assert ms < 15.0, (f"120 tracks against 120 unmatched faces took "
+                       f"{ms:.1f} ms — the fallback is not vectorised")
+
+
 @run("preview: nothing is rendered for a preview nobody is watching")
 def _():
     """`panel_preview` says the operator left the preview on, not that a
