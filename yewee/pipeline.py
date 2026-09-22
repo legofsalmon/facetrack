@@ -131,8 +131,16 @@ class Pipeline:
         self._under_since: float | None = None
         self._people_models: dict = {}  # lazy, keyed by people_model param
         self._people_soft = False       # whether the active mask is a true matte
-        self._people_cache: np.ndarray | None = None
         self._people_roi: tuple[float, float, float, float] | None = None
+        # The silhouette runs on its own thread — see _dispatch_people_mask.
+        self._seg_cond = threading.Condition()
+        self._seg_job: tuple | None = None
+        self._seg_busy = False
+        self._seg_stop = False
+        self._seg_thread: threading.Thread | None = None
+        self._seg_prev: np.ndarray | None = None   # worker-owned, for smoothing
+        self._seg_result: tuple | None = None      # (mask, soft) it publishes
+        self._seg_ms = 0.0              # its own cost, reported separately
 
     # ---- control surface (called from web threads) ----
 
@@ -531,12 +539,86 @@ class Pipeline:
         self._people_roi = box
         return tuple(int(round(v)) for v in box)
 
-    def _people_mask(self, frame, tracks, steady: float, model_name: str):
-        """Mask from the selected silhouette model, loading it on first
-        use. Temporal smoothing happens here in full-frame space (correct
-        even while the ROI follows the subject). Failures fall back:
-        modnet/rvm -> pphumanseg -> oval shape, always with a panel error
-        — picking a broken model can't take the feed down."""
+    def _dispatch_people_mask(self, frame, tracks, steady: float,
+                              model_name: str) -> None:
+        """Hand this frame's silhouette to the worker and return.
+
+        Segmentation is the most expensive thing in the loop — PP-HumanSeg
+        measures 14 ms at 1080p, and it used to run inline on every second
+        frame, so half a frame's budget on average. It does not belong on
+        the critical path: the mask is already up to two frames old by
+        design and temporally smoothed on top, so a frame of extra latency
+        changes nothing an audience could see.
+
+        The frame is copied here rather than shared, because the loop
+        draws on it in place when the main feed carries graphics. One job
+        is in flight at a time and a busy worker is simply not given
+        another, so a slow machine produces a slightly older mask instead
+        of a slower frame rate — and costs nothing at all, because the
+        copy happens only once the worker is free."""
+        with self._seg_cond:
+            if self._seg_busy:
+                return
+        roi = self._people_roi_for(frame, tracks)   # main-thread state
+        job = (frame.copy(), roi, steady, model_name)
+        with self._seg_cond:
+            self._seg_job = job
+            self._seg_busy = True
+            if self._seg_thread is None:
+                self._seg_thread = threading.Thread(
+                    target=self._seg_run, daemon=True, name="yewee-silhouette")
+                self._seg_thread.start()
+            self._seg_cond.notify_all()
+
+    def _people_now(self, shape_hw: tuple[int, int]):
+        """The freshest usable mask, or None.
+
+        Waits only when there is nothing to show yet — the first frames,
+        or just after a resolution change. Without that the cutout would
+        fall back to plain rectangles for as long as the model takes to
+        load, which is a visible flash on a feed going to the wall."""
+        got = self._seg_result
+        if got is not None and got[0].shape == shape_hw:
+            self._people_soft = got[1]
+            return got[0]
+        with self._seg_cond:
+            self._seg_cond.wait_for(lambda: not self._seg_busy, timeout=2.0)
+        got = self._seg_result
+        if got is not None and got[0].shape == shape_hw:
+            self._people_soft = got[1]
+            return got[0]
+        return None
+
+    def _seg_run(self) -> None:
+        while True:
+            with self._seg_cond:
+                self._seg_cond.wait_for(
+                    lambda: self._seg_job is not None or self._seg_stop)
+                if self._seg_stop:
+                    return
+                frame, roi, steady, model_name = self._seg_job
+                self._seg_job = None
+            t0 = time.perf_counter()
+            try:
+                result = self._people_mask(frame, roi, steady, model_name)
+            except Exception as exc:                 # noqa: BLE001
+                result = None
+                self.last_error = f"People cutout failed: {exc}"
+                self._error_time = time.monotonic()
+            self._seg_ms = (time.perf_counter() - t0) * 1000.0
+            if result is not None:
+                self._seg_result = result   # one rebind: mask and soft together
+            with self._seg_cond:
+                self._seg_busy = False
+                self._seg_cond.notify_all()
+
+    def _people_mask(self, frame, roi, steady: float, model_name: str):
+        """(mask, soft) from the selected silhouette model, loading it on
+        first use. Runs on the worker thread. Temporal smoothing happens
+        here in full-frame space (correct even while the ROI follows the
+        subject). Failures fall back: modnet/rvm -> pphumanseg -> oval
+        shape, always with a panel error — picking a broken model can't
+        take the feed down."""
         model = self._people_models.get(model_name)
         if model is None:
             try:
@@ -553,8 +635,8 @@ class Pipeline:
                 self._error_time = time.monotonic()
                 return None
         try:
-            mask = model.mask(frame, roi=self._people_roi_for(frame, tracks))
-            self._people_soft = model.soft
+            mask = model.mask(frame, roi=roi)
+            soft = model.soft
         except Exception as exc:
             self._people_models.pop(model_name, None)
             if model_name != "pphumanseg":
@@ -565,10 +647,11 @@ class Pipeline:
                 self.last_error = f"People cutout failed: {exc}"
             self._error_time = time.monotonic()
             return None
-        prev = self._people_cache
+        prev = self._seg_prev
         if steady > 0 and prev is not None and prev.shape == mask.shape:
             mask = cv2.addWeighted(prev, steady, mask, 1 - steady, 0)
-        return mask
+        self._seg_prev = mask
+        return mask, soft
 
     def _maybe_swap_source(self) -> None:
         with self._source_lock:
@@ -744,21 +827,17 @@ class Pipeline:
                 if need_faces or need_mask:
                     people = None
                     if p["cutout_shape"] == "people":
-                        # segmentation is the expensive part; every 2nd
-                        # frame is indistinguishable and halves the cost
-                        # (every 3rd once auto-relief has stepped in)
-                        seg_every = 3 if self._relief else 2
-                        stale = (self._people_cache is None
-                                 or self._people_cache.shape != frame.shape[:2])
-                        if stale or frame_idx % seg_every == 0:
-                            t0 = time.perf_counter()
-                            fresh = self._people_mask(frame, tracks,
-                                                      p["cutout_steady"],
-                                                      p["people_model"])
-                            laps["silhouette"] = (time.perf_counter() - t0) * 1000.0
-                            if fresh is not None:
-                                self._people_cache = fresh
-                        people = self._people_cache
+                        # Off the critical path entirely: this only hands
+                        # the frame over. Under auto-relief, hand one over
+                        # every other frame so a struggling machine gets
+                        # the CPU back rather than a fresher mask.
+                        t0 = time.perf_counter()
+                        if not (self._relief and frame_idx % 2):
+                            self._dispatch_people_mask(frame, tracks,
+                                                       p["cutout_steady"],
+                                                       p["people_model"])
+                        laps["silhouette"] = (time.perf_counter() - t0) * 1000.0
+                        people = self._people_now(frame.shape[:2])
                     t0 = time.perf_counter()
                     alpha = cutout_alpha(frame.shape[:2], tracks,
                                          margin=p["cutout_margin"],
@@ -927,6 +1006,11 @@ class Pipeline:
                         "budget_ms": round(budget_ms, 1),
                         "load_pct": int(round(load_ms / budget_ms * 100)),
                         "relief": self._relief,
+                        # Not folded into `perf`: the panel totals that
+                        # against the frame budget, and this runs beside
+                        # the loop rather than inside it.
+                        "silhouette_ms": (round(self._seg_ms, 1)
+                                          if p["cutout_shape"] == "people" else 0.0),
                         "cpu_threads": _rt.budget(),
                         "cv_threads": _rt.cv_threads(),
                         "cpu_cores": _rt.cores(),
@@ -980,6 +1064,12 @@ class Pipeline:
                 self.emotion.close()
             except Exception:
                 pass
+            with self._seg_cond:
+                self._seg_stop = True
+                self._seg_cond.notify_all()
+            if self._seg_thread is not None:
+                self._seg_thread.join(timeout=2.0)
+                self._seg_thread = None
             self.source.close()
             for outs in (self.ndi_outs, self.tex_outs):
                 for out in outs.values():

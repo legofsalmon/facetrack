@@ -103,11 +103,13 @@ names. That's it.
   any device — no need to walk to the machine.
 - **Performance card + load chip**: the header shows total pipeline
   **load** as a percentage of the frame budget, and the Performance card
-  breaks it down per feature (face finding, expressions, silhouette
-  model, feed outputs, previews…) with live bars — so you can see
+  breaks it down per feature (face finding, expressions, cutout,
+  feed outputs, previews…) with live bars — so you can see
   exactly what each toggle costs and what to switch off when the
   machine is tight. fps and load chips turn amber/red as they approach
-  limits.
+  limits. The *Silhouette model* row sits below the total, because it
+  runs on its own thread: a figure bigger than the frame budget is not
+  a warning there, it only means the mask is a frame or two old.
 - **PIN protection, on by default.** The panel is reachable from every
   device on the network and carries the camera preview, the output
   switches and a Quit button, and event Wi-Fi is regularly shared with
@@ -156,6 +158,7 @@ panel port, and prints the fix for anything broken.
 | Detection | YuNet (OpenCV, CPU) or CenterFace (ONNX Runtime, GPU-friendly) | auto-selected per machine, or pick one in the panel |
 | Tracking | SORT-style IoU + velocity tracker, with re-identification | a face lost and found again keeps its number; sub-ms for hundreds |
 | Expression | FER+ (8 classes), budgeted round-robin, off-thread | ~7.6 ms a face, none of it on the show loop |
+| Silhouette | PP-HumanSeg / MODNet / RVM, off-thread | the priciest stage, and none of it on the show loop either |
 | Output | NDI via cyndilib (+ local preview window) | NDI runtime bundled |
 | Control | FastAPI + WebSocket panel on :8089 | settings persist in `settings.json` |
 
@@ -244,6 +247,7 @@ yewee/
   emotion.py             FER+ expression estimation (budgeted, off-thread)
   overlay.py             boxes/labels/stats + alpha overlay rendering
   ndi_io.py              NDI output + NDI input (cyndilib)
+  segmenter.py           people-silhouette engines (PP-HumanSeg/MODNet/RVM)
   pipeline.py            the frame loop, hot source-swap, stats, preview JPEGs
   params.py              validated live parameters
   settings.py            auto-persistence (settings.json)
@@ -321,8 +325,8 @@ swamping a machine (both are switched on by the *Power saver* preset):
   OpenCV wheel uses GCD and ignores thread limits, so only the ONNX
   models (MODNet, CenterFace — the expensive ones) are capped.
 - **Auto relief** (on by default) — if the pipeline can't hold the frame
-  budget for 5 seconds it sheds quality in three steps: silhouette
-  updated less often, then face finding every other frame, then the
+  budget for 5 seconds it sheds quality in three steps: the silhouette
+  handed over less often, then face finding every other frame, then the
   detector size capped. It restores itself step by step once there's
   headroom, and the panel says what it's doing. Your own settings are
   never rewritten — relief is an internal override.

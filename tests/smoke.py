@@ -1276,6 +1276,70 @@ def _():
         threaded.close()
 
 
+@run("silhouette: segmentation stays off the show loop")
+def _():
+    """PP-HumanSeg is the priciest thing in the picture — 6.2 ms a frame
+    measured inside the running loop at 1080p, which is why it used to
+    run on every second frame and still cost more than everything else
+    combined. The loop must now only hand the frame over, and must be
+    able to draw a mask afterwards."""
+    import time
+
+    import numpy as np
+    from main import DEFAULTS, parse_args
+    from yewee.params import LiveParams
+    from yewee.pipeline import Pipeline
+    from yewee.tracker import FaceTracker
+    from yewee.detectors import YuNetDetector
+
+    frame = _first_frame()
+    trk = FaceTracker(min_hits=1)
+    tracks = trk.step(YuNetDetector(score_threshold=0.4).detect(frame))
+
+    args = parse_args(["--source", os.path.join(ROOT, "test_media", "synth.mp4"),
+                       "--no-ndi", "--no-preview", "--no-browser", "--quiet",
+                       "--backend", "yunet"])
+    params = LiveParams(**{**DEFAULTS, "cutout_shape": "people",
+                           "people_model": "pphumanseg", "cutout_steady": 0.0})
+    pipe = Pipeline(args, params, web_enabled=False)
+    try:
+        roi = pipe._people_roi_for(frame, tracks)
+        t0 = time.perf_counter()
+        inline = pipe._people_mask(frame, roi, 0.0, "pphumanseg")
+        inline_ms = (time.perf_counter() - t0) * 1000
+        assert inline is not None, "the segmenter produced nothing to compare against"
+
+        t0 = time.perf_counter()
+        pipe._dispatch_people_mask(frame, tracks, 0.0, "pphumanseg")
+        dispatch_ms = (time.perf_counter() - t0) * 1000
+
+        assert dispatch_ms < inline_ms / 3, (
+            f"handover cost {dispatch_ms:.1f} ms against {inline_ms:.1f} ms "
+            "inline — segmentation is still on the show loop")
+
+        mask = pipe._people_now(frame.shape[:2])
+        assert mask is not None, "the worker never published a mask"
+        assert mask.shape == frame.shape[:2] and mask.dtype == np.uint8
+        # same model, same frame, no smoothing: it must agree with inline
+        assert np.array_equal(mask, inline[0]), \
+            "the worker's mask differs from the inline one"
+
+        # a busy worker is skipped rather than queued behind, so a slow
+        # machine gets an older mask instead of a slower frame rate
+        pipe._seg_busy = True
+        t0 = time.perf_counter()
+        pipe._dispatch_people_mask(frame, tracks, 0.0, "pphumanseg")
+        assert (time.perf_counter() - t0) * 1000 < 1.0, \
+            "dispatch waited on a busy worker"
+        pipe._seg_busy = False
+    finally:
+        with pipe._seg_cond:
+            pipe._seg_stop = True
+            pipe._seg_cond.notify_all()
+        if pipe._seg_thread is not None:
+            pipe._seg_thread.join(timeout=2.0)
+
+
 if FAILURES:
     print(f"\n{len(FAILURES)} test(s) failed: {', '.join(FAILURES)}")
     sys.exit(1)
