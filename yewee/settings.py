@@ -33,7 +33,12 @@ def _read_raw() -> dict:
 
 def load() -> dict:
     """Returns {"params": {...only known keys...}, "source": str|None,
-    "pin": str}. Unknown top-level keys are preserved by writes."""
+    "pin": str|None}. Unknown top-level keys are preserved by writes.
+
+    `pin` is None when the file has never carried one — an install that
+    has not been asked the question — and a string, empty or not, once
+    it has. main.py needs the difference to tell a fresh install from
+    someone who deliberately runs the panel open."""
     data = _read_raw()
     params = data.get("params", {})
     known = {k: v for k, v in params.items() if k in SPEC}
@@ -49,7 +54,7 @@ def load() -> dict:
     return {
         "params": known,
         "source": data.get("source") or None,
-        "pin": str(data.get("pin") or ""),
+        "pin": None if data.get("pin") is None else str(data["pin"]),
     }
 
 
@@ -62,6 +67,8 @@ def _write(update: dict) -> None:
             current["params"] = merged
         if "source" in update:
             current["source"] = update["source"]
+        if "pin" in update:
+            current["pin"] = update["pin"]
         tmp = SETTINGS_PATH.with_suffix(".json.tmp")
         try:
             tmp.write_text(json.dumps(current, indent=2))
@@ -70,12 +77,15 @@ def _write(update: dict) -> None:
             pass  # persistence is best-effort; never break the show over it
 
 
-def save(params: dict | None = None, source: str | None = None) -> None:
+def save(params: dict | None = None, source: str | None = None,
+         pin: str | None = None) -> None:
     update: dict = {}
     if params is not None:
         update["params"] = dict(params)
     if source is not None:
         update["source"] = source
+    if pin is not None:
+        update["pin"] = pin
     if update:
         _write(update)
 

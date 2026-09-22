@@ -969,6 +969,36 @@ def _():
     assert FileSource.self_paced is False    # reads as fast as it is asked
 
 
+@run("panel: a control panel on the network is not left open")
+def _():
+    """It binds to every interface by default and carries a live camera
+    preview, the output switches and a Quit button. Event Wi-Fi is
+    regularly shared with guests."""
+    from main import parse_args, resolve_pin
+    from yewee import settings
+
+    written = []
+    original = settings.save
+    settings.save = lambda **kw: written.append(kw)
+    try:
+        pin, fresh = resolve_pin(parse_args([]), None)
+        assert pin and fresh, "a fresh networked install got no PIN"
+        assert len(pin) >= 6, f"PIN {pin!r} is too short to be worth having"
+        assert written == [{"pin": pin}], "the PIN was not saved for next time"
+
+        # Running open stays possible, but only deliberately.
+        written.clear()
+        assert resolve_pin(parse_args(["--no-pin"]), None) == ("", False)
+        assert resolve_pin(parse_args([]), "") == ("", False)
+        assert resolve_pin(parse_args([]), "4242") == ("4242", False)
+        assert resolve_pin(parse_args(["--pin", "9999"]), None) == ("9999", False)
+        # A panel that is not exposed needs nothing.
+        assert resolve_pin(parse_args(["--web-host", "127.0.0.1"]), None) == ("", False)
+        assert not written, "a PIN was saved when none should have been"
+    finally:
+        settings.save = original
+
+
 @run("tracking: numbers survive a detector dropout")
 def _():
     """A face lost for longer than the miss window and then found again

@@ -567,7 +567,18 @@
   };
   let ws = null, sendTimer = null, pendingSets = {}, lastParams = {}, lastFps = 30;
   let savedTimer = null, lastState = "live", sentQuit = false, sentRestart = false;
+  // The launcher opens this page on the show machine with ?pin= already
+  // set, so the operator is not asked for a number their own terminal
+  // just printed. Keep it, then take it back out of the address bar so
+  // it does not sit in history or in a screenshot of the panel.
   let pin = localStorage.getItem("yewee_pin") || "";
+  (() => {
+    const fromUrl = new URLSearchParams(location.search).get("pin");
+    if (!fromUrl) return;
+    pin = fromUrl;
+    try { localStorage.setItem("yewee_pin", pin); } catch (e) {}
+    history.replaceState(null, "", location.pathname);
+  })();
   const pinQ = () => (pin ? "&pin=" + encodeURIComponent(pin) : "");
   document.body.classList.add("offline");  // controls unlock when connected
 

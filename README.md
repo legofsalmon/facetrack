@@ -58,7 +58,8 @@ names. That's it.
 ### The control panel
 
 - Reachable from **any phone/laptop/tablet on the same network** — the
-  terminal window shows the address (e.g. `http://192.168.1.20:8089`).
+  terminal window shows the address (e.g. `http://192.168.1.20:8089`)
+  and the PIN to go with it.
 - **Presets** across the top: *Wide crowd*, *Mid crowd*, *Stage close-up*,
   *Power saver*. Start with one of these; fine-tune below if needed.
 - **Video source** lists every connected camera by name (webcams, capture
@@ -107,10 +108,19 @@ names. That's it.
   exactly what each toggle costs and what to switch off when the
   machine is tight. fps and load chips turn amber/red as they approach
   limits.
-- **PIN protection**: on a shared production network, launch with
-  `--pin 4721` (or add `"pin": "4721"` to `settings.json`). The panel then
-  asks once per browser; without it, controls, preview and source listing
-  are locked. No PIN set = open panel (fine at home).
+- **PIN protection, on by default.** The panel is reachable from every
+  device on the network and carries the camera preview, the output
+  switches and a Quit button, and event Wi-Fi is regularly shared with
+  guests — so the first launch makes a PIN, prints it in the terminal
+  and saves it. The browser it opens on the machine itself is handed the
+  PIN and never asks. Anywhere else, the panel asks once per browser;
+  without it, controls, preview and source listing are locked.
+  - Pick your own with `--pin 4721`, or `"pin": "4721"` in
+    `settings.json`.
+  - Run without one — fine at home — with `--no-pin` for a single run,
+    or `"pin": ""` in `settings.json` to stop being asked.
+  - A panel bound to the machine itself (`--web-host 127.0.0.1`) is not
+    exposed, so it gets no PIN.
 - If the input dies or is missing, the app keeps running and shows a
   NO INPUT slate — fix the source from the panel.
 
@@ -144,8 +154,8 @@ panel port, and prints the fix for anything broken.
 |---|---|---|
 | Capture | OpenCV (camera/capture card/file) or NDI in | threaded, latest-frame-wins for low latency |
 | Detection | YuNet (OpenCV, CPU) or CenterFace (ONNX Runtime, GPU-friendly) | auto-selected per machine, or pick one in the panel |
-| Tracking | SORT-style IoU + velocity tracker | stable IDs, sub-ms for hundreds of faces |
-| Expression | FER+ (8 classes), budgeted round-robin | cost stays flat as crowd grows |
+| Tracking | SORT-style IoU + velocity tracker, with re-identification | a face lost and found again keeps its number; sub-ms for hundreds |
+| Expression | FER+ (8 classes), budgeted round-robin, off-thread | ~7.6 ms a face, none of it on the show loop |
 | Output | NDI via cyndilib (+ local preview window) | NDI runtime bundled |
 | Control | FastAPI + WebSocket panel on :8089 | settings persist in `settings.json` |
 
@@ -219,6 +229,7 @@ override saved settings for that run. Non-panel flags:
 | `--ndi-name` / `--ndi-overlay` / `--no-ndi` | feed naming |
 | `--out-width` | downscale the NDI send |
 | `--no-web` / `--web-host` / `--web-port` / `--no-browser` | panel control |
+| `--pin` / `--no-pin` | set the panel PIN, or run without one |
 | `--no-preview` | no local window (headless/rack use) |
 | `--doctor` | self-check and exit |
 
@@ -229,8 +240,8 @@ main.py                  entry point: flags, saved settings, banner
 yewee/
   capture.py             camera / file / NDI-in / NO-INPUT slate, camera probe
   detectors.py           YuNet + CenterFace backends, live-tunable
-  tracker.py             SORT-style multi-face tracker
-  emotion.py             FER+ expression estimation (budgeted)
+  tracker.py             SORT-style multi-face tracker, with re-identification
+  emotion.py             FER+ expression estimation (budgeted, off-thread)
   overlay.py             boxes/labels/stats + alpha overlay rendering
   ndi_io.py              NDI output + NDI input (cyndilib)
   pipeline.py            the frame loop, hot source-swap, stats, preview JPEGs
@@ -240,6 +251,9 @@ yewee/
   static/index.html      the control panel
   doctor.py              self-check (python -m yewee.doctor)
 models/                  ONNX models (doctor --fix re-downloads)
+tests/
+  smoke.py               the suite (python -m tests.smoke)
+  idbench.py             track-identity benchmark (python -m tests.idbench)
 ```
 
 ### Running two instances (e.g. two cameras)
@@ -313,8 +327,13 @@ swamping a machine (both are switched on by the *Power saver* preset):
   headroom, and the panel says what it's doing. Your own settings are
   never rewritten — relief is an internal override.
 
-yewee also never runs faster than the source supplies: a 30 fps
-camera caps the loop at 30 fps, a 50 fps one at 50.
+yewee also never runs faster than the source supplies. A camera, a
+capture card and an NDI feed each set the pace themselves — the loop
+takes a frame when one arrives — so a 50 or 60 Hz source is processed
+at 50 or 60, not at whatever rate the device *claims* to run at. (It
+claims wrong more often than you would think: capture cards routinely
+report 0 or a flat 30 whatever they send.) A video file has no clock of
+its own, so it is paced at its real frame rate.
 
 ### Capture cards (Blackmagic, Magewell, Elgato, AVerMedia, AJA)
 

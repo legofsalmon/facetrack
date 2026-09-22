@@ -109,11 +109,43 @@ def parse_args(argv=None):
     web.add_argument("--pin", default="",
                      help="require this PIN in the control panel (also settable as "
                           '"pin" in settings.json)')
+    web.add_argument("--no-pin", action="store_true",
+                     help="run the control panel with no PIN (it is then open to "
+                          "everyone on the network)")
 
     p.add_argument("--doctor", action="store_true", help="run the self-check and exit")
     p.add_argument("--max-frames", type=int, default=0, help="stop after N frames (0 = run forever)")
     p.add_argument("--quiet", action="store_true", help="no periodic console stats")
     return p.parse_args(argv)
+
+
+def _is_loopback(host: str) -> bool:
+    return host in ("127.0.0.1", "::1", "localhost", "")
+
+
+def resolve_pin(args, saved_pin: str | None) -> tuple[str, bool]:
+    """The panel's PIN, and whether it was just generated.
+
+    The panel binds to every interface by default — that is the point of
+    it, an operator works from a phone across the room — and it carries a
+    live camera preview, the output switches and a Quit button. Event
+    Wi-Fi is regularly shared with guests, so leaving it open to anyone
+    who finds port 8089 was the wrong default.
+
+    An install that has never been asked the question gets a PIN made for
+    it and saved. Running open stays available and deliberate: --no-pin
+    for one run, or "pin": "" in settings.json for good. A panel bound to
+    loopback only is not exposed, so it is left alone."""
+    if args.pin:
+        return args.pin, False
+    if args.no_pin or _is_loopback(args.web_host):
+        return "", False
+    if saved_pin is not None:
+        return saved_pin, False
+    import secrets
+    pin = f"{secrets.randbelow(10 ** 6):06d}"
+    settings.save(pin=pin)
+    return pin, True
 
 
 def _lan_ip() -> str | None:
@@ -241,7 +273,7 @@ def main(argv=None) -> int:
         url = f"http://localhost:{args.web_port}"
         print(f"yewee is already running on this machine — control panel: {url}")
         if not args.no_browser:
-            webbrowser.open(url)
+            webbrowser.open(url)   # the running instance knows its own PIN
         return 0
 
     from yewee.logging_setup import setup as setup_logging
@@ -278,7 +310,7 @@ def main(argv=None) -> int:
 
     panel_url = None
     web_server = None
-    panel_pin = args.pin or saved["pin"]
+    panel_pin, pin_is_new = resolve_pin(args, saved["pin"])
     if not args.no_web:
         from yewee.webui import create_app, start_in_thread
         app = create_app(pipeline, params,
@@ -294,7 +326,11 @@ def main(argv=None) -> int:
             if lan and args.web_host == "0.0.0.0" else ""
         print(f"  Control panel : {panel_url}{extra}")
         if panel_pin:
-            print("  Panel PIN     : required (set via --pin / settings.json)")
+            print(f"  Panel PIN     : {panel_pin}")
+            if pin_is_new:
+                print("                  (new — the panel is on the network, so it "
+                      "is no longer open to\n                  everyone who finds "
+                      "it. Saved for next time; --no-pin turns it off.)")
     p0 = params.snapshot()
     notes = {"program": "", "overlay": "  [graphics on alpha]",
              "faces": "  [cutout on alpha]", "mask": "  [matte]"}
@@ -317,7 +353,10 @@ def main(argv=None) -> int:
     print("  Press Ctrl-C to stop.\n", flush=True)
 
     if panel_url and not args.no_browser:
-        t = threading.Timer(1.2, webbrowser.open, args=(panel_url,))
+        # This browser is on the machine that printed the PIN, so hand it
+        # over rather than prompting the operator for their own number.
+        open_url = f"{panel_url}/?pin={panel_pin}" if panel_pin else panel_url
+        t = threading.Timer(1.2, webbrowser.open, args=(open_url,))
         t.daemon = True
         t.start()
 
