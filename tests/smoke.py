@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+import socket
 import sys
 import tempfile
 import traceback
@@ -991,7 +992,13 @@ def _():
     from yewee.pipeline import Pipeline
     from yewee.webui import create_app, start_in_thread
 
-    port = 8391
+    # An ephemeral port, not a fixed one: two runs close together left
+    # the previous server still holding a hardcoded port, and the test
+    # failed with "the panel never came up" for a reason that had
+    # nothing to do with the panel.
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
     args = parse_args(["--source", os.path.join(ROOT, "test_media", "synth.mp4"),
                        "--no-ndi", "--no-preview", "--no-browser", "--quiet",
                        "--backend", "yunet", "--web-port", str(port)])
