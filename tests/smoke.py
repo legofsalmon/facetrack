@@ -1123,6 +1123,53 @@ def _():
                        f"{ms:.1f} ms — the fallback is not vectorised")
 
 
+@run("faces cutout: matches the straightforward implementation exactly")
+def _():
+    """apply_cutout premultiplies only inside the mask's bounding box,
+    which is where most of the stage's cost went. Guard it against the
+    obvious implementation, because the whole point is that the output
+    does not change."""
+    from yewee.overlay import apply_cutout, cutout_alpha, hard_rect_regions
+    from yewee.tracker import Track
+
+    def straightforward(frame, alpha):
+        a3 = cv2.cvtColor(alpha, cv2.COLOR_GRAY2BGR)
+        b, g, r = cv2.split(cv2.multiply(frame, a3, scale=1 / 255.0))
+        return cv2.merge((b, g, r, alpha))
+
+    rng = np.random.default_rng(0)
+    frame = rng.integers(0, 255, (240, 320, 3), dtype=np.uint8)
+    spread = [Track(i + 1, np.array([20 + i * 60, 40 + (i % 2) * 90, 40., 50.],
+                                    np.float32), 0.9) for i in range(4)]
+    clustered = [Track(i + 1, np.array([30 + i * 12, 30 + i * 9, 20., 24.],
+                                       np.float32), 0.9) for i in range(3)]
+    people = cv2.GaussianBlur(
+        (rng.integers(0, 2, (240, 320), dtype=np.uint8) * 255), (21, 21), 0)
+
+    cases = {
+        "oval, feathered": dict(tracks=spread, shape="oval", feather=9),
+        "rectangle, feathered": dict(tracks=spread, shape="rectangle", feather=5),
+        "clustered in a corner": dict(tracks=clustered, shape="oval", feather=7),
+        "people, soft matte": dict(tracks=spread, shape="people",
+                                   people_mask=people, people_soft=True),
+        "no faces at all": dict(tracks=[], shape="oval", feather=4),
+    }
+    for label, kw in cases.items():
+        tracks = kw.pop("tracks")
+        alpha = cutout_alpha(frame.shape[:2], tracks, **kw)
+        assert np.array_equal(apply_cutout(frame, alpha),
+                              straightforward(frame, alpha)), \
+            f"the cutout differs from the reference on: {label}"
+
+    # and the hard-rectangle path is untouched by any of it
+    alpha = cutout_alpha(frame.shape[:2], spread, shape="rectangle", feather=0)
+    hard = hard_rect_regions(frame.shape[:2], spread, 0.15)
+    out = apply_cutout(frame, alpha, hard_regions=hard)
+    assert np.array_equal(out[:, :, 3], alpha)
+    x1, y1, x2, y2 = hard[0]
+    assert np.array_equal(out[y1:y2, x1:x2, :3], frame[y1:y2, x1:x2])
+
+
 @run("preview: nothing is rendered for a preview nobody is watching")
 def _():
     """`panel_preview` says the operator left the preview on, not that a
