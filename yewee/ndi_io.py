@@ -5,6 +5,7 @@ NDI SDK install is required on either macOS or Windows.
 """
 from __future__ import annotations
 
+import logging
 import time
 from fractions import Fraction
 
@@ -71,7 +72,25 @@ class NDIOutput:
 
 class NDIInput:
     """Receives an NDI source as BGR frames (so the tracker can sit
-    anywhere in an existing NDI chain)."""
+    anywhere in an existing NDI chain).
+
+    The frame sync holds the latest frame and hands it back on demand,
+    new or not, so a naive read() returns duplicates as fast as it is
+    called. read() therefore waits for the frame's own stamp to move,
+    which makes an NDI input pace the pipeline at the rate it really
+    sends — a 50 or 60 Hz feed is no longer processed at 30.
+
+    Which stamp field cyndilib surfaces varies, and one that never moves
+    would wedge the feed, so patience is bounded: if the stamp has not
+    changed within `NOVELTY_WAIT` the receiver is marked unstamped for
+    good, `stamped` goes False, and the pipeline goes back to pacing the
+    source at its declared rate.
+    """
+
+    #: NDI carries both; take whichever this build of cyndilib exposes.
+    STAMP_FIELDS = ("timestamp", "timecode")
+    #: How long to wait for a new frame before giving up on stamps (s).
+    NOVELTY_WAIT = 0.5
 
     def __init__(self, source_name: str, timeout: float = 10.0):
         from cyndilib.finder import Finder
@@ -102,14 +121,49 @@ class NDIInput:
         self.receiver.frame_sync.set_video_frame(self.video_frame)
         self.receiver.set_source(source)
         self.source_display_name = str(source.name)
+        self._stamp_field = self._find_stamp_field()
+        self.stamped = self._stamp_field is not None
+        self._last_stamp = None
+
+    def _find_stamp_field(self) -> str | None:
+        """The frame attribute that identifies one frame, or None."""
+        for name in self.STAMP_FIELDS:
+            try:
+                if getattr(self.video_frame, name) is not None:
+                    return name
+            except Exception:
+                continue
+        return None
+
+    def _stamp(self):
+        try:
+            return int(getattr(self.video_frame, self._stamp_field))
+        except Exception:
+            return None
 
     def read(self, timeout: float = 5.0):
-        """Returns (ok, frame_bgr)."""
+        """Returns (ok, frame_bgr) for a frame not already returned."""
         deadline = time.monotonic() + timeout
+        stale_until = time.monotonic() + self.NOVELTY_WAIT
         while time.monotonic() < deadline:
             self.receiver.frame_sync.capture_video()
             xres, yres = self.video_frame.xres, self.video_frame.yres
             if xres > 0 and yres > 0:
+                if self.stamped:
+                    stamp = self._stamp()
+                    if stamp is not None and stamp == self._last_stamp:
+                        if time.monotonic() < stale_until:
+                            time.sleep(0.002)
+                            continue
+                        # the stamp is not moving — it is decorative on this
+                        # receiver, so stop trusting it and let the pipeline
+                        # pace us again rather than starving the show
+                        self.stamped = False
+                        logging.getLogger("yewee").info(
+                            "NDI input exposes no moving frame stamp — "
+                            "falling back to paced reads")
+                    else:
+                        self._last_stamp = stamp
                 # View the frame buffer, convert (copies), then drop the view:
                 # cyndilib refuses the next capture while a view is alive.
                 data = np.asarray(self.video_frame)

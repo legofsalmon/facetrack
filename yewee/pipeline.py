@@ -629,6 +629,7 @@ class Pipeline:
         t_last = time.perf_counter()
         window_open = False
         pace_next = None  # file playback pacing (real-time unless benchmarking)
+        paced_for = self.source  # the source pace_next belongs to
 
         try:
             while not self._stop.is_set():
@@ -901,12 +902,22 @@ class Pipeline:
                         "error": self.last_error,
                     }
 
-                # Frame-rate ceiling: never run faster than the source
-                # supplies (a 30 fps camera caps the loop at 30, a 50 fps
-                # one at 50). Nothing downstream benefits from re-running
-                # the pipeline between frames, and it keeps the machine
-                # cool. Unpaced only for --max-frames benchmark runs.
-                if not args.max_frames:
+                # Frame-rate ceiling, for sources that need one.
+                #
+                # A source that blocks until it has a genuinely new frame
+                # already sets the loop's rhythm, and adding a ceiling on
+                # top only throws frames away: `fps` is a claim, and a
+                # capture card claiming 30 while sending 50 or 60 had two
+                # frames in five silently dropped, with the panel showing
+                # a healthy 30 throughout. Those sources are left alone.
+                # A video file, which hands frames over as fast as the
+                # disk allows, still needs pacing to play at real speed.
+                # Unpaced too for --max-frames benchmark runs.
+                if self.source is not paced_for:
+                    paced_for = self.source   # a swap restarts the cadence
+                    pace_next = None
+                if not args.max_frames and not getattr(self.source,
+                                                       "self_paced", False):
                     src_fps = min(max(getattr(self.source, "fps", 0) or 30.0, 1.0), 120.0)
                     period = 1.0 / src_fps
                     now2 = time.perf_counter()

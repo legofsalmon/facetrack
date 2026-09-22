@@ -891,6 +891,84 @@ def _():
         t.join(timeout=5)
 
 
+@run("pacing: a blocking source is not capped by the fps it reports")
+def _():
+    """The regression this guards: the loop used to take its frame-rate
+    ceiling from the source's declared fps for every source alike. A
+    capture card that reports 30 while sending 60 then had half its
+    frames dropped by latest-frame-wins, with the panel showing a
+    healthy 30 fps and nothing saying the input was being halved."""
+    import threading
+    import time
+
+    from main import DEFAULTS, parse_args
+    from yewee.params import LiveParams
+    from yewee.pipeline import Pipeline
+
+    class PacedSource:
+        """Delivers at `rate`, blocking like CameraSource.read does, while
+        reporting whatever `fps` it is told to report."""
+        is_live = True
+
+        def __init__(self, rate, fps, self_paced):
+            self.rate = rate
+            self.fps = fps
+            self.self_paced = self_paced
+            self.delivered = 0
+            self._next = None
+            self._frame = np.zeros((120, 160, 3), dtype=np.uint8)
+
+        def read(self, timeout: float = 2.0):
+            now = time.perf_counter()
+            if self._next is None:
+                self._next = now
+            self._next += 1.0 / self.rate
+            if self.self_paced and self._next > now:
+                time.sleep(min(self._next - now, timeout))
+            self.delivered += 1
+            return True, self._frame
+
+        def close(self):
+            pass
+
+    def frames_in(source, seconds):
+        args = parse_args(["--source", os.path.join(ROOT, "test_media", "synth.mp4"),
+                           "--no-ndi", "--no-preview", "--no-web", "--no-browser",
+                           "--quiet", "--backend", "yunet"])
+        params = LiveParams(**{**DEFAULTS, "ndi_program": False,
+                               "panel_preview": False, "local_preview": False,
+                               "emotion_enabled": False})
+        pipe = Pipeline(args, params, web_enabled=False)
+        pipe.source.close()
+        pipe.source = source
+        t = threading.Thread(target=pipe.run, daemon=True)
+        t.start()
+        time.sleep(seconds)
+        pipe.stop()
+        t.join(timeout=5)
+        return pipe.get_stats().get("frame", 0)
+
+    # A source that blocks on its own clock: the declared 30 must not cap it.
+    fast = PacedSource(rate=100.0, fps=30.0, self_paced=True)
+    got = frames_in(fast, 1.0)
+    assert got > 45, (f"blocking source delivering 100/s was held to {got} "
+                      f"frames in a second — the declared fps is capping it")
+
+    # A source that does not block (a video file) still gets paced at `fps`,
+    # or a file would play back at whatever speed the disk manages.
+    slow = PacedSource(rate=1000.0, fps=10.0, self_paced=False)
+    got = frames_in(slow, 1.5)
+    assert got <= 25, f"unpaced source ran to {got} frames in 1.5s — not paced"
+
+
+@run("pacing: every source declares whether it paces itself")
+def _():
+    from yewee.capture import CameraSource, FileSource, NullSource
+    assert CameraSource.self_paced is True   # read() waits for a new seq
+    assert NullSource.self_paced is True     # read() sleeps a frame period
+    assert FileSource.self_paced is False    # reads as fast as it is asked
+
+
 @run("emotion: FER+ labels a face")
 def _():
     from yewee.detectors import YuNetDetector
