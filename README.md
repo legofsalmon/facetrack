@@ -1,8 +1,10 @@
 # yewee — live face tracking to NDI
 
 Points a camera at a crowd, finds and follows faces, and sends the result
-over **NDI** to your vision mixer — with a browser control panel for
-everything. Built for live events.
+over **NDI** to your vision mixer, over **Syphon/Spout** to a VJ app on
+the same machine, or as plain **OSC coordinates** for Resolume and
+TouchDesigner to draw with — plus a browser control panel for everything.
+Built for live events.
 
 **What it does / doesn't do:** face *detection and tracking* only — boxes,
 stable numbers, optional expression labels. It does **not** identify
@@ -68,7 +70,7 @@ names. That's it.
 - Every change applies live **and is remembered for next launch**.
 - **Everything you can change while running is in the panel**, grouped
   into collapsible cards — Input, Face finding, On-screen look, Outputs,
-  Cutout shape, plus Performance and Machine load. Collapse the ones a
+  Data out, Cutout shape, plus Performance and Machine load. Collapse the ones a
   given show doesn't need; the panel remembers per browser. The only
   launch-time settings left are the ones that cannot change safely
   mid-run: the panel's own port/host, the NDI feed names (renaming drops
@@ -94,6 +96,10 @@ names. That's it.
   outputs cut to plain black — graceful on a live screen — while the
   panel preview shows a NO SIGNAL slate and the header a red pill.
   yewee reconnects automatically the moment the source returns.
+- **Data out (OSC)** sends where the faces are as coordinates rather than
+  pixels, straight into Resolume, TouchDesigner, Notch or MadMapper —
+  see [Data out (OSC)](#data-out-osc). The header reads DATA ONLY when
+  that is the only output running.
 - **Number badges / expressions** draw in a per-person colour palette, or
   flip on **Brand colour** to draw every box in one colour that matches
   the event's look.
@@ -206,6 +212,65 @@ Spout ≤ 3.13 — the Setup scripts pick a compatible Python automatically
 (on macOS they prefer a uv-managed 3.12; Homebrew's python@3.12 bottle is
 currently broken on macOS 26.1).
 
+### Data out (OSC)
+
+Every feed above ships pixels. The **Data out (OSC)** card sends the
+coordinates themselves instead, over OSC/UDP, so Resolume, TouchDesigner,
+Notch and MadMapper can draw the graphics natively — at their own output
+resolution, with nothing to key and no second feed to route. It is
+additive: switch it on and the video feeds carry on exactly as before.
+It is also cheap. At 1080p the overlay feed spends about 1.4 ms a frame
+rendering 8.3 MB of pixels to carry roughly a kilobyte of coordinates;
+the OSC stage costs **0.14 ms a frame** for 8 faces on every frame, or
+0.40 ms for 32 (measured in the running loop with the panel's own stage
+meter, on the CPU test box, 8 faces tracked).
+
+Point it at the machine running the receiving app (`127.0.0.1` is this
+one) and the port that app listens on — **Resolume's default is 7000**,
+TouchDesigner's OSC In CHOP defaults to 10000, and either can be changed
+at their end.
+
+Faces are sent in **slots**, not as a list. Slot 1 keeps the same person
+for as long as that person is tracked, so a mapping made in a VJ app
+holds still instead of jumping between people as the crowd changes; when
+somebody leaves, their slot empties and the next newcomer takes it. Every
+slot is sent on every update, occupied or not, so a receiver that
+connects late settles on the first packet. An empty slot reports
+`active 0` at the centre of the frame with zero size, so a graphic bound
+to it parks rather than flying off to a corner.
+
+| Address | Type | What it is |
+|---|---|---|
+| `/yewee/faces` | int | faces tracked right now — the true count, even past the slot limit |
+| `/yewee/crowd` | float | that count over the slot count, clamped to 1 — ready to drive a parameter |
+| `/yewee/center/x` `/y` | float | the centre of everybody |
+| `/yewee/fps` | float | the loop's current rate |
+| `/yewee/face/N/active` | int | 1 while slot N holds somebody |
+| `/yewee/face/N/id` | int | the track number yewee draws on screen |
+| `/yewee/face/N/x` `/y` | float | centre of the face box |
+| `/yewee/face/N/w` `/h` | float | its size |
+| `/yewee/face/N/size` | float | the larger of the two, as a single "how close" value |
+| `/yewee/face/N/expression` | string | FER+ label, empty when expressions are off |
+| `/yewee/face/N/confidence` | float | how sure that label is |
+
+**Coordinates** is either `0 – 1 across the frame`, which maps straight
+onto a Resolume parameter, or `Pixels`, which suits TouchDesigner. The
+size and shape of the incoming video then stops mattering downstream in
+the first case, and matches it exactly in the second.
+
+**Update rate** caps how often the table goes out; it never runs faster
+than the video. The feed keeps beating while yewee is paused, has lost
+signal, or is showing the test card — zeroed, so nothing downstream is
+left driven by coordinates that stopped being true, and so the data link
+can be checked from the test card like any other feed.
+
+Messages go out in OSC bundles sized to fit inside a normal 1500-byte
+network packet, so a 32-slot stage never depends on IP fragmentation.
+Broadcast addresses work if you want to feed a rack of machines from one
+instance. UDP is fire-and-forget: yewee reports a send it could not make
+in the panel and carries on, because a data feed must never be able to
+take the show down.
+
 ### CLI flags
 
 Everything in the panel is also a flag (`python main.py --help`). Flags
@@ -218,6 +283,7 @@ override saved settings for that run. Non-panel flags:
 | `--backend auto\|yunet\|centerface` | force a detector |
 | `--ndi-name` / `--ndi-overlay` / `--no-ndi` | feed naming |
 | `--out-width` | downscale the NDI send |
+| `--osc` / `--osc-target HOST:PORT` | start with the data output on (default `127.0.0.1:7000`) |
 | `--no-web` / `--web-host` / `--web-port` / `--no-browser` | panel control |
 | `--no-preview` | no local window (headless/rack use) |
 | `--doctor` | self-check and exit |
@@ -233,6 +299,7 @@ yewee/
   emotion.py             FER+ expression estimation (budgeted)
   overlay.py             boxes/labels/stats + alpha overlay rendering
   ndi_io.py              NDI output + NDI input (cyndilib)
+  osc_out.py             OSC data output: face coordinates over UDP
   pipeline.py            the frame loop, hot source-swap, stats, preview JPEGs
   params.py              validated live parameters
   settings.py            auto-persistence (settings.json)

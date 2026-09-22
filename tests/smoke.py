@@ -906,6 +906,284 @@ def _():
     assert all(t.emotion[0] in EMOTIONS for t in labelled)
 
 
+# ---- OSC data output -------------------------------------------------
+# The reader below is deliberately written from the OSC 1.0 spec rather
+# than from yewee/osc_out.py: a test that reuses the encoder only proves
+# the encoder agrees with itself, and what matters here is that Resolume
+# and TouchDesigner can read what we send.
+
+def _osc_str(buf: bytes, i: int):
+    end = buf.index(b"\0", i)
+    s = buf[i:end].decode()
+    return s, i + (len(s) // 4 + 1) * 4
+
+
+def _osc_message(buf: bytes):
+    import struct
+    addr, i = _osc_str(buf, 0)
+    tags, i = _osc_str(buf, i)
+    assert tags.startswith(","), f"{addr}: type tag string must start with a comma"
+    vals = []
+    for t in tags[1:]:
+        if t == "i":
+            vals.append(struct.unpack_from(">i", buf, i)[0])
+            i += 4
+        elif t == "f":
+            vals.append(round(struct.unpack_from(">f", buf, i)[0], 5))
+            i += 4
+        elif t == "s":
+            s, i = _osc_str(buf, i)
+            vals.append(s)
+        else:
+            raise AssertionError(f"{addr}: unexpected type tag {t!r}")
+    assert i == len(buf), f"{addr}: {len(buf) - i} bytes left over"
+    return addr, (vals[0] if len(vals) == 1 else vals)
+
+
+def _osc_unpack(datagram: bytes, into: dict) -> None:
+    import struct
+    assert len(datagram) % 4 == 0, "every OSC packet is a multiple of 4 bytes"
+    if datagram.startswith(b"#bundle\0"):
+        i = 16  # "#bundle\0" + time tag
+        while i < len(datagram):
+            size = struct.unpack_from(">i", datagram, i)[0]
+            i += 4
+            _osc_unpack(datagram[i:i + size], into)
+            i += size
+        return
+    addr, value = _osc_message(datagram)
+    into[addr] = value
+
+
+def _osc_receiver():
+    """A bound UDP socket plus a drain() that reads n datagrams into a dict."""
+    import socket
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(("127.0.0.1", 0))
+    sock.settimeout(2.0)
+
+    def drain(n: int) -> dict:
+        got: dict = {}
+        for _ in range(n):
+            _osc_unpack(sock.recvfrom(65535)[0], got)
+        return got
+
+    return sock, sock.getsockname()[1], drain
+
+
+def _osc_track(tid: int, x, y, w, h, emotion=None):
+    from yewee.tracker import Track
+    t = Track(tid, np.array([x, y, w, h], dtype=np.float32), 0.9)
+    t.emotion = emotion
+    return t
+
+
+@run("osc: encoding matches the OSC 1.0 wire format")
+def _():
+    from yewee.osc_out import encode_bundle, encode_message
+    m = encode_message("/yewee/faces", 3)
+    assert m == b"/yewee/faces\0\0\0\0,i\0\0\0\0\0\3", m
+    # a 4-character address still needs a null and padding to 8
+    assert encode_message("/abc", 1.0).startswith(b"/abc\0\0\0\0,f\0\0")
+    mixed = encode_message("/yewee/face/1/expression", "happy")
+    assert _osc_message(mixed) == ("/yewee/face/1/expression", "happy")
+    bundle = encode_bundle([m, mixed])
+    assert bundle.startswith(b"#bundle\0")
+    got: dict = {}
+    _osc_unpack(bundle, got)
+    assert got == {"/yewee/faces": 3, "/yewee/face/1/expression": "happy"}
+
+
+@run("osc: a receiver gets the whole track table")
+def _():
+    from yewee.osc_out import OSCOutput
+    sock, port, drain = _osc_receiver()
+    out = OSCOutput("127.0.0.1", port, slots=4, rate=120.0)
+    try:
+        tracks = [_osc_track(7, 100, 50, 80, 80, ("happy", 0.8)),
+                  _osc_track(9, 500, 250, 40, 40)]
+        before = out.packets
+        assert out.send(tracks, (200, 400), fps=25.0, force=True)
+        got = drain(out.packets - before)
+    finally:
+        out.close()
+        sock.close()
+
+    assert got["/yewee/faces"] == 2
+    assert got["/yewee/crowd"] == 0.5                  # 2 of 4 slots
+    assert got["/yewee/fps"] == 25.0
+    assert got["/yewee/center/x"] == round((140 + 520) / 2 / 400, 5)
+    assert got["/yewee/center/y"] == round((90 + 270) / 2 / 200, 5)
+
+    # coordinates are normalised to the frame, centred on the face box
+    assert got["/yewee/face/1/active"] == 1
+    assert got["/yewee/face/1/id"] == 7
+    assert got["/yewee/face/1/x"] == round(140 / 400, 5)
+    assert got["/yewee/face/1/y"] == round(90 / 200, 5)
+    assert got["/yewee/face/1/w"] == round(80 / 400, 5)
+    assert got["/yewee/face/1/h"] == round(80 / 200, 5)
+    assert got["/yewee/face/1/size"] == round(80 / 200, 5)   # the larger extent
+    assert got["/yewee/face/1/expression"] == "happy"
+    assert got["/yewee/face/1/confidence"] == 0.8
+    assert got["/yewee/face/2/id"] == 9
+    assert got["/yewee/face/2/expression"] == ""             # expressions off
+
+    # Empty slots are sent too, parked at the centre, so a receiver that
+    # connects late settles at once instead of holding stale values.
+    for slot in (3, 4):
+        assert got[f"/yewee/face/{slot}/active"] == 0
+        assert got[f"/yewee/face/{slot}/id"] == 0
+        assert got[f"/yewee/face/{slot}/x"] == 0.5
+        assert got[f"/yewee/face/{slot}/size"] == 0.0
+    assert "/yewee/face/5/active" not in got, "only `slots` faces are addressed"
+
+
+@run("osc: a face keeps its slot, and a departure frees it")
+def _():
+    from yewee.osc_out import OSCOutput
+    sock, port, drain = _osc_receiver()
+    out = OSCOutput("127.0.0.1", port, slots=3, rate=120.0)
+
+    def table(tracks):
+        before = out.packets
+        out.send(tracks, (720, 1280), force=True)
+        return drain(out.packets - before)
+
+    try:
+        a = _osc_track(1, 10, 10, 20, 20)
+        b = _osc_track(2, 40, 40, 20, 20)
+        got = table([a, b])
+        assert (got["/yewee/face/1/id"], got["/yewee/face/2/id"]) == (1, 2)
+
+        # The first person walks out. The second must NOT slide down into
+        # slot 1 — a mapping in Resolume would jump to a different person.
+        got = table([b])
+        assert got["/yewee/face/1/active"] == 0
+        assert got["/yewee/face/2/id"] == 2, "a tracked face must keep its slot"
+
+        # A newcomer takes the slot that was freed.
+        got = table([b, _osc_track(3, 70, 70, 20, 20)])
+        assert got["/yewee/face/1/id"] == 3
+        assert got["/yewee/face/2/id"] == 2
+
+        # More faces than slots: the extras wait rather than displacing anyone.
+        crowd = [b, _osc_track(3, 70, 70, 20, 20)] + [
+            _osc_track(i, i, i, 20, 20) for i in range(4, 9)]
+        got = table(crowd)
+        assert got["/yewee/faces"] == 7, "the count reports everybody"
+        assert got["/yewee/crowd"] == 1.0
+        assert got["/yewee/face/2/id"] == 2
+        assert sorted(got[f"/yewee/face/{s}/id"] for s in (1, 2, 3)) == [2, 3, 4]
+
+        # Shrinking the slot count drops the assignments above it.
+        out.slots = 2
+        got = table(crowd)
+        assert "/yewee/face/3/id" not in got
+        assert got["/yewee/face/2/id"] == 2, "slots that survive keep their person"
+    finally:
+        out.close()
+        sock.close()
+
+
+@run("osc: pixel units, an empty table, and a rate limit")
+def _():
+    import time as _time
+    from yewee.osc_out import OSCOutput
+    sock, port, drain = _osc_receiver()
+    out = OSCOutput("127.0.0.1", port, slots=2, units="pixels", rate=120.0)
+    try:
+        before = out.packets
+        out.send([_osc_track(1, 100, 50, 80, 60)], (720, 1280), force=True)
+        got = drain(out.packets - before)
+        assert got["/yewee/face/1/x"] == 140.0 and got["/yewee/face/1/y"] == 80.0
+        assert got["/yewee/face/1/w"] == 80.0 and got["/yewee/face/1/size"] == 80.0
+        assert got["/yewee/face/2/x"] == 640.0, "empty slots park at frame centre"
+
+        # Paused / no signal: everything zeroed, so nothing downstream is
+        # left driven by coordinates that stopped being true.
+        before = out.packets
+        out.clear(size=(720, 1280), force=True)
+        got = drain(out.packets - before)
+        assert got["/yewee/faces"] == 0 and got["/yewee/crowd"] == 0.0
+        assert got["/yewee/face/1/active"] == 0
+
+        # The rate limit holds the wire down when the loop runs faster.
+        out.rate = 5.0
+        out._next_at = _time.monotonic() + 10.0
+        assert out.send([], (720, 1280)) is False, "rate limit not applied"
+    finally:
+        out.close()
+        sock.close()
+
+
+@run("osc: a bad address is reported, not raised")
+def _():
+    from yewee.osc_out import OSCOutput
+    try:
+        OSCOutput("no-such-host.invalid", 7000)
+    except Exception:
+        pass  # what the pipeline catches and shows in the panel
+    else:
+        raise AssertionError("an unresolvable host should fail at creation")
+
+    # Once open, a send that fails must never reach the frame loop.
+    sock, port, _drain = _osc_receiver()
+    out = OSCOutput("127.0.0.1", port, slots=1, rate=120.0)
+    sock.close()
+    out._sock.close()  # forces OSError on the next sendto
+    try:
+        assert out.send([], (720, 1280), force=True) is True
+        assert out.error, "a failed send should leave a reason for the panel"
+    finally:
+        out.close()
+
+
+@run("pipeline: the OSC feed follows the live params")
+def _():
+    import threading
+    import time
+
+    from main import DEFAULTS, parse_args
+    from yewee.params import LiveParams
+    from yewee.pipeline import Pipeline
+
+    sock, port, drain = _osc_receiver()
+    args = parse_args(["--source", os.path.join(ROOT, "test_media", "synth.mp4"),
+                       "--no-ndi", "--no-preview", "--no-web", "--no-browser",
+                       "--quiet", "--backend", "yunet"])
+    params = LiveParams(**{**DEFAULTS, "ndi_program": False, "panel_preview": False,
+                           "local_preview": False, "emotion_enabled": False,
+                           "osc_enabled": False, "osc_host": "127.0.0.1",
+                           "osc_port": port, "osc_slots": 4, "osc_rate": 60.0})
+    pipe = Pipeline(args, params, web_enabled=False)
+    t = threading.Thread(target=pipe.run, daemon=True)
+    t.start()
+    try:
+        def wait_for(pred, timeout):
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                if pred(pipe.get_stats()):
+                    return True
+                time.sleep(0.05)
+            return False
+
+        assert wait_for(lambda s: s.get("state") == "live", 10), "never went live"
+        assert not pipe.get_stats()["osc"]["on"], "OSC must be off until asked for"
+
+        params.set("osc_enabled", True)
+        assert wait_for(lambda s: s["osc"]["on"], 5), "panel switch did not open it"
+        assert pipe.get_stats()["osc"]["target"] == f"127.0.0.1:{port}"
+        got = drain(1)
+        assert any(a.startswith("/yewee/") for a in got), got
+
+        params.set("osc_enabled", False)
+        assert wait_for(lambda s: not s["osc"]["on"], 5), "panel switch did not close it"
+    finally:
+        pipe.stop()
+        t.join(timeout=5)
+        sock.close()
+
+
 if FAILURES:
     print(f"\n{len(FAILURES)} test(s) failed: {', '.join(FAILURES)}")
     sys.exit(1)
