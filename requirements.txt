@@ -31,5 +31,8 @@ SpoutGL; sys_platform == "win32" and python_version < "3.14"
 #   missing". yewee treats that as a fallback to the CPU rather than an
 #   error (see runtime.make_session), so it runs either way — just on the
 #   CPU detector until CUDA is installed. `--doctor` says which you have.
-onnxruntime; sys_platform == "darwin"
+#   Linux is not a target platform for the app, but CI runs there and
+#   without this every ONNX test skips — which is how a provider bug
+#   would reach a tag unnoticed.
+onnxruntime; sys_platform == "darwin" or sys_platform == "linux"
 onnxruntime-gpu; sys_platform == "win32"
