@@ -31,7 +31,8 @@ hiddenimports = [
     "uvicorn.logging", "uvicorn.loops.auto", "uvicorn.protocols.http.auto",
     "uvicorn.protocols.websockets.auto", "uvicorn.lifespan.on",
 ]
-for pkg in ("cyndilib", "onnxruntime"):     # NDI runtime / ORT providers
+# NDI runtime / ORT providers / the CA bundle shop licences activate over
+for pkg in ("cyndilib", "onnxruntime", "certifi"):
     try:
         d, b, h = collect_all(pkg)
         # onnxruntime ships sample models and test data we don't need

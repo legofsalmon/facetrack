@@ -270,8 +270,14 @@ activate. Licensing only switches on when a build is packaged with a
 vendor public key; see `docs/DISTRIBUTION.md` for issuing keys and
 building a licensed app. In such a build, an unlicensed copy runs for 72
 hours and then holds its feeds on a TRIAL ENDED slate until a key is
-entered in the panel's Licence card. Keys are Ed25519-signed and verify
-offline, so activation works on an air-gapped show machine.
+entered in the panel's Licence card.
+
+Two kinds of key work there. An **`LT-YEWE-…` key** from the
+letissier.ie shop activates online once, taking one of the licence's
+seats, and is then checked offline with a daily check-in; a machine with
+no internet uses offline activation from letissier.ie/account instead.
+An older **`YW1.…` key** from the Licence Admin keeps working as before,
+fully offline.
 
 ### Model licences
 
