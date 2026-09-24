@@ -179,11 +179,14 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None,
                         act = d.get("action")
                         try:
                             from .licensing import activate, deactivate
+                            # both may wait on letissier.ie, so they run off
+                            # the event loop that keeps the panel ticking
                             if act == "activate":
-                                ok, note = activate(str(d.get("key", "")))
+                                ok, note = await asyncio.to_thread(
+                                    activate, str(d.get("key", "")))
                             elif act == "deactivate":
-                                deactivate()
-                                ok, note = True, "Licence removed from this machine."
+                                note = await asyncio.to_thread(deactivate)
+                                ok = True
                             else:
                                 ok, note = False, "Unknown licence action."
                         except Exception as exc:

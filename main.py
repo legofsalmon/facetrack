@@ -274,6 +274,9 @@ def main(argv=None) -> int:
                   flush=True)
 
     pipeline = Pipeline(args, params, web_enabled=not args.no_web)
+    # shop licences check in with letissier.ie daily, off the startup path
+    from yewee.licensing import start_check_ins
+    start_check_ins()
     pipeline.on_source_change = lambda spec: settings.save(source=spec)
 
     panel_url = None

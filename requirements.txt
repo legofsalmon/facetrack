@@ -8,6 +8,10 @@ fastapi
 uvicorn
 websockets
 
+# CA certificates for activating shop licences over HTTPS: a packaged
+# Python on macOS has no system bundle of its own
+certifi
+
 # Real camera names in the source picker (Windows/DirectShow)
 pygrabber; sys_platform == "win32"
 

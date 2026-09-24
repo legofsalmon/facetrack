@@ -649,6 +649,281 @@ def _():
     assert hasattr(admin, "build_app") and hasattr(admin, "vendor_dir")
 
 
+# ---- shop licences (letissier.ie) ----------------------------------------
+# The vectors are the shop's own (letissier.ie clients/vectors.json, copied
+# into tests/), signed with a test key they carry. Every SDK the shop ships
+# agrees on them, so Yewee's verifier has to as well.
+
+def _shop_vectors():
+    import json
+    with open(os.path.join(ROOT, "tests", "letissier_vectors.json")) as f:
+        return json.load(f)
+
+
+class _ShopSandbox:
+    """A licensed build with its state in a temp dir: the given signing
+    key, a fixed machine, and no trial anchor outside the sandbox."""
+
+    def __init__(self, shop_key_hex, fingerprint="TEST-MACHINE-0001"):
+        from yewee import licensing as lic
+        self.lic, self.dir = lic, tempfile.TemporaryDirectory()
+        self.saved = {n: getattr(lic, n) for n in (
+            "VENDOR_PUBLIC_KEY", "SHOP_PUBLIC_KEY", "user_data_dir",
+            "_secondary_anchor", "shop_fingerprint", "_post", "_held_this_run")}
+        d = Path(self.dir.name)
+        lic.VENDOR_PUBLIC_KEY = "00" * 32          # licensing switched on
+        lic.SHOP_PUBLIC_KEY = shop_key_hex
+        lic.user_data_dir = lambda: d
+        lic._secondary_anchor = lambda: d / "anchor"
+        lic.shop_fingerprint = lambda: fingerprint
+        lic._held_this_run = False
+        self.fingerprint = fingerprint
+
+    def restore(self):
+        for n, v in self.saved.items():
+            setattr(self.lic, n, v)
+        self.dir.cleanup()
+
+
+def _shop_token(secret, **over):
+    """Mint a token the way the service does: sign the ASCII of the
+    base64url payload segment."""
+    import json
+    import time as _t
+    from yewee import _ed25519 as ed, licensing as lic
+    now = int(_t.time())
+    claims = {"v": 1, "key": "LT-YEWE-K9HZ-NGVX-PHJB", "product": "yewee",
+              "edition": "standard", "customer": "c", "name": "Shop Buyer",
+              "seats": 2, "maintUntil": now + 3650 * 86400, "exp": now + 30 * 86400,
+              "machine": lic.shop_machine_hash("TEST-MACHINE-0001"),
+              "mode": "online", "iat": now, "jti": "j"}
+    claims.update(over)
+    seg = lic._b64e(json.dumps(claims, separators=(",", ":")).encode())
+    return f"{seg}.{lic._b64e(ed.sign(secret, seg.encode()))}"
+
+
+@run("shop licences: the shop's published vectors agree")
+def _():
+    from yewee import licensing as lic
+    v = _shop_vectors()
+    key, fp, t = v["publicKeyHex"], v["fingerprint"], v["tokens"]
+
+    def check(tok, build=v["claims"]["iat"], now=v["now"], machine=fp):
+        # the vectors are issued for vizz; Yewee's own product is checked below
+        return lic.check_token(tok, machine, build, now, key, product="vizz")[0]
+
+    assert lic.shop_machine_hash(fp) == v["machineHash"]
+    assert check(t["valid"]) == lic.ACTIVE
+    for bad in ("tampered", "wrongKey", "malformed"):
+        assert check(t[bad]) == lic.INVALID, f"{bad} verified"
+    for row in v["entitlement"]:
+        assert check(t["valid"], build=row["buildDate"]) == row["expect"], row["why"]
+    for row in v["lease"]:
+        assert check(t["valid"], now=row["at"]) == row["expect"], row["why"]
+    for row in v["trialLease"]:
+        assert check(t["validTrial"], now=row["at"]) == row["expect"], row["why"]
+    assert check(t["valid"], machine="SOME-OTHER-MACHINE") == lic.WRONG_MACHINE
+    # the lease lapses AT exp, as in the SDK and Light, not a second later
+    exp = v["claims"]["exp"]
+    assert check(t["valid"], now=exp - 1) == lic.ACTIVE
+    assert check(t["valid"], now=exp) == lic.CHECK_IN_REQUIRED
+    # a correctly signed licence for another of the studio's products is not
+    # a Yewee licence
+    assert lic.check_token(t["valid"], fp, 0, v["now"], key)[0] == lic.INVALID
+
+
+@run("shop licences: the studio's signing key is compiled in")
+def _():
+    from yewee import licensing as lic
+    assert lic.SHOP_PUBLIC_KEY == \
+        "1fca6c21f2eb7963fd646272a731a41a191d3a4cda839e295c5cda67978fcc85"
+    assert lic.SHOP_PRODUCT == "yewee"
+
+
+@run("shop keys: typos and other products are caught before the network")
+def _():
+    from yewee import licensing as lic
+    # real keys, made by the shop's own generateKey
+    assert lic.shop_key_problem("LT-YEWE-K9HZ-NGVX-PHJB") == ""
+    assert lic.shop_key_problem("lt-yewe-2z66-z1c0-awjv") == ""
+    assert lic.shop_key_problem(" YEWE-2Z66-Z1CO-AWJV ") == "", "O read as 0"
+    assert lic.normalise_shop_key("1t-yewe-2z66-z1c0-awjv") == "LT-YEWE-2Z66-Z1C0-AWJV"
+    assert "typo" in lic.shop_key_problem("LT-YEWE-K9HZ-NGVX-PHJC")
+    assert "Light" in lic.shop_key_problem("LT-11GH-2NXS-Q2KF-HTHQ")
+    assert "Vizz" in lic.shop_key_problem("LT-V1ZZ-6W2S-40PQ-CNCM")
+    assert "doesn't look like" in lic.shop_key_problem("hello@example.com")
+
+
+@run("shop licences: what each status costs, and YW1 keys still work")
+def _():
+    import secrets as _s
+    import time as _t
+    from yewee import _ed25519 as ed
+    secret = _s.token_bytes(32)
+    box = _ShopSandbox(ed.public_key(secret).hex())
+    lic = box.lic
+    try:
+        def with_token(**over):
+            lic._write_shop({"key": "LT-YEWE-K9HZ-NGVX-PHJB",
+                             "token": _shop_token(secret, **over)})
+            return lic.status()
+
+        st = with_token()
+        assert st["state"] == "licensed" and st["source"] == "shop", st
+        assert st["name"] == "Shop Buyer" and not st["note"]
+        assert not lic.is_blocked(st)
+
+        # a lapsed lease only asks for a check-in
+        st = with_token(exp=int(_t.time()) - 60)
+        assert st["state"] == "licensed" and "checked in" in st["note"], st
+
+        # an ended update window costs newer builds, never this one
+        saved_build = lic.BUILD_DATE
+        lic.BUILD_DATE = int(_t.time())
+        try:
+            st = with_token(maintUntil=int(_t.time()) - 86400)
+            assert st["state"] == "licensed" and "updates ran" in st["note"], st
+        finally:
+            lic.BUILD_DATE = saved_build
+
+        # a token copied from another machine unlocks nothing
+        lic._held_this_run = False
+        st = with_token(machine=lic.shop_machine_hash("ANOTHER-MACHINE"))
+        assert st["state"] == "trial" and "another machine" in st["note"], st
+
+        # a token for another product unlocks nothing
+        st = with_token(product="vizz")
+        assert st["state"] == "trial", st
+
+        # a shop trial that ran out falls back to the app's own trial clock
+        st = with_token(edition="trial", exp=int(_t.time()) - 1)
+        assert st["state"] == "trial" and "trial has ended" in st["note"], st
+
+        # without a shop licence, a YW1 key licenses the machine as before
+        lic._shop_path().unlink()
+        payload = {"v": 1, "p": "yewee", "e": "pro", "n": "Old Buyer",
+                   "i": "2026-07-28", "k": "abc123"}
+        vendor = _s.token_bytes(32)
+        lic.VENDOR_PUBLIC_KEY = ed.public_key(vendor).hex()
+        ok, _msg = lic.activate(lic.encode_key(payload, vendor))
+        assert ok, _msg
+        st = lic.status()
+        assert st["state"] == "licensed" and st["source"] == "yw1", st
+        assert st["name"] == "Old Buyer"
+    finally:
+        box.restore()
+
+
+@run("shop licences: a refund ends the licence at the next launch, not mid-show")
+def _():
+    import secrets as _s
+    from yewee import _ed25519 as ed
+    secret = _s.token_bytes(32)
+    box = _ShopSandbox(ed.public_key(secret).hex())
+    lic = box.lic
+    try:
+        lic._write_shop({"key": "LT-YEWE-K9HZ-NGVX-PHJB",
+                         "token": _shop_token(secret)})
+        assert lic.status()["state"] == "licensed"          # the show starts
+
+        def refused(path, body, timeout=15.0):
+            raise lic.ShopError("revoked", "This licence has been revoked.")
+        lic._post = refused
+        assert "ended" in lic.check_in()
+
+        st = lic.status()
+        assert st["state"] == "licensed", "a revoked licence must not stop a running show"
+        assert "keeps running" in st["note"]
+
+        lic._held_this_run = False                          # the next launch
+        st = lic.status()
+        assert st["state"] != "licensed" and "revoked" in st["note"], st
+
+        # a network failure is never a licensing failure
+        lic._write_shop({"key": "LT-YEWE-K9HZ-NGVX-PHJB",
+                         "token": _shop_token(secret)})
+
+        def offline(path, body, timeout=15.0):
+            raise lic.ShopError("network", "Couldn't reach letissier.ie.")
+        lic._post = offline
+        assert "keeping the stored licence" in lic.check_in()
+        lic._held_this_run = False
+        assert lic.status()["state"] == "licensed"
+    finally:
+        box.restore()
+
+
+@run("shop licences: activation, check-in and release over the wire")
+def _():
+    import secrets as _s
+    from yewee import _ed25519 as ed
+    secret = _s.token_bytes(32)
+    box = _ShopSandbox(ed.public_key(secret).hex())
+    lic = box.lic
+    calls = []
+    try:
+        def service(path, body, timeout=15.0):
+            calls.append((path, body))
+            if path == "/api/licence/deactivate":
+                return {"ok": True}
+            return {"ok": True, "token": _shop_token(secret),
+                    "machine": lic.shop_machine_hash(body["machine"])}
+        lic._post = service
+
+        ok, msg = lic.activate(" lt-yewe-k9hz-ngvx-phjb ")
+        assert ok and "Shop Buyer" in msg, msg
+        path, body = calls[-1]
+        assert path == "/api/licence/activate"
+        assert body["key"] == "LT-YEWE-K9HZ-NGVX-PHJB", "key sent in canonical form"
+        # the raw fingerprint goes on the wire; the service hashes it
+        assert body["machine"] == box.fingerprint
+        assert lic.status()["state"] == "licensed"
+
+        assert lic.check_in() == "checked in"
+        assert calls[-1][0] == "/api/licence/heartbeat"
+        assert calls[-1][1] == {"key": "LT-YEWE-K9HZ-NGVX-PHJB",
+                                "machine": box.fingerprint}
+
+        msg = lic.deactivate()
+        assert calls[-1][0] == "/api/licence/deactivate" and "released" in msg
+        assert not lic._shop_path().exists()
+        assert lic.status()["state"] != "licensed"
+
+        # a service that recorded a different machine: refuse, store nothing
+        lic._post = lambda p, b, timeout=15.0: {
+            "ok": True, "token": _shop_token(secret), "machine": "0" * 32}
+        ok, msg = lic.activate("LT-YEWE-K9HZ-NGVX-PHJB")
+        assert not ok and "Nothing was stored" in msg, msg
+        assert not lic._shop_path().exists()
+
+        # no network: say how to activate offline, with the request code
+        def offline(path, body, timeout=15.0):
+            raise lic.ShopError("network", "Couldn't reach letissier.ie.")
+        lic._post = offline
+        ok, msg = lic.activate("LT-YEWE-K9HZ-NGVX-PHJB")
+        assert not ok and box.fingerprint in msg and "offline" in msg, msg
+
+        # a typo never reaches the service
+        ok, msg = lic.activate("LT-YEWE-K9HZ-NGVX-PHJC")
+        assert not ok and "typo" in msg
+
+        # the service's own refusal is passed on as it words it
+        def no_seats(path, body, timeout=15.0):
+            raise lic.ShopError("no_seats", "All 2 seats are in use.")
+        lic._post = no_seats
+        assert lic.activate("LT-YEWE-K9HZ-NGVX-PHJB") == (False, "All 2 seats are in use.")
+
+        # offline activation: the licence pasted from the account page
+        ok, msg = lic.activate(_shop_token(secret, mode="offline"))
+        assert ok, msg
+        assert lic._read_shop()["key"] == "LT-YEWE-K9HZ-NGVX-PHJB", "key kept for check-ins"
+        ok, msg = lic.activate(_shop_token(secret,
+                               machine=lic.shop_machine_hash("typed-differently")))
+        assert not ok and box.fingerprint in msg, "say what the request code should be"
+    finally:
+        box.restore()
+
+
 @run("edition: GPL-only models are excluded from distribution builds")
 def _():
     import importlib
