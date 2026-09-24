@@ -26,7 +26,7 @@ from yewee.pipeline import Pipeline
 
 DEFAULTS = dict(detector="auto", out_fps=30.0, loop_file=True,
                 det_threshold=0.5, det_size=640, detect_every=1, min_face=0,
-                max_misses=15, emotion_enabled=True, emotion_budget=4,
+                max_misses=15, emotion_enabled=False, emotion_budget=4,
                 show_ids=True, show_stats=True, overlay_color="",
                 clean_main=False, flip=False,
                 cap_format="1280x720@30", cap_backend="any",
@@ -113,9 +113,12 @@ def parse_args(argv=None):
     web.add_argument("--web-host", default="0.0.0.0",
                      help="control panel bind address (default: all interfaces)")
     web.add_argument("--web-port", type=int, default=8089, help="control panel port")
-    web.add_argument("--pin", default="",
-                     help="require this PIN in the control panel (also settable as "
-                          '"pin" in settings.json)')
+    web.add_argument("--pin", default=None,
+                     help="the PIN other devices must give the control panel, kept "
+                          "for next time; 'none' turns it off (also kept). Default: "
+                          "the saved PIN, or four random digits made on first run "
+                          "(\"pin\" in settings.json). The machine itself never "
+                          "needs it")
 
     p.add_argument("--doctor", action="store_true", help="run the self-check and exit")
     p.add_argument("--max-frames", type=int, default=0, help="stop after N frames (0 = run forever)")
@@ -173,7 +176,11 @@ def build_params(args, saved_params: dict) -> LiveParams:
         detect_every=rv(args.detect_every, "detect_every"),
         min_face=rv(args.min_face, "min_face"),
         max_misses=rv(args.max_misses, "max_misses"),
-        emotion_enabled=False if args.no_emotion else saved_params.get("emotion_enabled", True),
+        # Off unless the operator switches it on: the product page promises
+        # "expression labels, if switched on", and inferring emotions from
+        # faces is a regulated use in the EU (see the release review).
+        emotion_enabled=False if args.no_emotion
+                        else saved_params.get("emotion_enabled", DEFAULTS["emotion_enabled"]),
         emotion_budget=rv(args.emotion_budget, "emotion_budget"),
         show_ids=False if args.no_ids else saved_params.get("show_ids", True),
         show_stats=False if args.no_stats else saved_params.get("show_stats", True),
@@ -249,6 +256,9 @@ def _start_watchdog(pipeline) -> None:
                     and time.monotonic() - pipeline.heartbeat > 30):
                 print("[yewee] watchdog: pipeline stalled for 30s — "
                       "exiting so the launcher can restart", flush=True)
+                from yewee import crashguard
+                crashguard.record_hang("The pipeline stopped responding for 30 "
+                                       "seconds and the watchdog restarted yewee")
                 os._exit(3)
     threading.Thread(target=watch, daemon=True, name="yewee-watchdog").start()
 
@@ -283,6 +293,12 @@ def main(argv=None) -> int:
     from yewee.logging_setup import setup as setup_logging
     setup_logging()
 
+    # Follow this run (crash marker, faulthandler, exception hooks) and learn
+    # whether the last one ended badly. Its settings come back below exactly
+    # as on any launch; the report on it is only offered, never sent unasked.
+    from yewee import app_version, crashguard
+    previous_crash = crashguard.begin(app_version())
+
     saved = settings.load()
     params = build_params(args, saved["params"])
     # Apply the CPU budget before any model loads — ONNX Runtime bakes its
@@ -291,6 +307,22 @@ def main(argv=None) -> int:
     limit_threads(params.snapshot()["limit_cpu"])
     if args.source is None:
         args.source = saved["source"] or "0"
+
+    # Crash reports: names of sources and custom feed names never leave the
+    # machine (the scrubber replaces them), and the report on a bad last run
+    # is queued only if sending is switched on — otherwise the panel asks.
+    from yewee import reporting
+    reporting.add_secrets(saved["source"], args.source)
+    # The panel PIN: on unless the operator turned it off, since anyone on a
+    # venue's Wi-Fi could otherwise change or quit the show. Printed once in
+    # the banner and shown on the machine's own panel, and scrubbed from
+    # reports (including the one about the last run, built just below).
+    panel_pin, _ = settings.panel_pin(args.pin)
+    reporting.add_pin(panel_pin, saved["pin"])
+    for custom in (args.ndi_name, args.ndi_overlay):
+        if custom and not custom.startswith("Yewee"):
+            reporting.add_secrets(custom)
+    crash_report = reporting.handle_previous_session(previous_crash)
 
     if sys.platform == "darwin":
         # First-ever run: put the macOS camera prompt up now and wait for the
@@ -310,27 +342,41 @@ def main(argv=None) -> int:
                   flush=True)
 
     pipeline = Pipeline(args, params, web_enabled=not args.no_web)
-    pipeline.on_source_change = lambda spec: settings.save(source=spec)
+    # shop licences check in with letissier.ie daily, off the startup path
+    from yewee.licensing import start_check_ins
+    start_check_ins()
+    def _source_changed(spec: str) -> None:
+        settings.save(source=spec)
+        reporting.add_secrets(spec)
+
+    pipeline.on_source_change = _source_changed
+    # errors yewee recovers from are reported only when sending is on
+    pipeline.on_frame_error = reporting.note_nonfatal
+    crashguard.on_thread_exception = reporting.note_nonfatal
+    reporting.flush_in_background(delay=5.0)    # consented reports, off the startup path
 
     panel_url = None
     web_server = None
-    panel_pin = args.pin or saved["pin"]
+    lan = _lan_ip() if not args.no_web and args.web_host == "0.0.0.0" else None
+    phone_url = f"http://{lan}:{args.web_port}" if lan else None
     if not args.no_web:
         from yewee.webui import create_app, start_in_thread
         app = create_app(pipeline, params,
                          on_params_change=settings.save_debounced,
-                         pin=panel_pin)
+                         pin=panel_pin, phone_url=phone_url)
         web_server = start_in_thread(app, args.web_host, args.web_port)
         panel_url = f"http://localhost:{args.web_port}"
 
-    print("\n  yewee is running")
+    print(f"\n  yewee {app_version()} is running")
     if panel_url:
-        lan = _lan_ip()
-        extra = f"   (from other devices: http://{lan}:{args.web_port})" \
-            if lan and args.web_host == "0.0.0.0" else ""
+        extra = f"   (from other devices: {phone_url})" if phone_url else ""
         print(f"  Control panel : {panel_url}{extra}")
         if panel_pin:
-            print("  Panel PIN     : required (set via --pin / settings.json)")
+            print(f"  Panel PIN     : {panel_pin}   (other devices ask for it once;"
+                  " --pin to change, --pin none to turn off)")
+        else:
+            print("  Panel PIN     : off — anyone on this network can use the panel"
+                  " (--pin to set one)")
     p0 = params.snapshot()
     notes = {"program": "", "overlay": "  [graphics on alpha]",
              "faces": "  [cutout on alpha]", "mask": "  [matte]"}
@@ -353,6 +399,15 @@ def main(argv=None) -> int:
             from yewee.capture import camera_permission_holder
             print("  ! If this is a permissions issue: System Settings > Privacy & Security"
                   f" > Camera, allow {camera_permission_holder()}, then restart.")
+    if previous_crash:
+        print(f"\n  ! yewee closed unexpectedly last time ({previous_crash['kind']}): "
+              f"{previous_crash['summary'][:160]}"
+              "\n  ! Your source, feeds and settings have been restored.")
+        if crash_report == "queued":
+            print("  ! A crash report will be sent (\"Send crash reports "
+                  "automatically\" is on).")
+        elif crash_report == "prompt" and panel_url:
+            print("  ! The control panel asks whether to send a crash report.")
     print("  Press Ctrl-C to stop.\n", flush=True)
 
     if panel_url and not args.no_browser:
@@ -365,12 +420,17 @@ def main(argv=None) -> int:
 
     signal.signal(signal.SIGINT, _stop)
     signal.signal(signal.SIGTERM, _stop)
+    if hasattr(signal, "SIGHUP"):
+        # closing the Terminal window: a deliberate quit, not a crash
+        signal.signal(signal.SIGHUP, _stop)
+    crashguard.watch_console_close(pipeline.stop)   # the Windows equivalent
 
     if not args.max_frames:  # not for benchmarks/tests
         _keep_awake()
         _start_watchdog(pipeline)
 
     pipeline.run()
+    crashguard.end_clean()      # everything after this is a deliberate exit
 
     if pipeline.restart_requested:
         # Relaunch ourselves with the same command line (panel "Restart").

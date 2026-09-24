@@ -15,7 +15,8 @@ jobs:
           python-version: "3.12"
       - name: System libraries for OpenCV
         run: sudo apt-get update && sudo apt-get install -y libgl1 libglib2.0-0
+      # fastapi (from requirements.txt) so the panel's PIN checks run here too
       - name: Install minimal dependencies
-        run: pip install numpy opencv-python
+        run: pip install numpy opencv-python fastapi
       - name: Smoke tests
         run: python -m tests.smoke
