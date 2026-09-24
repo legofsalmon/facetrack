@@ -1686,6 +1686,237 @@ def _():
         assert not missing, f"{launcher} waits for models not in the repo: {missing}"
 
 
+@run("panel PIN: made on first run and kept; --pin wins; turning it off is kept")
+def _():
+    import secrets as _secrets
+    from main import parse_args
+    from yewee import settings
+    assert parse_args([]).pin is None, "no --pin must mean 'use the saved one'"
+    with tempfile.TemporaryDirectory() as td:
+        old, real = settings.SETTINGS_PATH, _secrets.randbelow
+        settings.SETTINGS_PATH = Path(td) / "settings.json"
+        drawn = []
+        try:
+            _secrets.randbelow = lambda n: drawn.append(n) or 7
+            pin, origin = settings.panel_pin(None)
+            assert (pin, origin) == ("0007", "new"), (pin, origin)
+            assert drawn == [10_000], "four digits from secrets, not random"
+        finally:
+            _secrets.randbelow = real
+        try:
+            raw = lambda: json.loads(settings.SETTINGS_PATH.read_text())
+            assert raw()["pin"] == "0007", "a first-run PIN is saved"
+            assert settings.panel_pin(None) == ("0007", "saved"), "and reused"
+            for _ in range(20):
+                assert re.fullmatch(r"\d{4}", settings.new_pin())
+            # a hand-written or older PIN wins over a new one
+            settings.SETTINGS_PATH.write_text('{"pin": 4721, "params": {"flip": true}}')
+            assert settings.panel_pin(None) == ("4721", "saved")
+            # --pin wins, and is kept for the next launch
+            assert settings.panel_pin(" 2468 ") == ("2468", "cli")
+            assert settings.panel_pin(None) == ("2468", "saved")
+            assert raw()["params"] == {"flip": True}, "other settings untouched"
+            # turning it off is deliberate and stays off
+            assert settings.panel_pin("none") == ("", "off")
+            assert raw()["pin"] == "none"
+            assert settings.panel_pin(None) == ("", "off"), "off must persist"
+            assert settings.panel_pin("OFF") == ("", "off")
+            # an empty value is not "off": it is a first run
+            settings.SETTINGS_PATH.write_text('{"pin": ""}')
+            pin, origin = settings.panel_pin(None)
+            assert origin == "new" and re.fullmatch(r"\d{4}", pin)
+            # the PIN stays a launch setting, never a panel param
+            from yewee.params import SPEC
+            assert "pin" not in SPEC
+        finally:
+            settings.SETTINGS_PATH = old
+
+
+class _StubPipeline:
+    """Just enough of Pipeline for the web app: each socket gets one tick,
+    then sees the pipeline stopped, so its loop ends."""
+
+    def __init__(self):
+        self._stop_next = False
+        self.source_spec = "0"
+        self.preview_clients = 0
+        self.args = None
+
+    @property
+    def stopped(self):
+        stop, self._stop_next = self._stop_next, False
+        return stop
+
+    def licence(self):
+        return {"state": "trial"}
+
+    def get_stats(self):
+        self._stop_next = True
+        return {"fps": 30}
+
+
+def _asgi_scope(kind, path, peer, host, origin=None):
+    from urllib.parse import urlsplit
+    parts = urlsplit(path)
+    headers = [(b"host", host.encode())]
+    if origin:
+        headers.append((b"origin", origin.encode()))
+    scope = {"type": kind, "asgi": {"version": "3.0"}, "http_version": "1.1",
+             "scheme": "http" if kind == "http" else "ws", "path": parts.path,
+             "raw_path": parts.path.encode(), "query_string": parts.query.encode(),
+             "root_path": "", "headers": headers, "client": (peer, 50123),
+             "server": ("127.0.0.1", 8089)}
+    if kind == "http":
+        scope["method"] = "GET"
+    else:
+        scope["subprotocols"] = []
+    return scope
+
+
+def _asgi_get(app, path, peer="192.168.1.50", host="192.168.1.20:8089", origin=None):
+    """GET through the app itself, from a chosen peer address: no socket,
+    and no test-client dependency (CI installs only what the app needs)."""
+    import asyncio
+    sent = []
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        sent.append(message)
+
+    asyncio.run(app(_asgi_scope("http", path, peer, host, origin), receive, send))
+    status = next(m["status"] for m in sent if m["type"] == "http.response.start")
+    body = b"".join(m.get("body", b"") for m in sent if m["type"] == "http.response.body")
+    return status, body.decode()
+
+
+def _asgi_ws(app, peer="192.168.1.50", host="192.168.1.20:8089", origin=None, auth=None):
+    """Open /ws from a peer, answer an auth request with `auth` (None = say
+    nothing), and return (messages received, close code or None)."""
+    import asyncio
+    got, closed = [], []
+
+    async def go():
+        inbox = asyncio.Queue()
+        await inbox.put({"type": "websocket.connect"})
+
+        async def receive():
+            return await inbox.get()
+
+        async def send(message):
+            if message["type"] == "websocket.send":
+                msg = json.loads(message["text"])
+                got.append(msg)
+                if msg["type"] == "auth_required":
+                    if auth is None:
+                        await inbox.put({"type": "websocket.disconnect", "code": 1000})
+                    else:
+                        await inbox.put({"type": "websocket.receive",
+                                         "text": json.dumps({"type": "auth", "data": auth})})
+            elif message["type"] == "websocket.close":
+                closed.append(message.get("code"))
+
+        await asyncio.wait_for(
+            app(_asgi_scope("websocket", "/ws", peer, host, origin), receive, send), 10)
+
+    asyncio.run(go())
+    return got, (closed[0] if closed else None)
+
+
+@run("panel PIN: other devices need it, the machine itself does not")
+def _():
+    try:
+        import fastapi  # noqa: F401
+    except ImportError:
+        print("        (fastapi not installed — skipped)")
+        return
+    from yewee import webui
+    from yewee.params import LiveParams
+    from main import DEFAULTS
+
+    def app_with(pin):
+        return webui.create_app(_StubPipeline(), LiveParams(**DEFAULTS), pin=pin,
+                                phone_url="http://192.168.1.20:8089")
+
+    app = app_with("4821")
+    # another device: refused without the PIN or with a wrong one, let in with it
+    assert _asgi_get(app, "/logs")[0] == 401
+    assert _asgi_get(app, "/logs?pin=1111")[0] == 401
+    assert _asgi_get(app, "/logs?pin=4821")[0] == 200
+    assert _asgi_get(app, "/sources?x=1&pin=%C3%A9")[0] == 401, "odd input is a 401, not a 500"
+    assert _asgi_get(app, "/")[0] == 200, "the page itself loads, to ask for the PIN"
+    assert _asgi_get(app, "/notices")[0] == 200
+    got, code = _asgi_ws(app)
+    assert code == 4001 and [m["type"] for m in got] == ["auth_required"], (got, code)
+    got, code = _asgi_ws(app, auth="1234")
+    assert code == 4001 and not any(m["type"] == "tick" for m in got), "wrong PIN got in"
+    got, _ = _asgi_ws(app, auth="4821")
+    ticks = [m for m in got if m["type"] == "tick"]
+    assert ticks, got
+    assert "phones" not in ticks[0], "the PIN is shown only on the machine itself"
+
+    # the machine itself: no PIN asked, and it is told the PIN to read off
+    for peer, host in (("127.0.0.1", "localhost:8089"), ("::1", "[::1]:8089"),
+                       ("127.0.0.1", "127.0.0.1:8089")):
+        assert _asgi_get(app, "/logs", peer=peer, host=host)[0] == 200, (peer, host)
+    got, code = _asgi_ws(app, peer="127.0.0.1", host="localhost:8089",
+                         origin="http://localhost:8089")
+    assert [m["type"] for m in got] == ["tick"], got
+    assert got[0]["phones"] == {"pin": "4821", "url": "http://192.168.1.20:8089"}
+    # ...but not a page from elsewhere in that browser, or a rebound DNS name
+    got, code = _asgi_ws(app, peer="127.0.0.1", host="localhost:8089",
+                         origin="https://evil.example")
+    assert code == 4001 and [m["type"] for m in got] == ["auth_required"], got
+    assert _asgi_get(app, "/logs", peer="127.0.0.1", host="evil.example:8089")[0] == 401
+
+    # four digits cannot be walked through: five wrong and the address waits
+    now = [1000.0]
+    app.state.pin_gate._clock = lambda: now[0]
+    for guess in ("0000", "0001", "0002", "0003", "0004"):
+        assert _asgi_get(app, f"/logs?pin={guess}", peer="192.168.1.66")[0] == 401
+    assert _asgi_get(app, "/logs?pin=4821", peer="192.168.1.66")[0] == 429
+    got, code = _asgi_ws(app, peer="192.168.1.66", auth="4821")
+    assert code == 4002 and got[0]["type"] == "auth_locked", got
+    assert _asgi_get(app, "/logs?pin=4821")[0] == 200, "other devices are unaffected"
+    assert _asgi_get(app, "/logs", peer="127.0.0.1", host="localhost:8089")[0] == 200
+    now[0] += webui.LOCKOUT_SECONDS + 1
+    assert _asgi_get(app, "/logs?pin=4821", peer="192.168.1.66")[0] == 200
+
+    # PIN turned off: open to everyone, and the machine's panel says so
+    open_app = app_with("")
+    assert _asgi_get(open_app, "/logs")[0] == 200
+    got, _ = _asgi_ws(open_app)
+    assert [m["type"] for m in got] == ["tick"]
+    got, _ = _asgi_ws(open_app, peer="127.0.0.1", host="localhost:8089")
+    assert got[0]["phones"]["pin"] == ""
+
+
+@run("reports: the panel PIN never leaves the machine")
+def _():
+    box = _ReportsSandbox()
+    try:
+        r = box.r
+        r.add_pin("4821", "none", "12")
+        text = ("  Panel PIN     : 4821   (other devices ask for it once)\n"
+                "GET /logs?x=1&pin=4821 HTTP/1.1\n"
+                'settings {"pin": "4821", "source": "0"}\n'
+                "ValueError: bad value 4821\n"
+                "auth pin=12 failed\n"
+                'File "main.py", line 482, in main; None of 14821')
+        p = r.crash_payload("exception", text, text, note="pin is 4821")
+        blob = json.dumps(p)
+        assert "4821" not in blob.replace("14821", ""), blob
+        assert "pin=12" not in blob, "a short PIN is still caught in a pin= field"
+        assert "line 482" in blob and "14821" in blob and "None" in blob, \
+            "numbers that are not the PIN survive"
+        # feedback is only what the person typed: no field carries the PIN
+        ok, _ = r.submit_feedback("idea", "more presets", public=False)
+        assert ok and "4821" not in json.dumps(box.sent[-1][1])
+    finally:
+        box.restore()
+
+
 if FAILURES:
     print(f"\n{len(FAILURES)} test(s) failed: {', '.join(FAILURES)}")
     sys.exit(1)

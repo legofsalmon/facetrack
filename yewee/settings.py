@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import threading
 from pathlib import Path
 
@@ -46,29 +47,72 @@ def load() -> dict:
                          "overlay" if params.get("texture_overlay") else "program")
         known[{"program": "tex_program", "overlay": "tex_overlay",
                "faces": "tex_faces"}.get(src, "tex_program")] = True
+    pin = "" if data.get("pin") is None else str(data.get("pin")).strip()
     return {
         "params": known,
         "source": data.get("source") or None,
-        "pin": str(data.get("pin") or ""),
+        # the raw saved value; panel_pin() decides what it means
+        "pin": pin,
     }
 
 
 def _write(update: dict) -> None:
     with _lock:
-        current = _read_raw()  # keep unknown keys (e.g. a hand-added "pin")
+        current = _read_raw()  # keep keys this write does not touch
         if "params" in update:
             merged = current.get("params", {})
             merged.update(update["params"])
             current["params"] = merged
         for key, value in update.items():
             if key != "params":
-                current[key] = value     # "source", or a section such as "reports"
+                current[key] = value     # "source", "pin", or a section such as "reports"
         tmp = SETTINGS_PATH.with_suffix(".json.tmp")
         try:
             tmp.write_text(json.dumps(current, indent=2))
             os.replace(tmp, SETTINGS_PATH)
         except OSError:
             pass  # persistence is best-effort; never break the show over it
+
+
+#: What settings.json holds (and --pin takes) when the operator has turned
+#: the panel PIN off on purpose. A missing or empty "pin" is not "off": it
+#: is a first run, and gets a new PIN.
+PIN_OFF = "none"
+PIN_OFF_WORDS = {"none", "off"}
+
+
+def new_pin() -> str:
+    """Four random digits from the OS's CSPRNG (not random.random)."""
+    return f"{secrets.randbelow(10_000):04d}"
+
+
+def panel_pin(cli: str | None = None) -> tuple[str, str]:
+    """The PIN other devices must give the control panel, "" for none, and
+    where it came from ("cli", "saved", "new" or "off").
+
+    - ``--pin 4721`` sets the PIN and keeps it for next time;
+    - ``--pin none`` turns it off and keeps that (saved as "pin": "none");
+    - otherwise the PIN saved in settings.json;
+    - otherwise, on a first run, four random digits, saved.
+
+    A write that fails (read-only disk) still protects this run with the
+    PIN; the next launch just makes another one."""
+    if cli is not None and cli.strip():
+        value = cli.strip()
+        if value.lower() in PIN_OFF_WORDS:
+            _write({"pin": PIN_OFF})
+            return "", "off"
+        _write({"pin": value})
+        return value, "cli"
+    raw = _read_raw().get("pin")
+    saved = "" if raw is None else str(raw).strip()
+    if saved.lower() in PIN_OFF_WORDS:
+        return "", "off"
+    if saved:
+        return saved, "saved"
+    value = new_pin()
+    _write({"pin": value})
+    return value, "new"
 
 
 def save(params: dict | None = None, source: str | None = None) -> None:

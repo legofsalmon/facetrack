@@ -58,7 +58,10 @@ names. That's it.
 ### The control panel
 
 - Reachable from **any phone/laptop/tablet on the same network** — the
-  terminal window shows the address (e.g. `http://192.168.1.20:8089`).
+  terminal window and the top of the panel on the yewee machine show the
+  address (e.g. `http://192.168.1.20:8089`) and the **panel PIN**. Open the
+  address on the phone and type the PIN when it asks; it asks once per
+  phone.
 - **Presets** across the top: *Wide crowd*, *Mid crowd*, *Stage close-up*,
   *Power saver*. Start with one of these; fine-tune below if needed.
 - **Video source** lists every connected camera by name (webcams, capture
@@ -107,10 +110,22 @@ names. That's it.
   exactly what each toggle costs and what to switch off when the
   machine is tight. fps and load chips turn amber/red as they approach
   limits.
-- **PIN protection**: on a shared production network, launch with
-  `--pin 4721` (or add `"pin": "4721"` to `settings.json`). The panel then
-  asks once per browser; without it, controls, preview and source listing
-  are locked. No PIN set = open panel (fine at home).
+- **PIN protection is on by default.** The first launch makes a random
+  four-digit PIN and keeps it in `settings.json`; the terminal prints it
+  (`Panel PIN : 4821`) and the panel on the yewee machine shows it at the
+  top. Other devices must enter it before they can see the preview, the
+  log or the sources, or change anything; the yewee machine itself never
+  needs it. Five wrong PINs from one device lock that device out for a
+  minute.
+  - **Change it:** launch once with `--pin 4721`, or set `"pin": "4721"`
+    in `settings.json`. It is kept for next time.
+  - **Turn it off** (a closed network at home): launch once with
+    `--pin none`, or set `"pin": "none"`. That is kept too. Anyone on the
+    network can then change or quit the show.
+  - `settings.json` is next to `main.py` when running from source, and in
+    the app's data folder in the installed app (macOS: `~/Library/Application
+    Support/yewee/`, Windows: `%APPDATA%\yewee\`). Delete the `"pin"` line
+    for a new random PIN.
 - If the input dies or is missing, the app keeps running and shows a
   NO INPUT slate — fix the source from the panel.
 

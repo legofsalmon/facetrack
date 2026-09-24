@@ -19,7 +19,7 @@ The contract is letissier.ie's intake API (POST /api/reports/crash and
 
 A crash report never carries a licence key, an e-mail address, a name, a
 document or source path, another device's IP address, NDI/Syphon/Spout
-source names, settings contents, camera frames or audio. The optional note
+source names, the panel PIN, settings contents, camera frames or audio. The optional note
 the operator types is stored by the studio and never posted publicly.
 """
 from __future__ import annotations
@@ -64,6 +64,7 @@ _flush_lock = threading.Lock()
 _state: dict | None = None          # the "reports" section of settings.json
 _prompt: dict | None = None         # crash report waiting for the operator
 _secrets: set[str] = set()          # strings that must never leave the machine
+_pins: set[str] = set()             # the panel PIN (see add_pin)
 _nonfatal_seen: set[str] = set()
 
 
@@ -148,6 +149,17 @@ def add_secrets(*values) -> None:
                 _secrets.add(text)
 
 
+def add_pin(*pins) -> None:
+    """The panel PIN (this run's, and the saved one it replaced). Kept apart
+    from add_secrets, which ignores short and all-digit strings; a PIN is
+    replaced even as a bare number."""
+    with _lock:
+        _pins.update(p for p in (str(v or "").strip() for v in pins)
+                     # shorter than four, a bare number would eat line numbers;
+                     # "pin=12" is still caught by _PIN_FIELD
+                     if len(p) >= 4 and p.lower() not in settings.PIN_OFF_WORDS)
+
+
 _USER_PATH = re.compile(r"(?i)(/Users/|/home/|[A-Z]:[\\/]+(?:Users|Documents and Settings)[\\/]+)"
                         r"[^/\\\s\"'<>:]+")
 _URL_QUERY = re.compile(r"((?:https?|wss?|ftp|rtsp|rtmp|srt|udp)://[^\s?#\"'<>]*)[?#][^\s\"'<>]*")
@@ -160,6 +172,8 @@ _IPV4 = re.compile(r"(?<![\d.])(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}"
 _IPV6 = re.compile(r"(?<![\w:])(?:[0-9a-f]{1,4}:){2,7}[0-9a-f]{1,4}(?![\w:])", re.I)
 # lists of what is on the network or plugged in, as yewee's own errors
 # print them ("Visible sources: [...]", "connected now: [...]")
+# "pin=1234", "?pin=1234", '"pin": "1234"', "Panel PIN : 1234"
+_PIN_FIELD = re.compile(r"""(?i)(\bpin\b["']?\s*[:=]\s*["']?)[^\s"'&,;}]+""")
 _LISTED = re.compile(r"(?i)((?:visible sources|connected now):\s*)(\[[^\]]*\]|'[^']*'|\S+)")
 
 
@@ -181,10 +195,14 @@ def scrub(text: str, extra=()) -> str:
     out = _URL_AUTH.sub(r"\1", out)
     out = _URL_QUERY.sub(r"\1", out)
     out = _LISTED.sub(r"\1<redacted>", out)
+    out = _PIN_FIELD.sub(r"\1<redacted>", out)
     out = _LICENCE.sub("<licence>", out)
     out = _EMAIL.sub("<email>", out)
     with _lock:
         private = set(_secrets)
+        pins = sorted(_pins, key=len, reverse=True)
+    for pin in pins:
+        out = re.sub(r"(?<!\w)" + re.escape(pin) + r"(?!\w)", "<redacted>", out)
     try:
         import getpass
         private.add(getpass.getuser())
@@ -546,5 +564,6 @@ def _reset_for_tests() -> None:
     with _lock:
         _state = None
         _prompt = None
+        _pins.clear()
         _secrets.clear()
         _nonfatal_seen.clear()

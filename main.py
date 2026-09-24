@@ -106,9 +106,12 @@ def parse_args(argv=None):
     web.add_argument("--web-host", default="0.0.0.0",
                      help="control panel bind address (default: all interfaces)")
     web.add_argument("--web-port", type=int, default=8089, help="control panel port")
-    web.add_argument("--pin", default="",
-                     help="require this PIN in the control panel (also settable as "
-                          '"pin" in settings.json)')
+    web.add_argument("--pin", default=None,
+                     help="the PIN other devices must give the control panel, kept "
+                          "for next time; 'none' turns it off (also kept). Default: "
+                          "the saved PIN, or four random digits made on first run "
+                          "(\"pin\" in settings.json). The machine itself never "
+                          "needs it")
 
     p.add_argument("--doctor", action="store_true", help="run the self-check and exit")
     p.add_argument("--max-frames", type=int, default=0, help="stop after N frames (0 = run forever)")
@@ -274,6 +277,12 @@ def main(argv=None) -> int:
     # is queued only if sending is switched on — otherwise the panel asks.
     from yewee import reporting
     reporting.add_secrets(saved["source"], args.source)
+    # The panel PIN: on unless the operator turned it off, since anyone on a
+    # venue's Wi-Fi could otherwise change or quit the show. Printed once in
+    # the banner and shown on the machine's own panel, and scrubbed from
+    # reports (including the one about the last run, built just below).
+    panel_pin, _ = settings.panel_pin(args.pin)
+    reporting.add_pin(panel_pin, saved["pin"])
     for custom in (args.ndi_name, args.ndi_overlay):
         if custom and not custom.startswith("Yewee"):
             reporting.add_secrets(custom)
@@ -312,23 +321,26 @@ def main(argv=None) -> int:
 
     panel_url = None
     web_server = None
-    panel_pin = args.pin or saved["pin"]
+    lan = _lan_ip() if not args.no_web and args.web_host == "0.0.0.0" else None
+    phone_url = f"http://{lan}:{args.web_port}" if lan else None
     if not args.no_web:
         from yewee.webui import create_app, start_in_thread
         app = create_app(pipeline, params,
                          on_params_change=settings.save_debounced,
-                         pin=panel_pin)
+                         pin=panel_pin, phone_url=phone_url)
         web_server = start_in_thread(app, args.web_host, args.web_port)
         panel_url = f"http://localhost:{args.web_port}"
 
     print(f"\n  yewee {app_version()} is running")
     if panel_url:
-        lan = _lan_ip()
-        extra = f"   (from other devices: http://{lan}:{args.web_port})" \
-            if lan and args.web_host == "0.0.0.0" else ""
+        extra = f"   (from other devices: {phone_url})" if phone_url else ""
         print(f"  Control panel : {panel_url}{extra}")
         if panel_pin:
-            print("  Panel PIN     : required (set via --pin / settings.json)")
+            print(f"  Panel PIN     : {panel_pin}   (other devices ask for it once;"
+                  " --pin to change, --pin none to turn off)")
+        else:
+            print("  Panel PIN     : off — anyone on this network can use the panel"
+                  " (--pin to set one)")
     p0 = params.snapshot()
     notes = {"program": "", "overlay": "  [graphics on alpha]",
              "faces": "  [cutout on alpha]", "mask": "  [matte]"}

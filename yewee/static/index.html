@@ -185,6 +185,10 @@
                 word-break: break-word; max-height: 220px; overflow: auto;
                 background: var(--panel2); border-radius: 7px; padding: 8px; }
   a.quiet { color: var(--accent); text-decoration: none; }
+  #phones { display: none; margin: 0 0 14px; padding: 9px 14px; font-size: 12.5px;
+            overflow-wrap: anywhere; }
+  #phones b { color: var(--text); font-size: 14px; letter-spacing: .5px; }
+  #phones.open b { color: var(--warn); }
 </style>
 </head>
 <body>
@@ -199,6 +203,8 @@
     <div class="chip" title="total pipeline work vs the frame budget">load <b id="s-load">–</b>%</div>
   </div>
 </header>
+
+<div class="card" id="phones" title="shown only on the yewee machine itself"></div>
 
 <div class="card" id="crash-banner" style="display:none">
   <h2>Yewee closed unexpectedly last time</h2>
@@ -1120,6 +1126,26 @@
     setTimeout(() => { pv.src = "/preview.mjpg?t=" + Date.now() + pinQ(); }, 2000);
   });
 
+  // Only the machine's own panel is sent this: how a phone gets in.
+  function applyPhones(ph) {
+    const box = $("phones");
+    if (!ph) { box.style.display = "none"; return; }
+    box.textContent = "";
+    const add = (text, bold) => {
+      const el = document.createElement(bold ? "b" : "span");
+      el.textContent = text;
+      box.appendChild(el);
+    };
+    add(ph.url ? "Phones and other computers: " : "Other devices: ");
+    if (ph.url) { add(ph.url, true); add(" · "); }
+    if (ph.pin) { add("PIN "); add(ph.pin, true);
+                  add(" — asked for once per device; this machine doesn't need it"); }
+    else { add("no PIN", true);
+           add(" — anyone on this network can change or quit the show (start with --pin to set one)"); }
+    box.classList.toggle("open", !ph.pin);
+    box.style.display = "block";
+  }
+
   function connect() {
     const proto = location.protocol === "https:" ? "wss" : "ws";
     ws = new WebSocket(proto + "://" + location.host + "/ws");
@@ -1138,6 +1164,10 @@
         localStorage.removeItem("yewee_pin");
         pin = "";
         pvMsg.textContent = "Locked — enter the PIN";
+      } else if (e.code === 4002) {  // too many wrong PINs from this device
+        localStorage.removeItem("yewee_pin");
+        pin = "";
+        pvMsg.textContent = "Too many wrong PINs — wait a minute, then try again";
       } else {
         pvMsg.textContent = sentQuit
           ? "yewee has quit — start it again with the launcher on the machine"
@@ -1173,6 +1203,7 @@
           $("help-version").textContent = "v" + msg.version;
         }
         applyReports(msg.reports, msg.licence_offer);
+        applyPhones(msg.phones);
       }
       if (msg.type === "crash_prompt_result") {
         $("crash-msg").textContent = msg.message;

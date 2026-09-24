@@ -7,14 +7,26 @@
                      every ~0.5s (keeps multiple clients in sync)
 - GET  /preview.mjpg throttled MJPEG preview (~12 fps, 640px wide)
 
+The PIN: other devices give it once (the WebSocket's "auth" message, and
+?pin= on the plain GETs). The machine yewee runs on does not: a loopback
+peer that also asked for a loopback host name, from a loopback page, is
+let in without it and is the only client told the PIN, so the operator
+can read it off the screen. The host-name and Origin checks keep a web
+page open in that same browser from riding on the exemption. Five wrong
+PINs from one address refuse it for a minute, so four digits cannot be
+walked through.
+
 NOTE: no `from __future__ import annotations` here — the WebSocket type
 hint must be a real class (FastAPI resolves it for dependency injection,
 and the import lives inside create_app).
 """
 import asyncio
+import hmac
 import json
 import threading
+import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from . import app_version, reporting
 from .params import LiveParams
@@ -22,11 +34,87 @@ from .pipeline import Pipeline
 
 STATIC_DIR = Path(__file__).parent / "static"
 
+_LOOPBACK_PEERS = {"127.0.0.1", "::1", "::ffff:127.0.0.1"}
+_LOOPBACK_NAMES = {"localhost", "127.0.0.1", "::1"}
+MAX_WRONG_PINS = 5          # per address, before it is refused for a while
+LOCKOUT_SECONDS = 60
+
+
+def _hostname(netloc: str) -> str:
+    try:
+        return (urlsplit("//" + netloc).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def is_local(conn) -> bool:
+    """True for the panel opened on the yewee machine itself: the peer is
+    loopback, the Host header names loopback (not a rebound DNS name), and
+    any Origin is a loopback page (not another site's script)."""
+    client = getattr(conn, "client", None)
+    if client is None or client.host not in _LOOPBACK_PEERS:
+        return False
+    if _hostname(conn.headers.get("host", "")) not in _LOOPBACK_NAMES:
+        return False
+    origin = conn.headers.get("origin")
+    if origin is not None:
+        try:
+            parts = urlsplit(origin)
+        except ValueError:
+            return False
+        if (parts.hostname or "").lower() not in _LOOPBACK_NAMES:
+            return False
+    return True
+
+
+class PinGate:
+    """Checks a supplied PIN and throttles an address that keeps guessing."""
+
+    def __init__(self, pin: str, clock=time.monotonic):
+        self.pin = pin or ""
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._wrong: dict[str, int] = {}
+        self._until: dict[str, float] = {}
+
+    def locked_for(self, address: str) -> float:
+        with self._lock:
+            return max(0.0, self._until.get(address, 0.0) - self._clock())
+
+    def check(self, conn, supplied) -> tuple[int, str] | None:
+        """None when this connection may proceed, else (status, message).
+        An empty or missing PIN is only "PIN required", never a strike: a
+        phone asks for the preview before the person has typed anything."""
+        if not self.pin or is_local(conn):
+            return None
+        address = conn.client.host if conn.client else "?"
+        wait = self.locked_for(address)
+        if wait > 0:
+            return 429, f"Too many wrong PINs. Try again in {int(wait) + 1} s."
+        supplied = "" if supplied is None else str(supplied)
+        if not supplied:
+            return 401, "PIN required"
+        if hmac.compare_digest(supplied.encode("utf-8"), self.pin.encode("utf-8")):
+            with self._lock:
+                self._wrong.pop(address, None)
+            return None
+        with self._lock:
+            n = self._wrong.get(address, 0) + 1
+            if n >= MAX_WRONG_PINS:
+                self._wrong.pop(address, None)
+                self._until[address] = self._clock() + LOCKOUT_SECONDS
+                # the address, never what was typed
+                print(f"[yewee] panel: {MAX_WRONG_PINS} wrong PINs from {address}; "
+                      f"refusing it for {LOCKOUT_SECONDS} s", flush=True)
+            else:
+                self._wrong[address] = n
+        return 401, "Wrong PIN"
+
 
 def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None,
-               pin: str = ""):
-    import hmac
-
+               pin: str = "", phone_url: str | None = None):
+    """pin: what other devices must give ("" = none). phone_url: the address
+    phones use, shown with the PIN on the machine's own panel."""
     from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
     from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse
 
@@ -43,11 +131,14 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None,
             return str(lic.get("key") or "")
         return ""
 
-    def _pin_ok(request: Request) -> bool:
-        if not pin:
-            return True
-        supplied = request.query_params.get("pin", "")
-        return hmac.compare_digest(supplied, pin)
+    gate = PinGate(pin)
+    app.state.pin_gate = gate
+
+    def _refused(request: Request):
+        denied = gate.check(request, request.query_params.get("pin"))
+        if denied is None:
+            return None
+        return PlainTextResponse(denied[1], status_code=denied[0])
 
     @app.get("/")
     def index():
@@ -60,8 +151,9 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None,
         OS provides them) + NDI sources on the network (minus our own
         outputs). The camera the pipeline is using is reported without
         being re-opened."""
-        if not _pin_ok(request):
-            return PlainTextResponse("PIN required", status_code=401)
+        refused = _refused(request)
+        if refused is not None:
+            return refused
         current = pipeline.source_spec
         in_use = int(current) if current.isdigit() else None
         if current.lower().startswith("cam:"):
@@ -119,8 +211,9 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None,
 
     @app.get("/logs")
     def logs(request: Request):
-        if not _pin_ok(request):
-            return PlainTextResponse("PIN required", status_code=401)
+        refused = _refused(request)
+        if refused is not None:
+            return refused
         from .paths import log_path as _log_path
         log_path = _log_path()
         try:
@@ -131,8 +224,9 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None,
 
     @app.get("/preview.mjpg")
     def preview(request: Request):
-        if not _pin_ok(request):
-            return PlainTextResponse("PIN required", status_code=401)
+        refused = _refused(request)
+        if refused is not None:
+            return refused
         boundary = b"--frame"
 
         def gen():
@@ -155,17 +249,28 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None,
     @app.websocket("/ws")
     async def ws(sock: WebSocket):
         await sock.accept()
-        if pin:
+        local = is_local(sock)
+        if pin and not local:
+            address = sock.client.host if sock.client else "?"
+            wait = gate.locked_for(address)
+            if wait > 0:
+                await sock.send_text(json.dumps(
+                    {"type": "auth_locked", "seconds": int(wait) + 1}))
+                await sock.close(code=4002)
+                return
             await sock.send_text(json.dumps({"type": "auth_required"}))
             try:
                 msg = json.loads(await asyncio.wait_for(sock.receive_text(), timeout=60))
-            except (asyncio.TimeoutError, ValueError, WebSocketDisconnect):
+                supplied = msg.get("data") if msg.get("type") == "auth" else None
+            except (asyncio.TimeoutError, ValueError, AttributeError, WebSocketDisconnect):
                 await sock.close(code=4001)
                 return
-            if msg.get("type") != "auth" or not hmac.compare_digest(
-                    str(msg.get("data", "")), pin):
-                await sock.close(code=4001)
+            denied = gate.check(sock, "" if supplied is None else str(supplied))
+            if denied is not None:
+                await sock.close(code=4002 if denied[0] == 429 else 4001)
                 return
+        # Only the machine's own panel is told the PIN and the phone address.
+        phones = {"pin": pin, "url": phone_url} if local else None
         try:
             while not pipeline.stopped:
                 try:
@@ -256,6 +361,7 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None,
                     "version": app_version(),
                     "reports": reporting.panel_state(),
                     "licence_offer": bool(_licence_for_feedback()),
+                    **({"phones": phones} if phones else {}),
                 }))
         except WebSocketDisconnect:
             pass
