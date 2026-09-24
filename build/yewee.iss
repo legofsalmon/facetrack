@@ -1,6 +1,6 @@
 ; Inno Setup script for the yewee Windows installer.
 ;
-;   iscc /DVersion=1.3.0 build\yewee.iss
+;   iscc /DVersion=1.0.0 build\yewee.iss
 ;
 ; Expects the PyInstaller output in build\dist\yewee (what build\build.py
 ; leaves behind on Windows). Produces build\dist\yewee-setup-<version>.exe.

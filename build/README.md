@@ -4,11 +4,16 @@
 pip install pyinstaller
 
 # what you keep — everything, no licensing
-python build/build.py --version 1.3.0
+python build/build.py
 
 # what you sell — licensing on, GPL models left out
-python build/build.py --distribution --pubkey <hex from Licence Admin> --version 1.3.0
+python build/build.py --distribution
 ```
+
+The version comes from `__version__` in `yewee/__init__.py` (1.0.0 since
+the reset on 2026-09-24). `--version` is optional, and a distribution build
+refuses one that disagrees with `__version__`, so bump it in the commit you
+tag: tag `v1.0.1` builds only once `__version__` says `1.0.1`.
 
 Output lands in `build/dist/` — `Yewee.app` on macOS, a `yewee/` folder on
 Windows. Roughly **340 MB**; most of it is OpenCV (118 MB), the models
@@ -60,7 +65,7 @@ people's machines. Both platforms need paid certificates.
 ### macOS (Apple Developer Program, $99/yr) — working
 
 ```bash
-YEWEE_VERSION=1.3.0 build/sign_macos.sh
+build/sign_macos.sh                 # version read from yewee/__init__.py
 ```
 
 Signs every nested binary, signs the app with the hardened runtime and
@@ -94,7 +99,7 @@ Use an [app-specific password](https://appleid.apple.com), not the Apple
 ID password. Then:
 
 ```bash
-YEWEE_VERSION=1.3.0 build/sign_macos.sh --notarize
+build/sign_macos.sh --notarize
 ```
 
 That submits, waits, and staples the ticket to the DMG so it validates

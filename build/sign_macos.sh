@@ -17,7 +17,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 APP="build/dist/Yewee.app"
-VERSION="${YEWEE_VERSION:-0.0.0}"
+VERSION="${YEWEE_VERSION:-$(python3 build/build.py --print-version 2>/dev/null || echo 0.0.0)}"
 DMG="build/dist/Yewee-${VERSION}.dmg"
 ENTS="build/entitlements.plist"
 PROFILE="${NOTARY_PROFILE:-yewee}"

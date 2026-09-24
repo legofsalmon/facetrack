@@ -350,14 +350,11 @@ def _ssl_context():
 
 
 def _post(path: str, body: dict, timeout: float = 15.0) -> dict:
-    try:
-        from ._buildinfo import VERSION            # type: ignore
-    except ImportError:
-        VERSION = "dev"
+    from . import app_version
     req = urllib.request.Request(
         SHOP_BASE + path, data=json.dumps(body).encode("utf-8"), method="POST",
         headers={"Content-Type": "application/json",
-                 "User-Agent": f"yewee/{VERSION}"})
+                 "User-Agent": f"yewee/{app_version()}"})
     try:
         with urllib.request.urlopen(req, timeout=timeout,
                                     context=_ssl_context()) as resp:

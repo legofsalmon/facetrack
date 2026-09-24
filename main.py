@@ -290,7 +290,8 @@ def main(argv=None) -> int:
         web_server = start_in_thread(app, args.web_host, args.web_port)
         panel_url = f"http://localhost:{args.web_port}"
 
-    print("\n  yewee is running")
+    from yewee import app_version
+    print(f"\n  yewee {app_version()} is running")
     if panel_url:
         lan = _lan_ip()
         extra = f"   (from other devices: http://{lan}:{args.web_port})" \

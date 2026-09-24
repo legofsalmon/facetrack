@@ -16,6 +16,7 @@ import json
 import threading
 from pathlib import Path
 
+from . import app_version
 from .params import LiveParams
 from .pipeline import Pipeline
 
@@ -208,6 +209,7 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None,
                     "type": "tick",
                     "stats": pipeline.get_stats(),
                     "params": params.snapshot(),
+                    "version": app_version(),
                 }))
         except WebSocketDisconnect:
             pass

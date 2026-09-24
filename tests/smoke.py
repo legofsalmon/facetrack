@@ -1181,6 +1181,40 @@ def _():
     assert all(t.emotion[0] in EMOTIONS for t in labelled)
 
 
+def _load_build_script():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "yewee_build_script", os.path.join(ROOT, "build", "build.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@run("version: declared once as 1.0.0, and a tag that disagrees cannot build")
+def _():
+    import contextlib
+    import io
+    import yewee
+    assert yewee.__version__ == "1.0.0", yewee.__version__
+    assert not os.path.exists(os.path.join(ROOT, "yewee", "_buildinfo.py"))
+    assert yewee.app_version() == "1.0.0", "a source run reports __version__"
+    build = _load_build_script()
+    assert build.source_version() == yewee.__version__
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        assert build.main(["--print-version"]) == 0
+    assert out.getvalue().strip() == "1.0.0"
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        assert build.main(["--print-version", "--version", "v1.0.0"]) == 0
+    assert out.getvalue().strip() == "1.0.0", "a tag name is accepted as-is"
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        for tag in ("1.5", "1.0", "0.0.0"):
+            assert build.main(["--distribution", "--version", tag]) == 1, tag
+    assert "does not match __version__" in err.getvalue()
+
+
 @run("launchers: every model they wait for is one the doctor provides")
 def _():
     # Both launchers re-run setup until each listed model exists, and after

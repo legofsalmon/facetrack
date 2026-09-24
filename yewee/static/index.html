@@ -172,7 +172,7 @@
 <body>
 <header>
   <div id="conn" title="control connection"></div>
-  <h1>face<span>track</span></h1>
+  <h1>yew<span>ee</span></h1>
   <div id="onair">NDI OFF</div>
   <div id="saved">✓ saved</div>
   <div class="chips">
@@ -543,7 +543,7 @@
   </div>
 </div>
 
-<footer>yewee · finds and follows faces — does not identify people · settings save automatically<span id="uptime"></span></footer>
+<footer>yewee <span id="app-version"></span> · finds and follows faces — does not identify people · settings save automatically<span id="uptime"></span></footer>
 
 <script>
 (function () {
@@ -1046,7 +1046,10 @@
         if (msg.ok) $("lic-key").value = "";
         return;
       }
-      if (msg.type === "tick") { applyStats(msg.stats || {}); applyParams(msg.params || {}); }
+      if (msg.type === "tick") {
+        applyStats(msg.stats || {}); applyParams(msg.params || {});
+        if (msg.version) $("app-version").textContent = msg.version;
+      }
     };
   }
   connect();
