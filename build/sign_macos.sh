@@ -118,10 +118,23 @@ fi
 echo "  gatekeeper assessment (expect 'rejected' until notarised):"
 spctl --assess --type execute --verbose "$APP" 2>&1 | sed 's/^/    /' || true
 
+# The DMG holds the app and TERMS.txt beside it: LeTissier Creative
+# Studios Ltd's terms, which the NDI SDK licence (section 3d) requires the
+# app to be distributed under. ditto keeps the signed bundle byte-for-byte
+# (symlinks, extended attributes), so the signature stays valid.
+TERMS="build/TERMS.txt"
+[ -f "$TERMS" ] || { echo "  ! $TERMS is missing; not building a DMG without it." >&2; exit 1; }
+STAGE="build/dist/dmg-staging"
+rm -rf "$STAGE"
+mkdir -p "$STAGE"
+ditto "$APP" "$STAGE/$(basename "$APP")"
+cp "$TERMS" "$STAGE/TERMS.txt"
+
 echo "  building $DMG ..."
 rm -f "$DMG"
-hdiutil create -volname "Yewee" -srcfolder "$APP" -ov -format UDZO "$DMG" \
+hdiutil create -volname "Yewee" -srcfolder "$STAGE" -ov -format UDZO "$DMG" \
   | tail -2 | sed 's/^/    /'
+rm -rf "$STAGE"
 
 if [ "$NOTARIZE" = "1" ]; then
   echo "  submitting for notarisation (several minutes)..."

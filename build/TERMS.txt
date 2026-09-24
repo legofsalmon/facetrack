@@ -1,0 +1,27 @@
+﻿Yewee - licence terms
+=====================
+
+Yewee is made by LeTissier Creative Studios Ltd. Your use of Yewee is
+under LeTissier Creative Studios Ltd's terms and conditions:
+
+    https://letissier.ie/terms
+
+The section of those terms about the components inside Yewee is quoted
+here exactly as it appears there:
+
+
+Components made by others
+-------------------------
+
+Our software includes components made by others, each under its own licence. The notices file that ships inside each product lists them, with their licences and copyright notices.
+
+- Where a component's own licence gives you rights, these terms do not take them away. For example, the GNU Lesser General Public License lets you replace a library covered by it with your own version, and reverse engineer the product as far as you need to debug that change.
+- **NDI®.** Where our software includes NDI® software from Vizrt NDI AB, you may not modify, reverse engineer, decompile or disassemble that NDI software, except as far as the law allows despite this limit. It is provided as it is: Vizrt NDI AB gives you no warranty for it and has no liability to you for it. NDI® is a registered trademark of Vizrt NDI AB, and its copyright notices are in the product's notices file.
+
+
+Where the notices file is
+-------------------------
+
+THIRD-PARTY-NOTICES.txt ships inside the app: in the folder Yewee is
+installed to on Windows, and inside Yewee.app on macOS. The control panel also shows it
+under Help & feedback > Third-party licences.

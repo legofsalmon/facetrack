@@ -11,6 +11,11 @@
 ;    its install directory, so Program Files' read-only convention is fine.
 ;  - No "run at startup", no services, no PATH changes. It is an app you
 ;    start before a show, not something that should live in the background.
+;  - LicenseFile shows build\TERMS.txt (LeTissier Creative Studios Ltd's
+;    terms, with their NDI and LGPL clauses quoted) before anything is
+;    installed. The NDI SDK licence (section 3d) requires the app to be
+;    distributed under our own terms. The file is UTF-8 with a BOM, which
+;    is how Inno Setup knows to read the (R) sign as UTF-8.
 ;  - Uninstall leaves %APPDATA%\yewee alone: that folder holds the licence
 ;    key, and deleting a paid licence because someone reinstalled would be
 ;    a support nightmare. The uninstaller says so instead.
@@ -38,6 +43,7 @@ UninstallDisplayIcon={app}\yewee.exe
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+LicenseFile=TERMS.txt
 ; The bundle is ~400MB unpacked; make sure Setup checks for room.
 ExtraDiskSpaceRequired=52428800
 

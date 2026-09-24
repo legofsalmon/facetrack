@@ -1917,6 +1917,31 @@ def _():
         box.restore()
 
 
+@run("installers: both show LeTissier's terms, with the NDI and LGPL clauses")
+def _():
+    # The NDI SDK licence (3d) requires distribution under our own terms,
+    # which must forbid reverse engineering the NDI part and disclaim for
+    # Vizrt, and the LGPL needs its carve-out. The text is quoted from
+    # letissier.ie/terms ("Components made by others"); keep it in step.
+    raw = open(os.path.join(ROOT, "build", "TERMS.txt"), "rb").read()
+    assert raw.startswith(b"\xef\xbb\xbf"), "Inno Setup reads a .txt as UTF-8 only with a BOM"
+    terms = raw[3:].decode("utf-8")
+    for needed in ("LeTissier Creative Studios Ltd", "https://letissier.ie/terms",
+                   "Components made by others", "GNU Lesser General Public License",
+                   "you may not modify, reverse engineer, decompile or disassemble "
+                   "that NDI software",
+                   "Vizrt NDI AB gives you no warranty for it and has no liability",
+                   "NDI® is a registered trademark of Vizrt NDI AB",
+                   "THIRD-PARTY-NOTICES.txt"):
+        assert needed in terms, needed
+    with open(os.path.join(ROOT, "build", "yewee.iss"), encoding="utf-8") as f:
+        assert re.search(r"(?m)^LicenseFile=TERMS\.txt\s*$", f.read()), "Windows installer"
+    with open(os.path.join(ROOT, "build", "sign_macos.sh"), encoding="utf-8") as f:
+        sign = f.read()
+    assert 'cp "$TERMS" "$STAGE/TERMS.txt"' in sign and '-srcfolder "$STAGE"' in sign, \
+        "the DMG must carry TERMS.txt beside the app"
+
+
 if FAILURES:
     print(f"\n{len(FAILURES)} test(s) failed: {', '.join(FAILURES)}")
     sys.exit(1)

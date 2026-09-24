@@ -72,7 +72,9 @@ Signs every nested Mach-O binary (found with `file`, so helpers without
 an extension are included), then each framework, then the app with the
 hardened runtime and `build/entitlements.plist`. It then runs
 `codesign --verify --deep --strict` and builds the DMG only if that
-passes. Any nested signing failure stops the script with codesign's own
+passes. The DMG holds `Yewee.app` with `build/TERMS.txt` beside it
+(the Windows installer shows the same file as its licence page). Any
+nested signing failure stops the script with codesign's own
 message rather than leaving a half-signed bundle to fail at notarisation.
 Verified with `Developer ID Application: Colm Hewson (PKN49VCQZQ)` before
 that change; the stricter version has not yet been run on a Mac.
