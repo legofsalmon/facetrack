@@ -110,6 +110,13 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None,
                              "camera_auth": camera_auth,
                              "blocked_cameras": blocked})
 
+    @app.get("/notices")
+    def third_party_notices():
+        """The licences of everything yewee ships with. Open to anyone who
+        can reach the panel, PIN or not: it holds nothing about this show."""
+        from . import notices
+        return PlainTextResponse(notices.text())
+
     @app.get("/logs")
     def logs(request: Request):
         if not _pin_ok(request):

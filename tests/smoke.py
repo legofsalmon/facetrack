@@ -1582,6 +1582,32 @@ def _():
     assert out.stdout.strip() == "https://letissier.ie", out.stdout + out.stderr
 
 
+@run("notices: every shipped package's licence, the NDI notice, the models")
+def _():
+    import importlib.metadata as md
+    from yewee import notices
+    text = notices.generate()
+    assert "NDI® is a registered trademark of Vizrt NDI AB" in text
+    assert "Copyright (C) 2023-2024 Vizrt NDI AB" in text
+    for model in ("face_detection_yunet_2023mar.onnx", "centerface_dynamic.onnx",
+                  "emotion-ferplus-8.onnx", "modnet_portrait.onnx",
+                  "human_segmentation_pphumanseg_2023mar.onnx"):
+        assert model in text, model
+        assert os.path.exists(os.path.join(ROOT, "models", model)), model
+    assert "numpy" in text and "opencv-python" in text and "Python " in text
+    assert "GNU LESSER GENERAL PUBLIC LICENSE" in text.upper() or \
+        "LESSER GENERAL PUBLIC" in text.upper(), "FFmpeg's LGPL text must travel"
+    installed = {d.metadata["Name"].lower() for d in md.distributions()}
+    if "cyndilib" in installed:
+        assert "Processing.NDI" in text or "libndi" in text or "NDI SDK license" in text
+    listed = text.split("Licence texts", 1)[0]
+    assert "\n  pip " not in listed and "pyinstaller" not in listed.lower(), \
+        "build-only tools do not ship"
+    with open(os.path.join(ROOT, "build", "yewee.spec"), encoding="utf-8") as f:
+        spec = f.read()
+    assert "THIRD-PARTY-NOTICES.txt" in spec and "NSLocalNetworkUsageDescription" in spec
+
+
 @run("emotion: FER+ labels a face")
 def _():
     from yewee.detectors import YuNetDetector

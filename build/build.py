@@ -25,6 +25,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 BUILD = ROOT / "build"
 BUILDINFO = ROOT / "yewee" / "_buildinfo.py"
+NOTICES = BUILD / "THIRD-PARTY-NOTICES.txt"
 
 # The public half of the vendor signing key — safe to commit, and the whole
 # point of it is to be published. It lives here rather than in an environment
@@ -109,6 +110,16 @@ def main(argv=None) -> int:
     else:
         print("  licensing: off (unrestricted)   RVM: included")
 
+    # Third-party notices from the environment being packaged, so the file
+    # lists exactly what ships. The licences of the bundled packages (MIT,
+    # BSD, Apache, LGPL FFmpeg in OpenCV, MPL certifi) and the NDI SDK
+    # licence all ask for their notices to travel with the binary.
+    notices = subprocess.run([sys.executable, "-m", "yewee.notices"], cwd=ROOT,
+                             capture_output=True, text=True, encoding="utf-8")
+    if notices.returncode != 0 or "Vizrt NDI AB" not in notices.stdout:
+        return _fail("Could not generate THIRD-PARTY-NOTICES.txt:\n" + notices.stderr)
+    NOTICES.write_text(notices.stdout, encoding="utf-8")
+
     write_buildinfo(args.distribution, args.pubkey, args.version)
     env = dict(os.environ)
     env["YEWEE_DISTRIBUTION"] = "1" if args.distribution else "0"
@@ -133,6 +144,10 @@ def main(argv=None) -> int:
                if f.is_file() and not f.is_symlink()) / 1e6
     print(f"\n  built in {time.time()-t0:.0f}s -> {out}  ({size:.0f} MB)")
 
+    if not any(out.rglob("THIRD-PARTY-NOTICES.txt")):
+        return _fail("THIRD-PARTY-NOTICES.txt is not in the bundle — the "
+                     "licences of what ships must travel with it.")
+
     shipped = sorted({p.name for p in out.rglob("*.onnx")
                       if "datasets" not in str(p)})
     print("  models included: " + ", ".join(shipped))
@@ -152,7 +167,10 @@ def main(argv=None) -> int:
         if not plist.get("NSCameraUsageDescription"):
             return _fail("NSCameraUsageDescription is missing — macOS kills "
                          "the app when it opens a camera.")
-        print("  Info.plist: foreground app, camera usage described")
+        if not plist.get("NSLocalNetworkUsageDescription"):
+            return _fail("NSLocalNetworkUsageDescription is missing — macOS "
+                         "15 asks before NDI can reach the local network.")
+        print("  Info.plist: foreground app, camera and local network described")
 
     if args.distribution:
         whose = ("the vendor key" if args.pubkey == VENDOR_PUBLIC_KEY

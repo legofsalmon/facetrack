@@ -17,6 +17,7 @@ __pycache__/
 yewee/_buildinfo.py
 build/dist/
 build/work/
+build/THIRD-PARTY-NOTICES.txt
 
 # crash markers and evidence (yewee/crashguard.py), queued reports
 crash/
