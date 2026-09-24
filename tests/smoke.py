@@ -1608,6 +1608,37 @@ def _():
     assert "THIRD-PARTY-NOTICES.txt" in spec and "NSLocalNetworkUsageDescription" in spec
 
 
+@run("build: notices and buildinfo are UTF-8 whatever the console's encoding")
+def _():
+    # The Windows release build died reading the notices child's cp1252
+    # output as UTF-8. Here the child is handed Windows' pipe encoding and
+    # the build still has to come back with the real dash; and every file
+    # the build writes must name its encoding (warn_default_encoding turns
+    # a bare write_text into an error on any platform, not just Windows).
+    import subprocess
+    probe = (
+        "import importlib.util, os, sys, tempfile\n"
+        "from pathlib import Path\n"
+        "spec = importlib.util.spec_from_file_location('ft_build', sys.argv[1])\n"
+        "b = importlib.util.module_from_spec(spec); spec.loader.exec_module(b)\n"
+        "text = b.third_party_notices()\n"
+        "assert text.startswith('Yewee \\u2014 third-party notices'), repr(text[:40])\n"
+        "with tempfile.TemporaryDirectory() as td:\n"
+        "    b.BUILDINFO = Path(td) / '_buildinfo.py'\n"
+        "    b.write_buildinfo(True, 'ab' * 32, '1.0.0')\n"
+        "    raw = b.BUILDINFO.read_bytes()\n"
+        "    compile(raw, '_buildinfo.py', 'exec')\n"
+        "    assert '\\u2014'.encode('utf-8') in raw, raw[:60]\n"
+        "print('ok')\n")
+    env = dict(os.environ, PYTHONIOENCODING="cp1252", PYTHONUTF8="0")
+    res = subprocess.run(
+        [sys.executable, "-X", "warn_default_encoding", "-W", "error::EncodingWarning",
+         "-c", probe, os.path.join(ROOT, "build", "build.py")],
+        cwd=ROOT, env=env, capture_output=True, timeout=120)
+    assert res.returncode == 0 and res.stdout.strip() == b"ok", \
+        res.stderr.decode("utf-8", "replace")[-2000:]
+
+
 @run("emotion: FER+ labels a face")
 def _():
     from yewee.detectors import YuNetDetector
