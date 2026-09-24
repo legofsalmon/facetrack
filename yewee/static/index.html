@@ -56,7 +56,12 @@
   .preset.active { border-color: var(--accent); background: #17222f; }
 
   .layout { display: grid; grid-template-columns: minmax(340px, 1fr) 400px; gap: 16px; }
-  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+  @media (max-width: 900px) {
+    /* minmax(0, …) and min-width: 0, or the widest thing in a column
+       (the preview tabs, a long select) sets the page width on a phone */
+    .layout { grid-template-columns: minmax(0, 1fr); }
+    .layout > div { min-width: 0; }
+  }
   @media (min-width: 901px) {
     /* keep the preview in view while scrolling the controls column */
     .layout > div:first-child {
@@ -136,6 +141,9 @@
   select, input[type=text] {
     background: var(--panel2); color: var(--text); border: 1px solid var(--line);
     border-radius: 7px; padding: 6px 9px; font-size: 13px; outline: none; flex: 1;
+    /* a flex item is at least as wide as its longest option unless told
+       otherwise, which pushed the row's other controls out of the card */
+    min-width: 0; text-overflow: ellipsis;
   }
   select:focus, input[type=text]:focus { border-color: var(--accent); }
   .switch { position: relative; width: 38px; height: 21px; flex-shrink: 0; margin-left: auto; }

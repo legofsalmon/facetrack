@@ -1942,6 +1942,89 @@ def _():
         "the DMG must carry TERMS.txt beside the app"
 
 
+def _chromium() -> str | None:
+    """A Chromium or Chrome to lay the panel out in. GitHub's Ubuntu image
+    has google-chrome; PW_CHROMIUM points at a Playwright download."""
+    import shutil
+    for path in (os.environ.get("PW_CHROMIUM"), os.environ.get("YEWEE_CHROMIUM")):
+        if path:
+            if os.path.isdir(path):
+                for sub in ("chrome-linux/chrome", "chrome-linux64/chrome", "chrome"):
+                    if os.path.isfile(os.path.join(path, sub)):
+                        return os.path.join(path, sub)
+            elif os.path.isfile(path):
+                return path
+    for name in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser"):
+        if shutil.which(name):
+            return shutil.which(name)
+    return None
+
+
+@run("panel: fits a 390 px phone with no sideways scroll, nothing cut off")
+def _():
+    import subprocess
+    chrome = _chromium()
+    if chrome is None:
+        print("        (no Chromium/Chrome found — skipped; set PW_CHROMIUM)")
+        return
+    html = open(os.path.join(ROOT, "yewee", "static", "index.html"), encoding="utf-8").read()
+    # Everything the live panel can show, filled with long values, then
+    # measured: the page's width, and any element sticking out of its card
+    # (a card clips, so that is a control cut off rather than a scrollbar).
+    probe = """<script>
+addEventListener("load", () => setTimeout(() => {
+  const $ = (id) => document.getElementById(id);
+  document.querySelectorAll("details").forEach((d) => d.open = true);
+  for (const id of ["licence-card", "cutout-card", "crash-banner"]) $(id).style.display = "";
+  $("src-custom-row").classList.add("show");
+  $("fb-form").style.display = "flex";
+  $("phones").style.display = "block";
+  $("phones").innerHTML = "Phones and other computers: <b>http://192.168.100.200:8089</b>"
+    + " · PIN <b>4821</b> — asked for once per device; this machine doesn't need it";
+  $("feedinfo").innerHTML = "Input: <b>ndi:STUDIO-PC-LONG-NAME (PTZ Camera 1)</b> · out: <b>1920x1080</b>";
+  $("s-faces").textContent = "128"; $("s-fps").textContent = "29.97"; $("s-load").textContent = "100";
+  const vw = document.documentElement.clientWidth, out = [];
+  for (const el of document.querySelectorAll("body *")) {
+    const cs = getComputedStyle(el);
+    if (cs.display === "none" || cs.visibility === "hidden") continue;
+    const b = el.getBoundingClientRect();
+    if (!b.width) continue;
+    const card = el.parentElement && el.parentElement.closest(".card");
+    const lim = Math.min(vw, card ? card.getBoundingClientRect().right : vw);
+    if (b.right > lim + 1) out.push((el.id || el.tagName.toLowerCase()) + " ends at "
+      + Math.round(b.right) + " > " + Math.round(lim));
+  }
+  parent.postMessage(JSON.stringify({ vw, sw: document.documentElement.scrollWidth, out }), "*");
+}, 300));
+</script>"""
+    # Headless Chrome will not open a window under 500 px, so the panel is
+    # laid out in a 390 px frame, which is a 390 px viewport to its media
+    # queries; the frame posts its measurement to the page around it.
+    wrapper = """<!doctype html><body style="margin:0">
+<iframe src="index.html" style="width:390px;height:844px;border:0"></iframe>
+<script>addEventListener("message", (e) => { const pre = document.createElement("pre");
+  pre.id = "layout-result"; pre.textContent = e.data; document.body.appendChild(pre); });
+</script></body>"""
+    with tempfile.TemporaryDirectory() as td:
+        (Path(td) / "index.html").write_text(html.replace("</body>", probe + "</body>"),
+                                             encoding="utf-8")
+        page = Path(td) / "frame.html"
+        page.write_text(wrapper, encoding="utf-8")
+        res = subprocess.run(
+            [chrome, "--headless=new", "--no-sandbox", "--disable-gpu", "--no-first-run",
+             "--no-default-browser-check", f"--user-data-dir={td}/profile",
+             "--hide-scrollbars", "--window-size=800,900", "--virtual-time-budget=5000",
+             "--dump-dom", page.as_uri()],
+            capture_output=True, text=True, timeout=90)
+    m = re.search(r'<pre id="layout-result">(.*?)</pre>', res.stdout, re.S)
+    assert m, "no measurement from Chromium:\n" + res.stderr[-2000:]
+    import html as _html
+    r = json.loads(_html.unescape(m.group(1)))
+    assert r["vw"] == 390, f"window came out {r['vw']} px wide, not 390"
+    assert r["sw"] <= r["vw"], f"the page scrolls sideways: {r['sw']} px wide in a {r['vw']} px phone"
+    assert not r["out"], "cut off at 390 px: " + "; ".join(r["out"][:10])
+
+
 if FAILURES:
     print(f"\n{len(FAILURES)} test(s) failed: {', '.join(FAILURES)}")
     sys.exit(1)
