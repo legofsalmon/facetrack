@@ -68,9 +68,14 @@ people's machines. Both platforms need paid certificates.
 build/sign_macos.sh                 # version read from yewee/__init__.py
 ```
 
-Signs every nested binary, signs the app with the hardened runtime and
-`build/entitlements.plist`, verifies, and builds the DMG. Verified with
-`Developer ID Application: Colm Hewson (PKN49VCQZQ)`.
+Signs every nested Mach-O binary (found with `file`, so helpers without
+an extension are included), then each framework, then the app with the
+hardened runtime and `build/entitlements.plist`. It then runs
+`codesign --verify --deep --strict` and builds the DMG only if that
+passes. Any nested signing failure stops the script with codesign's own
+message rather than leaving a half-signed bundle to fail at notarisation.
+Verified with `Developer ID Application: Colm Hewson (PKN49VCQZQ)` before
+that change; the stricter version has not yet been run on a Mac.
 
 Two things the script handles that catch people out:
 

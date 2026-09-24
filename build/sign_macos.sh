@@ -24,8 +24,10 @@ PROFILE="${NOTARY_PROFILE:-yewee}"
 NOTARIZE=0
 [ "${1:-}" = "--notarize" ] && NOTARIZE=1
 
+# (no match is not an error here: the message below explains it, where
+# set -e with pipefail would otherwise stop silently)
 IDENTITY=$(security find-identity -v -p codesigning \
-  | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)"/\1/')
+  | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)"/\1/' || true)
 if [ -z "$IDENTITY" ]; then
   echo "No 'Developer ID Application' certificate found in the keychain."
   echo "Add one from your Apple Developer account, then re-run."
@@ -41,7 +43,7 @@ echo "  bundle:   $APP"
 # calls that "unsealed contents present in the root directory of an
 # embedded framework" and refuses to verify. Restore the symlink layout
 # every framework is supposed to have.
-for fw in $(find "$APP" -name "*.framework" -type d); do
+while IFS= read -r -d '' fw; do
   ver="$fw/Versions/Current"
   [ -d "$ver" ] || continue
   for item in "$fw"/*; do
@@ -53,15 +55,51 @@ for fw in $(find "$APP" -name "*.framework" -type d); do
       ln -s "Versions/Current/$name" "$item"
     fi
   done
-done
+done < <(find "$APP" -name "*.framework" -type d -print0)
 
 # Nested code must be signed before the bundle that contains it. Apple
-# discourages --deep, so sign the individual Mach-O objects and the
-# frameworks, then let the outer signature seal the rest.
-echo "  signing nested binaries (this takes a minute)..."
-find "$APP" \( -name "*.dylib" -o -name "*.so" -o -name "*.framework" \) -print0 \
-  | xargs -0 -P 4 -I {} codesign --force --timestamp --options runtime \
-      --sign "$IDENTITY" {} 2>/dev/null || true
+# discourages --deep for signing, so sign every Mach-O object on its own,
+# then each framework, innermost first, then the app, whose signature seals
+# everything else (data files need no signature of their own).
+#
+# Every one of these must succeed. A failure used to be hidden
+# (2>/dev/null || true), which left a half-signed bundle that only failed
+# at notarisation, or on the buyer's Mac. Now it stops the script, with
+# codesign's own message.
+MAIN_EXE=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" \
+  "$APP/Contents/Info.plist" 2>/dev/null || true)
+MACHO_LIST=$(mktemp "${TMPDIR:-/tmp}/yewee-macho.XXXXXX")
+trap 'rm -f "$MACHO_LIST"' EXIT
+# Candidates: libraries and extension modules by name, and anything
+# executable. `file` decides; a .so or .dylib that is not Mach-O is data.
+while IFS= read -r -d '' f; do
+  [ -n "$MAIN_EXE" ] && [ "$f" = "$APP/Contents/MacOS/$MAIN_EXE" ] && continue
+  case "$(file -b "$f")" in
+    Mach-O*) printf '%s\0' "$f" >> "$MACHO_LIST" ;;
+    *) case "$f" in
+         *.so|*.dylib) echo "  note: not Mach-O, sealed as data: ${f#"$APP"/}" ;;
+       esac ;;
+  esac
+done < <(find "$APP/Contents" -type f \
+           \( -name "*.dylib" -o -name "*.so" -o -perm -0100 \) -print0)
+count=$(tr -cd '\0' < "$MACHO_LIST" | wc -c | tr -d ' ')
+echo "  signing $count nested binaries (this takes a minute)..."
+if ! xargs -0 -n 20 -P 4 codesign --force --timestamp --options runtime \
+       --sign "$IDENTITY" < "$MACHO_LIST"; then
+  echo "  ! codesign failed on a nested binary (message above)." >&2
+  echo "  ! Stopping: a half-signed bundle fails notarisation or Gatekeeper." >&2
+  exit 1
+fi
+
+echo "  signing frameworks..."
+# -depth lists a directory after its contents, so a framework inside
+# another one is signed before the one that holds it.
+while IFS= read -r -d '' fw; do
+  if ! codesign --force --timestamp --options runtime --sign "$IDENTITY" "$fw"; then
+    echo "  ! codesign failed on ${fw#"$APP"/} (message above)." >&2
+    exit 1
+  fi
+done < <(find "$APP" -depth -name "*.framework" -type d -print0)
 
 echo "  signing the app..."
 codesign --force --timestamp --options runtime --entitlements "$ENTS" \
@@ -71,8 +109,12 @@ echo "  entitlements:"
 codesign -d --entitlements - --xml "$APP" 2>/dev/null \
   | plutil -p - | grep -E "com\.apple" | sed 's/^/    /'
 
-echo "  verifying..."
-codesign --verify --strict --verbose=2 "$APP" 2>&1 | sed 's/^/    /'
+echo "  verifying every signature in the bundle..."
+if ! codesign --verify --deep --strict --verbose=2 "$APP" 2>&1 | sed 's/^/    /'; then
+  echo "  ! codesign --verify --deep --strict failed (above): the bundle is not" >&2
+  echo "  ! fully signed. Not building a DMG from it." >&2
+  exit 1
+fi
 echo "  gatekeeper assessment (expect 'rejected' until notarised):"
 spctl --assess --type execute --verbose "$APP" 2>&1 | sed 's/^/    /' || true
 
