@@ -2,8 +2,8 @@
 """Package yewee into an app bundle / folder.
 
     python build/build.py                       # internal build (everything)
-    python build/build.py --distribution \\
-        --pubkey <hex> --version 1.3            # what you sell
+    python build/build.py --distribution        # what you sell
+    python build/build.py --print-version       # the version it would stamp
 
 A distribution build bakes in your licence public key, switches on the
 72-hour trial, and leaves out anything that may not be redistributed
@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -24,6 +25,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 BUILD = ROOT / "build"
 BUILDINFO = ROOT / "yewee" / "_buildinfo.py"
+NOTICES = BUILD / "THIRD-PARTY-NOTICES.txt"
 
 # The public half of the vendor signing key — safe to commit, and the whole
 # point of it is to be published. It lives here rather than in an environment
@@ -32,6 +34,16 @@ BUILDINFO = ROOT / "yewee" / "_buildinfo.py"
 # not a mistake you want resting on remembering to export a shell variable.
 # The private half never leaves the Licence Admin's data directory.
 VENDOR_PUBLIC_KEY = "409208784ace937f8ac9687aa489315f45aa6e2cba33466d3a0d21f695ac9ae2"
+
+
+def source_version() -> str:
+    """yewee/__init__.py's __version__, read as text so building never
+    imports the app (and its OpenCV/NDI dependencies) into this process."""
+    text = (ROOT / "yewee" / "__init__.py").read_text(encoding="utf-8")
+    m = re.search(r'^__version__\s*=\s*"([^"]+)"', text, re.M)
+    if not m:
+        raise SystemExit("yewee/__init__.py has no __version__")
+    return m.group(1)
 
 
 def write_buildinfo(distribution: bool, pubkey: str, version: str) -> None:
@@ -55,10 +67,30 @@ def main(argv=None) -> int:
     ap.add_argument("--pubkey",
                     default=os.environ.get("YEWEE_PUBKEY", VENDOR_PUBLIC_KEY),
                     help="licence public key hex (defaults to the vendor key)")
-    ap.add_argument("--version", default="0.0.0")
+    ap.add_argument("--version", default="",
+                    help="version to stamp; defaults to yewee/__init__.py's "
+                         "__version__, and a distribution build must match it")
+    ap.add_argument("--print-version", action="store_true",
+                    help="print the version a build would stamp, and exit")
     ap.add_argument("--keep-buildinfo", action="store_true",
                     help="leave yewee/_buildinfo.py in place afterwards")
     args = ap.parse_args(argv)
+
+    declared = source_version()
+    args.version = (args.version or declared).strip()
+    if args.version.startswith("v"):
+        args.version = args.version[1:]        # a tag name, v1.0.0
+    if args.print_version:
+        print(args.version)
+        return 0
+    # A sold build reports its version in crash reports, feedback and the
+    # panel, and the shop's release page reads it off the tag. A tag that
+    # disagrees with the code (v1.0 against 1.0.0, or a tag cut without
+    # bumping __version__) would ship a build that misreports itself.
+    if args.distribution and args.version != declared:
+        return _fail(f"--version {args.version} does not match __version__ "
+                     f"{declared} in yewee/__init__.py. Bump __version__ in "
+                     "the commit you tag, or tag v" + declared + ".")
 
     if args.distribution and not args.pubkey:
         return _fail("A distribution build needs --pubkey, or nothing can be "
@@ -77,6 +109,16 @@ def main(argv=None) -> int:
         print("  licensing: on (72-hour trial)   RVM: excluded (GPL-3.0)")
     else:
         print("  licensing: off (unrestricted)   RVM: included")
+
+    # Third-party notices from the environment being packaged, so the file
+    # lists exactly what ships. The licences of the bundled packages (MIT,
+    # BSD, Apache, LGPL FFmpeg in OpenCV, MPL certifi) and the NDI SDK
+    # licence all ask for their notices to travel with the binary.
+    notices = subprocess.run([sys.executable, "-m", "yewee.notices"], cwd=ROOT,
+                             capture_output=True, text=True, encoding="utf-8")
+    if notices.returncode != 0 or "Vizrt NDI AB" not in notices.stdout:
+        return _fail("Could not generate THIRD-PARTY-NOTICES.txt:\n" + notices.stderr)
+    NOTICES.write_text(notices.stdout, encoding="utf-8")
 
     write_buildinfo(args.distribution, args.pubkey, args.version)
     env = dict(os.environ)
@@ -102,6 +144,10 @@ def main(argv=None) -> int:
                if f.is_file() and not f.is_symlink()) / 1e6
     print(f"\n  built in {time.time()-t0:.0f}s -> {out}  ({size:.0f} MB)")
 
+    if not any(out.rglob("THIRD-PARTY-NOTICES.txt")):
+        return _fail("THIRD-PARTY-NOTICES.txt is not in the bundle — the "
+                     "licences of what ships must travel with it.")
+
     shipped = sorted({p.name for p in out.rglob("*.onnx")
                       if "datasets" not in str(p)})
     print("  models included: " + ", ".join(shipped))
@@ -121,7 +167,10 @@ def main(argv=None) -> int:
         if not plist.get("NSCameraUsageDescription"):
             return _fail("NSCameraUsageDescription is missing — macOS kills "
                          "the app when it opens a camera.")
-        print("  Info.plist: foreground app, camera usage described")
+        if not plist.get("NSLocalNetworkUsageDescription"):
+            return _fail("NSLocalNetworkUsageDescription is missing — macOS "
+                         "15 asks before NDI can reach the local network.")
+        print("  Info.plist: foreground app, camera and local network described")
 
     if args.distribution:
         whose = ("the vendor key" if args.pubkey == VENDOR_PUBLIC_KEY

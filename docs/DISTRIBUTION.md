@@ -1,8 +1,11 @@
 # Distributing yewee commercially
 
 Working notes for turning yewee into a sold product. Phases 0–2 are
-done: v1.4 is released with public downloads on the site and licensing
-active. Phase 3 (checkout) is next; keys go by email meanwhile.
+done and it is sold through the letissier.ie shop.
+
+**Version numbers were reset to 1.0.0 on 2026-09-24.** Mentions of v1.4
+below are the pre-reset numbering: tags v1.0–v1.4 on GitHub are older
+than 1.0.0, not newer. See `build/README.md` for how a version is cut.
 
 *Not legal advice — the licence positions below quote the upstream terms
 directly so a solicitor can check them quickly.*

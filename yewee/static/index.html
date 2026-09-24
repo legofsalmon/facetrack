@@ -56,7 +56,12 @@
   .preset.active { border-color: var(--accent); background: #17222f; }
 
   .layout { display: grid; grid-template-columns: minmax(340px, 1fr) 400px; gap: 16px; }
-  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+  @media (max-width: 900px) {
+    /* minmax(0, …) and min-width: 0, or the widest thing in a column
+       (the preview tabs, a long select) sets the page width on a phone */
+    .layout { grid-template-columns: minmax(0, 1fr); }
+    .layout > div { min-width: 0; }
+  }
   @media (min-width: 901px) {
     /* keep the preview in view while scrolling the controls column */
     .layout > div:first-child {
@@ -136,6 +141,9 @@
   select, input[type=text] {
     background: var(--panel2); color: var(--text); border: 1px solid var(--line);
     border-radius: 7px; padding: 6px 9px; font-size: 13px; outline: none; flex: 1;
+    /* a flex item is at least as wide as its longest option unless told
+       otherwise, which pushed the row's other controls out of the card */
+    min-width: 0; text-overflow: ellipsis;
   }
   select:focus, input[type=text]:focus { border-color: var(--accent); }
   .switch { position: relative; width: 38px; height: 21px; flex-shrink: 0; margin-left: auto; }
@@ -167,12 +175,34 @@
   #src-custom-row { display: none; }
   #src-custom-row.show { display: flex; }
   footer { margin-top: 14px; color: var(--dim); font-size: 11.5px; }
+  textarea {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 7px; padding: 7px 9px; font: inherit; font-size: 13px;
+    outline: none; width: 100%; resize: vertical;
+  }
+  textarea:focus { border-color: var(--accent); }
+  .stack { display: flex; flex-direction: column; gap: 8px; padding: 10px 14px;
+           border-bottom: 1px solid var(--line); }
+  .stack:last-child { border-bottom: 0; }
+  .tick { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px;
+          color: var(--text); cursor: pointer; }
+  .tick input { margin-top: 3px; accent-color: var(--accent); }
+  #crash-banner { border-color: var(--warn); margin-bottom: 14px; }
+  #crash-banner h2 { color: var(--warn); }
+  pre.payload { font-size: 11px; color: var(--dim); white-space: pre-wrap;
+                word-break: break-word; max-height: 220px; overflow: auto;
+                background: var(--panel2); border-radius: 7px; padding: 8px; }
+  a.quiet { color: var(--accent); text-decoration: none; }
+  #phones { display: none; margin: 0 0 14px; padding: 9px 14px; font-size: 12.5px;
+            overflow-wrap: anywhere; }
+  #phones b { color: var(--text); font-size: 14px; letter-spacing: .5px; }
+  #phones.open b { color: var(--warn); }
 </style>
 </head>
 <body>
 <header>
   <div id="conn" title="control connection"></div>
-  <h1>face<span>track</span></h1>
+  <h1>yew<span>ee</span></h1>
   <div id="onair">NDI OFF</div>
   <div id="saved">✓ saved</div>
   <div class="chips">
@@ -181,6 +211,28 @@
     <div class="chip" title="total pipeline work vs the frame budget">load <b id="s-load">–</b>%</div>
   </div>
 </header>
+
+<div class="card" id="phones" title="shown only on the yewee machine itself"></div>
+
+<div class="card" id="crash-banner" style="display:none">
+  <h2>Yewee closed unexpectedly last time</h2>
+  <div class="stack">
+    <div>Yewee closed unexpectedly last time. Send a crash report to LeTissier
+      Creative Studios? <span class="hint">Your source, feeds and settings were
+      restored.</span></div>
+    <div class="hint" id="crash-summary"></div>
+    <textarea id="crash-note" rows="2" maxlength="2000"
+      placeholder="What were you doing when it closed? (optional — kept by the studio, never posted publicly)"></textarea>
+    <details><summary class="hint" style="cursor:pointer">Exactly what would be sent</summary>
+      <pre class="payload" id="crash-payload"></pre></details>
+    <label class="tick"><input type="checkbox" id="crash-always"> Always send crash reports</label>
+    <div style="display:flex; gap:8px">
+      <button id="crash-send" style="flex:1">Send</button>
+      <button id="crash-dismiss" class="ghost" style="flex:1">Don't send</button>
+    </div>
+    <div class="hint" id="crash-msg"></div>
+  </div>
+</div>
 
 <div class="presets" id="presets">
   <button class="preset" data-preset="wide" title="search detail 960 · strictness 0.35 · no size filter · detect every frame">Wide crowd<small>whole audience, small faces</small></button>
@@ -540,10 +592,47 @@
            style="color: var(--accent); text-decoration: none">view log</a>
       </div>
     </details>
+
+    <details class="card" data-card="help" style="margin-top: 14px" open>
+      <summary>Help &amp; feedback <span class="tag" id="help-version"></span></summary>
+      <div class="row">
+        <div class="lbl"><label for="reports-auto">Send crash reports automatically</label>
+          <span class="hint">off unless you turn it on · the error, app version, OS
+            and a random install id — never video, names, licence keys or source names</span></div>
+        <label class="switch"><input type="checkbox" id="reports-auto"><span class="slider"></span></label>
+      </div>
+      <div class="stack">
+        <button id="fb-open" class="ghost">Send feedback…</button>
+        <div id="fb-form" style="display:none; flex-direction:column; gap:8px">
+          <select id="fb-type">
+            <option value="bug">Something's wrong</option>
+            <option value="idea">An idea or feature request</option>
+            <option value="question">A question</option>
+            <option value="praise">Praise</option>
+          </select>
+          <textarea id="fb-message" rows="4" maxlength="5000"
+            placeholder="What happened, or what would help?"></textarea>
+          <input type="text" id="fb-email" maxlength="254" autocomplete="email"
+            placeholder="Your e-mail, if you'd like a reply (optional)">
+          <label class="tick" id="fb-licence-row" style="display:none">
+            <input type="checkbox" id="fb-licence"> Include my licence so you know who I am</label>
+          <label class="tick"><input type="checkbox" id="fb-public">
+            OK to post this publicly on the issue tracker, without my name or email</label>
+          <button id="fb-send">Send</button>
+          <div class="hint" id="fb-result"></div>
+        </div>
+        <div class="hint" id="reports-queued"></div>
+      </div>
+      <div class="hint" style="padding: 10px 14px 11px">
+        <a class="quiet" href="/notices" target="_blank">Third-party licences</a> ·
+        NDI® is a registered trademark of Vizrt NDI AB —
+        <a class="quiet" href="https://ndi.video/" target="_blank" rel="noopener">ndi.video</a>
+      </div>
+    </details>
   </div>
 </div>
 
-<footer>yewee · finds and follows faces — does not identify people · settings save automatically<span id="uptime"></span></footer>
+<footer>yewee <span id="app-version"></span> · finds and follows faces — does not identify people · settings save automatically<span id="uptime"></span></footer>
 
 <script>
 (function () {
@@ -959,6 +1048,51 @@
     if (e.key === "Enter") $("lic-activate").click();
   });
 
+  // ---- crash reports and feedback ----
+  let crashShownFor = "";
+  function applyReports(r, licenceOffer) {
+    if (!r) return;
+    const auto = $("reports-auto");
+    if (document.activeElement !== auto) auto.checked = !!r.auto_send;
+    const banner = $("crash-banner");
+    if (r.prompt) {
+      banner.style.display = "";
+      $("crash-summary").textContent = r.prompt.kind + ": " + (r.prompt.summary || "");
+      const text = JSON.stringify(r.prompt.payload, null, 2);
+      if (crashShownFor !== text) {
+        crashShownFor = text;
+        $("crash-payload").textContent = text;
+      }
+    } else if (!$("crash-msg").textContent) {
+      banner.style.display = "none";
+    }
+    $("reports-queued").textContent = r.queued
+      ? r.queued + " waiting to send — they go when this machine is online" : "";
+    $("fb-licence-row").style.display = licenceOffer ? "" : "none";
+    if (!licenceOffer) $("fb-licence").checked = false;
+  }
+  $("reports-auto").addEventListener("change", (e) =>
+    send({ type: "reports", data: { auto_send: e.target.checked } }));
+  function answerCrash(yes) {
+    $("crash-send").disabled = $("crash-dismiss").disabled = true;
+    send({ type: "crash_prompt", data: { send: yes, always: $("crash-always").checked,
+                                         note: $("crash-note").value } });
+  }
+  $("crash-send").addEventListener("click", () => answerCrash(true));
+  $("crash-dismiss").addEventListener("click", () => answerCrash(false));
+  $("fb-open").addEventListener("click", () => {
+    const f = $("fb-form");
+    f.style.display = f.style.display === "none" ? "flex" : "none";
+  });
+  $("fb-send").addEventListener("click", () => {
+    $("fb-send").disabled = true;
+    $("fb-send").textContent = "Sending…";
+    send({ type: "feedback", data: {
+      type: $("fb-type").value, message: $("fb-message").value,
+      email: $("fb-email").value, licence: $("fb-licence").checked,
+      public: $("fb-public").checked } });
+  });
+
   // ---- collapsible cards: remember what each operator keeps open ----
   document.querySelectorAll("details.card[data-card]").forEach((d) => {
     const key = "yewee_card_" + d.dataset.card;
@@ -1000,6 +1134,26 @@
     setTimeout(() => { pv.src = "/preview.mjpg?t=" + Date.now() + pinQ(); }, 2000);
   });
 
+  // Only the machine's own panel is sent this: how a phone gets in.
+  function applyPhones(ph) {
+    const box = $("phones");
+    if (!ph) { box.style.display = "none"; return; }
+    box.textContent = "";
+    const add = (text, bold) => {
+      const el = document.createElement(bold ? "b" : "span");
+      el.textContent = text;
+      box.appendChild(el);
+    };
+    add(ph.url ? "Phones and other computers: " : "Other devices: ");
+    if (ph.url) { add(ph.url, true); add(" · "); }
+    if (ph.pin) { add("PIN "); add(ph.pin, true);
+                  add(" — asked for once per device; this machine doesn't need it"); }
+    else { add("no PIN", true);
+           add(" — anyone on this network can change or quit the show (start with --pin to set one)"); }
+    box.classList.toggle("open", !ph.pin);
+    box.style.display = "block";
+  }
+
   function connect() {
     const proto = location.protocol === "https:" ? "wss" : "ws";
     ws = new WebSocket(proto + "://" + location.host + "/ws");
@@ -1018,6 +1172,10 @@
         localStorage.removeItem("yewee_pin");
         pin = "";
         pvMsg.textContent = "Locked — enter the PIN";
+      } else if (e.code === 4002) {  // too many wrong PINs from this device
+        localStorage.removeItem("yewee_pin");
+        pin = "";
+        pvMsg.textContent = "Too many wrong PINs — wait a minute, then try again";
       } else {
         pvMsg.textContent = sentQuit
           ? "yewee has quit — start it again with the launcher on the machine"
@@ -1046,7 +1204,33 @@
         if (msg.ok) $("lic-key").value = "";
         return;
       }
-      if (msg.type === "tick") { applyStats(msg.stats || {}); applyParams(msg.params || {}); }
+      if (msg.type === "tick") {
+        applyStats(msg.stats || {}); applyParams(msg.params || {});
+        if (msg.version) {
+          $("app-version").textContent = msg.version;
+          $("help-version").textContent = "v" + msg.version;
+        }
+        applyReports(msg.reports, msg.licence_offer);
+        applyPhones(msg.phones);
+      }
+      if (msg.type === "crash_prompt_result") {
+        $("crash-msg").textContent = msg.message;
+        setTimeout(() => {
+          $("crash-msg").textContent = "";
+          $("crash-banner").style.display = "none";
+          $("crash-send").disabled = $("crash-dismiss").disabled = false;
+        }, 4000);
+        return;
+      }
+      if (msg.type === "feedback_result") {
+        $("fb-send").disabled = false;
+        $("fb-send").textContent = "Send";
+        const el = $("fb-result");
+        el.textContent = msg.message;
+        el.style.color = msg.ok ? "var(--good)" : "var(--warn)";
+        if (msg.ok) { $("fb-message").value = ""; $("fb-public").checked = false; }
+        return;
+      }
     };
   }
   connect();
