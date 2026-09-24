@@ -16,7 +16,7 @@ import json
 import threading
 from pathlib import Path
 
-from . import app_version
+from . import app_version, reporting
 from .params import LiveParams
 from .pipeline import Pipeline
 
@@ -34,6 +34,14 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None,
 
     app = FastAPI(title="yewee")
     index_html = (STATIC_DIR / "index.html").read_text()
+
+    def _licence_for_feedback() -> str:
+        """The shop key a feedback form may offer to include: only a bought
+        (not trial) letissier.ie licence, which the studio can resolve."""
+        lic = pipeline.licence()
+        if lic.get("state") == "licensed" and lic.get("source") == "shop":
+            return str(lic.get("key") or "")
+        return ""
 
     def _pin_ok(request: Request) -> bool:
         if not pin:
@@ -195,6 +203,35 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None,
                         pipeline.refresh_licence()
                         await sock.send_text(json.dumps(
                             {"type": "licence_result", "ok": ok, "message": note}))
+                    elif kind == "reports":
+                        d = data.get("data") or {}
+                        if "auto_send" in d:
+                            reporting.set_auto_send(bool(d["auto_send"]))
+                    elif kind == "crash_prompt":
+                        d = data.get("data") or {}
+                        try:
+                            note = await asyncio.to_thread(
+                                reporting.answer_prompt, bool(d.get("send")),
+                                bool(d.get("always")), str(d.get("note") or ""))
+                            ok = True
+                        except Exception as exc:
+                            ok, note = False, f"Couldn't do that: {exc}"
+                        await sock.send_text(json.dumps(
+                            {"type": "crash_prompt_result", "ok": ok, "message": note}))
+                    elif kind == "feedback":
+                        d = data.get("data") or {}
+                        # the key is looked up here, never taken from the
+                        # browser, and only when the person ticked the box
+                        key = _licence_for_feedback() if d.get("licence") else ""
+                        try:
+                            ok, note = await asyncio.to_thread(
+                                reporting.submit_feedback, str(d.get("type") or ""),
+                                str(d.get("message") or ""), str(d.get("email") or ""),
+                                key, bool(d.get("public")))
+                        except Exception as exc:
+                            ok, note = False, f"Couldn't send that: {exc}"
+                        await sock.send_text(json.dumps(
+                            {"type": "feedback_result", "ok": ok, "message": note}))
                     elif kind == "control":
                         action = data.get("data")
                         if action == "pause":
@@ -210,6 +247,8 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None,
                     "stats": pipeline.get_stats(),
                     "params": params.snapshot(),
                     "version": app_version(),
+                    "reports": reporting.panel_state(),
+                    "licence_offer": bool(_licence_for_feedback()),
                 }))
         except WebSocketDisconnect:
             pass

@@ -60,8 +60,9 @@ def _write(update: dict) -> None:
             merged = current.get("params", {})
             merged.update(update["params"])
             current["params"] = merged
-        if "source" in update:
-            current["source"] = update["source"]
+        for key, value in update.items():
+            if key != "params":
+                current[key] = value     # "source", or a section such as "reports"
         tmp = SETTINGS_PATH.with_suffix(".json.tmp")
         try:
             tmp.write_text(json.dumps(current, indent=2))
@@ -78,6 +79,19 @@ def save(params: dict | None = None, source: str | None = None) -> None:
         update["source"] = source
     if update:
         _write(update)
+
+
+def load_section(name: str) -> dict:
+    """A top-level section of settings.json other than params/source, e.g.
+    "reports" (crash-report consent and the install id)."""
+    value = _read_raw().get(name)
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def save_section(name: str, values: dict) -> None:
+    if name in ("params", "source", "pin"):
+        raise ValueError(f"{name} is not a free section")
+    _write({name: dict(values)})
 
 
 def save_debounced(params: dict, delay: float = 0.6) -> None:

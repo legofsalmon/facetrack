@@ -121,6 +121,22 @@ names. That's it.
   the pipeline wedges for 30 seconds (stalled driver, blocked I/O).
   Everything the app printed is also in `logs/yewee.log` for
   after-the-fact diagnosis — or the *view log* link in the panel.
+- **After a crash** yewee restores your source, feeds and every panel
+  setting as usual, and the panel asks once: *"Yewee closed unexpectedly
+  last time. Send a crash report to LeTissier Creative Studios?"* Nothing
+  is sent unless you press Send there or switch on **Send crash reports
+  automatically** (Help & feedback card; off by default). A report holds
+  the error and its stack trace, the app version, OS and a random install
+  id — scrubbed on this machine of your user name, home folder, licence
+  keys, e-mail and IP addresses, and source and feed names. It never
+  holds video, settings or anything about the people in shot. Reports
+  wait in `reports/queue` until the machine is online.
+- **A frame that fails is skipped**, not fatal: tracking carries on with
+  the next one, and the panel says what went wrong.
+- **Send feedback…** in the Help & feedback card sends a bug report, idea,
+  question or praise straight to the studio. Your e-mail is optional, your
+  licence is included only if you tick the box, and nothing is posted on
+  the public issue tracker unless you tick that box too.
 - **The machine can't sleep** while yewee runs (caffeinate on macOS,
   the equivalent power override on Windows) — no dead feed because a
   screensaver kicked in.
@@ -237,6 +253,8 @@ yewee/
   params.py              validated live parameters
   settings.py            auto-persistence (settings.json)
   webui.py               FastAPI app: panel, WebSocket, MJPEG, /sources
+  crashguard.py          crash marker, faulthandler, exception hooks
+  reporting.py           opt-in crash reports + feedback to letissier.ie
   static/index.html      the control panel
   doctor.py              self-check (python -m yewee.doctor)
 models/                  ONNX models (doctor --fix re-downloads)

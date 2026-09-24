@@ -269,6 +269,16 @@ def main(argv=None) -> int:
     if args.source is None:
         args.source = saved["source"] or "0"
 
+    # Crash reports: names of sources and custom feed names never leave the
+    # machine (the scrubber replaces them), and the report on a bad last run
+    # is queued only if sending is switched on — otherwise the panel asks.
+    from yewee import reporting
+    reporting.add_secrets(saved["source"], args.source)
+    for custom in (args.ndi_name, args.ndi_overlay):
+        if custom and not custom.startswith("Yewee"):
+            reporting.add_secrets(custom)
+    crash_report = reporting.handle_previous_session(previous_crash)
+
     if sys.platform == "darwin":
         # First-ever run: put the macOS camera prompt up now and wait for the
         # answer, on the main thread. Opening a camera before the user has
@@ -290,7 +300,15 @@ def main(argv=None) -> int:
     # shop licences check in with letissier.ie daily, off the startup path
     from yewee.licensing import start_check_ins
     start_check_ins()
-    pipeline.on_source_change = lambda spec: settings.save(source=spec)
+    def _source_changed(spec: str) -> None:
+        settings.save(source=spec)
+        reporting.add_secrets(spec)
+
+    pipeline.on_source_change = _source_changed
+    # errors yewee recovers from are reported only when sending is on
+    pipeline.on_frame_error = reporting.note_nonfatal
+    crashguard.on_thread_exception = reporting.note_nonfatal
+    reporting.flush_in_background(delay=5.0)    # consented reports, off the startup path
 
     panel_url = None
     web_server = None
@@ -334,6 +352,11 @@ def main(argv=None) -> int:
         print(f"\n  ! yewee closed unexpectedly last time ({previous_crash['kind']}): "
               f"{previous_crash['summary'][:160]}"
               "\n  ! Your source, feeds and settings have been restored.")
+        if crash_report == "queued":
+            print("  ! A crash report will be sent (\"Send crash reports "
+                  "automatically\" is on).")
+        elif crash_report == "prompt" and panel_url:
+            print("  ! The control panel asks whether to send a crash report.")
     print("  Press Ctrl-C to stop.\n", flush=True)
 
     if panel_url and not args.no_browser:

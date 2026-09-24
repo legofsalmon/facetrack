@@ -9,8 +9,10 @@ anywhere (CI included).
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
+import re
 import sys
 import tempfile
 import traceback
@@ -1336,6 +1338,248 @@ def _():
         (d / f"running-{other}.json").write_text('{"version": "1.0.0", "t": 1}')
         assert cg.previous_session(d) is None
         assert (d / f"running-{other}.json").exists(), "a live instance's marker is left"
+
+
+class _ReportsSandbox:
+    """Settings, queue and prompt in a temp dir, and a fake transport that
+    records what would have gone over the wire."""
+
+    def __init__(self, statuses=None):
+        from yewee import reporting, settings
+        self.r, self.settings = reporting, settings
+        self.dir = tempfile.TemporaryDirectory()
+        d = Path(self.dir.name)
+        self.saved = (settings.SETTINGS_PATH, reporting.state_dir, reporting._send)
+        settings.SETTINGS_PATH = d / "settings.json"
+        reporting.state_dir = lambda: d
+        reporting._reset_for_tests()
+        self.sent: list[tuple[str, dict]] = []
+        self.statuses = list(statuses or [])
+
+        def fake_send(endpoint, payload):
+            self.sent.append((endpoint, payload))
+            status = self.statuses.pop(0) if self.statuses else 202
+            if status is None:
+                raise OSError("offline")
+            return status
+
+        reporting._send = fake_send
+
+    def restore(self):
+        self.settings.SETTINGS_PATH, self.r.state_dir, self.r._send = self.saved
+        self.r._reset_for_tests()
+        self.dir.cleanup()
+
+
+@run("reports: the scrubber keeps paths, keys, names and addresses on the machine")
+def _():
+    from yewee import reporting as r
+    home = str(Path.home())
+    r._reset_for_tests()
+    r.add_secrets("ndi:STUDIO-PC (PTZ Cam 1)", "cam:Blackmagic UltraStudio", "0")
+    text = (f'File "{home}/shows/yewee/main.py", line 3, in main\n'
+            'File "/Users/jane/Movies/crowd.mov"\n'
+            'File "C:\\Users\\Jane Doe\\AppData\\yewee\\x.py"\n'
+            "GET https://api.example.com/v1/x?token=abc123&user=jane\n"
+            "key LT-YEWE-K9HZ-NGVX-PHJB and YW1.eyJhIjoxfQ.c2ln\n"
+            "mail jane@example.org from 192.168.1.20 via fe80:0:0:0:1:2:3:4\n"
+            "source 'STUDIO-PC (PTZ Cam 1)' and camera Blackmagic UltraStudio\n"
+            "NDI source matching 'x' not found. Visible sources: ['A (B)', 'C (D)']\n"
+            "bound on 127.0.0.1 with macos arm64")
+    out = r.scrub(text)
+    for gone in (home, "jane", "Jane Doe", "token=abc123", "K9HZ", "YW1.eyJ",
+                 "jane@example.org", "192.168.1.20", "fe80:", "PTZ Cam 1",
+                 "UltraStudio", "A (B)"):
+        assert gone.lower() not in out.lower(), f"{gone!r} survived:\n{out}"
+    for kept in ("~/shows/yewee/main.py", "/Users/<user>/Movies",
+                 "https://api.example.com/v1/x", "127.0.0.1", "macos arm64",
+                 "<licence>", "<email>", "<ip>"):
+        assert kept in out, f"{kept!r} missing:\n{out}"
+    r._reset_for_tests()
+
+
+@run("reports: payloads keep to the contract's fields and limits")
+def _():
+    box = _ReportsSandbox()
+    try:
+        r = box.r
+        huge = "x" * 100_000
+        p = r.crash_payload("panic-ish", "first line\nValueError: " + huge,
+                            'File "a.py", line 1, in f\n' + huge,
+                            note="n" * 5000, occurred_at="2026-09-24T02:10:00Z")
+        assert set(p) <= set(r.CRASH_FIELDS), set(p) - set(r.CRASH_FIELDS)
+        assert p["product"] == "yewee" and p["version"] == "1.0.0"
+        assert p["kind"] == "other", "unknown kinds become other"
+        assert p["os"] in ("macos", "windows", "linux")
+        assert len(p["summary"]) <= 300 and len(p["detail"]) <= 32768
+        assert len(p["note"]) <= 2000 and len(p["signature"]) <= 128
+        assert len(json.dumps(p).encode()) <= r.MAX_BODY
+        assert re.fullmatch(r"[A-Za-z0-9-]{8,64}", p["install"])
+        assert p["install"] == r.install_id(), "one id per install"
+        raw = json.loads(box.settings.SETTINGS_PATH.read_text())
+        assert raw["reports"]["install"] == p["install"], "kept with the settings"
+        # the same crash from another machine or build has the same signature
+        a = r.signature("exception", "KeyError: 'x'",
+                        'File "/Users/a/yewee/pipeline.py", line 10, in run\n')
+        b = r.signature("exception", "KeyError: 'y'",
+                        'File "C:\\\\x\\\\yewee\\\\pipeline.py", line 99, in run\n')
+        assert a == b, "signature ignores paths, line numbers and message"
+        # a crash never carries a licence, e-mail or name, even if typed
+        p = r.crash_payload("exception", "LT-YEWE-K9HZ-NGVX-PHJB jane@x.org", "",
+                            note="my key is LT-YEWE-K9HZ-NGVX-PHJB")
+        blob = json.dumps(p)
+        assert "K9HZ" not in blob and "jane@x.org" not in blob
+        assert not ({"licence", "email", "name"} & set(p))
+
+        f = r.feedback_payload("idea", "  map a MIDI fader  ")
+        assert f["message"] == "map a MIDI fader" and f["public"] is False
+        assert "licence" not in f and "email" not in f
+        assert set(f) <= set(r.FEEDBACK_FIELDS)
+        f = r.feedback_payload("bug", "x", email="me@example.com",
+                               licence="LT-YEWE-K9HZ-NGVX-PHJB", public=True)
+        assert f["email"] == "me@example.com" and f["public"] is True
+        assert f["licence"] == "LT-YEWE-K9HZ-NGVX-PHJB"
+        for bad in (("nope", "x"), ("bug", "  "), ("bug", "y" * 5001)):
+            try:
+                r.feedback_payload(*bad)
+                raise AssertionError(f"accepted {bad[0]!r}/{len(bad[1])} chars")
+            except ValueError:
+                pass
+        try:
+            r.feedback_payload("bug", "x", email="not an address")
+            raise AssertionError("accepted a bad e-mail")
+        except ValueError:
+            pass
+    finally:
+        box.restore()
+
+
+@run("reports: the queue keeps 20, drops what the service refuses, waits when offline")
+def _():
+    box = _ReportsSandbox()
+    try:
+        r = box.r
+        for i in range(25):
+            r.enqueue("crash", r.crash_payload("exception", f"E{i}: x"))
+        items = r.queued()
+        assert len(items) == 20, len(items)
+        first = json.loads(items[0].read_text())["payload"]["summary"]
+        assert first == "E5: x", f"oldest must be dropped first, head is {first}"
+        # offline: nothing is lost, and it stops at the first failure
+        box.statuses = [None]
+        got = r.flush()
+        assert got["sent"] == 0 and len(r.queued()) == 20 and len(box.sent) == 1
+        # stored, refused, too large, rate limited: 202/400/413 go, 429 stays
+        box.sent.clear()
+        box.statuses = [202, 400, 413, 429]
+        got = r.flush()
+        assert (got["sent"], got["dropped"]) == (1, 2), got
+        assert len(r.queued()) == 17 and len(box.sent) == 4
+        box.statuses = []
+        assert r.flush()["sent"] == 17 and not r.queued()
+    finally:
+        box.restore()
+
+
+@run("reports: setting off and no click means nothing is sent")
+def _():
+    box = _ReportsSandbox()
+    try:
+        r = box.r
+        report = {"kind": "exception", "summary": "RuntimeError: boom",
+                  "detail": "Traceback...", "occurredAt": "2026-09-24T02:10:00Z",
+                  "version": "1.0.0"}
+        assert r.auto_send() is False, "sending is off until switched on"
+        assert r.handle_previous_session(report) == "prompt"
+        assert r.note_nonfatal(ValueError("skipped frame")) is False
+        r.flush()
+        r.flush_in_background().join(5)
+        assert box.sent == [] and r.queued() == [], "nothing may leave without consent"
+        # the question survives a restart until it is answered
+        r._reset_for_tests()
+        assert r.panel_state()["prompt"]["summary"] == "RuntimeError: boom"
+        assert r.handle_previous_session(None) == "prompt"
+        assert r.answer_prompt(send=False) == "Not sent."
+        assert r.pending_prompt() is None and box.sent == []
+
+        # a click on Send (with a note) sends that one report, once
+        r.handle_previous_session(report)
+        msg = r.answer_prompt(send=True, note="switching sources on jane@x.org")
+        assert msg.startswith("Sent"), msg
+        assert len(box.sent) == 1 and box.sent[0][0] == "crash"
+        assert box.sent[0][1]["note"] == "switching sources on <email>"
+        assert r.auto_send() is False, "one Send is not a standing yes"
+
+        # "Always send": the next crash, and recovered errors, go by themselves
+        r.handle_previous_session(report)
+        r.answer_prompt(send=True, always=True)
+        assert r.auto_send() is True
+        box.sent.clear()
+        assert r.handle_previous_session(report) == "queued"
+        assert r.note_nonfatal(ValueError("skipped frame")) is True
+        assert r.note_nonfatal(ValueError("skipped frame")) is False, "once per run"
+        r.flush()
+        assert [e for e, _ in box.sent] == ["crash", "crash"], box.sent
+        # feedback goes only through submit_feedback (the Send button)
+        ok, msg = r.submit_feedback("idea", "more presets", public=False)
+        assert ok and box.sent[-1][0] == "feedback" and "licence" not in box.sent[-1][1]
+    finally:
+        box.restore()
+
+
+@run("reports: the real transport posts JSON to LETISSIER_API with an 8 s timeout")
+def _():
+    import subprocess
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    got = []
+
+    class H(BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers["Content-Length"]))
+            got.append((self.path, dict(self.headers), json.loads(body)))
+            code = 202 if self.path.endswith("/crash") else 429
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"ok": true, "id": "r1"}')
+
+        def log_message(self, *a):
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_port}"
+    from yewee import reporting as r
+    saved = (r.API_BASE, r._send)
+    r.API_BASE, r._send = base, r._http_post
+    try:
+        assert r.TIMEOUT == 8.0
+        payload = {"product": "yewee", "version": "1.0.0", "os": "linux",
+                   "kind": "exception", "summary": "x"}
+        assert r._http_post("crash", payload) == 202
+        assert r._http_post("feedback", {"product": "yewee"}) == 429
+        path, headers, body = got[0]
+        assert path == "/api/reports/crash" and body == payload
+        assert headers["Content-Type"] == "application/json"
+        assert headers["User-Agent"].startswith("Yewee/1.0.0 ("), headers["User-Agent"]
+        assert got[1][0] == "/api/reports/feedback"
+    finally:
+        r.API_BASE, r._send = saved
+        srv.shutdown()
+    # the environment override is read when the module loads
+    out = subprocess.run(
+        [sys.executable, "-c", "import sys; sys.path.insert(0, %r); "
+         "from yewee import reporting; print(reporting.API_BASE)" % ROOT],
+        capture_output=True, text=True, env={**os.environ,
+                                             "LETISSIER_API": "http://127.0.0.1:9/"})
+    assert out.stdout.strip() == "http://127.0.0.1:9", out.stdout + out.stderr
+    out = subprocess.run(
+        [sys.executable, "-c", "import sys; sys.path.insert(0, %r); "
+         "from yewee import reporting; print(reporting.API_BASE)" % ROOT],
+        capture_output=True, text=True,
+        env={k: v for k, v in os.environ.items() if k != "LETISSIER_API"})
+    assert out.stdout.strip() == "https://letissier.ie", out.stdout + out.stderr
 
 
 @run("emotion: FER+ labels a face")
