@@ -1169,6 +1169,118 @@ def _():
         t.join(timeout=5)
 
 
+def _quiet_pipeline(**over):
+    from main import DEFAULTS, parse_args
+    from yewee.params import LiveParams
+    from yewee.pipeline import Pipeline
+    args = parse_args(["--source", os.path.join(ROOT, "test_media", "synth.mp4"),
+                       "--no-ndi", "--no-preview", "--no-web", "--no-browser",
+                       "--quiet", "--backend", "yunet", "--loop"])
+    params = LiveParams(**{**DEFAULTS, "ndi_program": False, "panel_preview": False,
+                           "local_preview": False, "emotion_enabled": False, **over})
+    return Pipeline(args, params, web_enabled=False), params
+
+
+@run("pipeline: a frame that raises is skipped and tracking carries on")
+def _():
+    import threading
+    import time
+    pipe, _params = _quiet_pipeline(detector="yunet")
+    real = pipe.detector.detect
+    calls = {"n": 0}
+
+    def sometimes_broken(frame):
+        calls["n"] += 1
+        if calls["n"] % 3 == 0:
+            raise RuntimeError("simulated detector fault")
+        return real(frame)
+
+    pipe.detector.detect = sometimes_broken
+    reported = []
+    pipe.on_frame_error = reported.append
+    pipe.args.max_frames = 12
+    import contextlib
+    import io
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        done = pipe.run()
+    assert done == 12, f"loop ended early after {done} good frames"
+    assert calls["n"] >= 17, calls
+    assert len(reported) == 1, "each distinct failure is reported once per run"
+    assert pipe.get_stats().get("frame_errors", 0) >= 5
+
+    # every frame failing: the loop stays up, outputs fall back to black,
+    # and it stops cleanly when asked
+    pipe2, params2 = _quiet_pipeline(detector="yunet")   # no engine swap mid-test
+
+    def always_broken(frame):
+        raise ValueError("every frame is bad")
+
+    pipe2.detector.detect = always_broken
+    sent = []
+
+    class Out:
+        flip = False
+
+        def __init__(self, name, fps=30.0):
+            pass
+
+        def send(self, img):
+            sent.append(int(img.max()))
+
+        def close(self):
+            pass
+
+    # stand in for NDI (absent in CI) with an output that records frames
+    import types
+    fake_ndi = types.ModuleType("yewee.ndi_io")
+    fake_ndi.NDIOutput = Out
+    saved_mod = sys.modules.get("yewee.ndi_io")
+    sys.modules["yewee.ndi_io"] = fake_ndi
+    params2.set("ndi_program", True)
+    t = threading.Thread(target=pipe2.run, daemon=True)
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()):
+            t.start()
+            deadline = time.monotonic() + 8
+            while time.monotonic() < deadline and not sent:
+                time.sleep(0.05)
+            alive = t.is_alive()
+            pipe2.stop()
+            t.join(timeout=5)
+    finally:
+        if saved_mod is not None:
+            sys.modules["yewee.ndi_io"] = saved_mod
+        else:
+            sys.modules.pop("yewee.ndi_io", None)
+    assert alive, "the loop died instead of skipping failed frames"
+    assert sent and max(sent) == 0, "persistent failures must put black on the feeds"
+    assert "tracking continues" in pipe2.get_stats().get("error", "")
+
+
+@run("pipeline: a saved detector that no longer loads falls back at startup")
+def _():
+    from yewee import pipeline as pl
+    real = pl.pick_backend
+
+    def picky(backend, size, threshold):
+        if backend != "yunet":
+            raise RuntimeError("no GPU runtime here")
+        return real(backend, size, threshold)
+
+    pl.pick_backend = picky
+    try:
+        pipe, params = _quiet_pipeline(detector="centerface")
+    finally:
+        pl.pick_backend = real
+    try:
+        assert pipe.detector.name.startswith("yunet"), pipe.detector.name
+        assert params.snapshot()["detector"] == "yunet"
+        assert "unavailable" in pipe.startup_error
+    finally:
+        pipe.source.close()
+
+
 @run("emotion: FER+ labels a face")
 def _():
     from yewee.detectors import YuNetDetector
