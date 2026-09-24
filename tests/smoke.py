@@ -877,6 +877,9 @@ def _():
         assert body["key"] == "LT-YEWE-K9HZ-NGVX-PHJB", "key sent in canonical form"
         # the raw fingerprint goes on the wire; the service hashes it
         assert body["machine"] == box.fingerprint
+        # the service refuses another product's key before taking a seat
+        # only when told which product is asking
+        assert body["product"] == "yewee", body
         assert lic.status()["state"] == "licensed"
 
         assert lic.check_in() == "checked in"

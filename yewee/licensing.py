@@ -409,8 +409,12 @@ def activate_shop_key(key: str) -> tuple[bool, str]:
         return False, ("Can't read this machine's hardware id, so it can't "
                        "take a licence seat. Please tell us at info@letissier.ie.")
     try:
+        # "product" makes the service refuse another product's key before
+        # it takes a seat (reason wrong_product). shop_key_problem() has
+        # already caught that from the key's first group; this is the
+        # server's word on it, for keys whose group and product disagree.
         reply = _post("/api/licence/activate",
-                      {"key": key, "machine": fingerprint,
+                      {"key": key, "machine": fingerprint, "product": SHOP_PRODUCT,
                        "label": f"Yewee on {socket.gethostname()}"})
         # The service echoes the hash it recorded. If that is not ours the
         # token can never verify here, and re-activating would only repeat it.
