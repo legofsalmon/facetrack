@@ -1218,6 +1218,16 @@ def _():
     assert "does not match __version__" in err.getvalue()
 
 
+@run("expressions: off on a fresh install, a saved choice is kept")
+def _():
+    from main import build_params, parse_args
+    args = parse_args([])
+    assert build_params(args, {}).snapshot()["emotion_enabled"] is False
+    assert build_params(args, {"emotion_enabled": True}).snapshot()["emotion_enabled"] is True
+    no = parse_args(["--no-emotion"])
+    assert build_params(no, {"emotion_enabled": True}).snapshot()["emotion_enabled"] is False
+
+
 @run("launchers: every model they wait for is one the doctor provides")
 def _():
     # Both launchers re-run setup until each listed model exists, and after

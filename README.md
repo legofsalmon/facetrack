@@ -259,7 +259,8 @@ flags doesn't start a duplicate: it just opens the existing panel.
 
 yewee detects and follows faces; it performs no identity recognition,
 no matching against any database, and records nothing — frames are
-processed and discarded in memory. Expression labels are a cosmetic
+processed and discarded in memory. Expression labels are off until
+you switch them on in the panel, and are a cosmetic
 overlay estimate. For public events, follow your usual venue practice on
 camera signage, and keep this paragraph handy for client conversations.
 

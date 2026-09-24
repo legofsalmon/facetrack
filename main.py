@@ -26,7 +26,7 @@ from yewee.pipeline import Pipeline
 
 DEFAULTS = dict(detector="auto", out_fps=30.0, loop_file=True,
                 det_threshold=0.5, det_size=640, detect_every=1, min_face=0,
-                max_misses=15, emotion_enabled=True, emotion_budget=4,
+                max_misses=15, emotion_enabled=False, emotion_budget=4,
                 show_ids=True, show_stats=True, overlay_color="",
                 clean_main=False, flip=False,
                 cap_format="1280x720@30", cap_backend="any",
@@ -144,7 +144,11 @@ def build_params(args, saved_params: dict) -> LiveParams:
         detect_every=rv(args.detect_every, "detect_every"),
         min_face=rv(args.min_face, "min_face"),
         max_misses=rv(args.max_misses, "max_misses"),
-        emotion_enabled=False if args.no_emotion else saved_params.get("emotion_enabled", True),
+        # Off unless the operator switches it on: the product page promises
+        # "expression labels, if switched on", and inferring emotions from
+        # faces is a regulated use in the EU (see the release review).
+        emotion_enabled=False if args.no_emotion
+                        else saved_params.get("emotion_enabled", DEFAULTS["emotion_enabled"]),
         emotion_budget=rv(args.emotion_budget, "emotion_budget"),
         show_ids=False if args.no_ids else saved_params.get("show_ids", True),
         show_stats=False if args.no_stats else saved_params.get("show_stats", True),
