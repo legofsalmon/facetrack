@@ -1181,6 +1181,25 @@ def _():
     assert all(t.emotion[0] in EMOTIONS for t in labelled)
 
 
+@run("launchers: every model they wait for is one the doctor provides")
+def _():
+    # Both launchers re-run setup until each listed model exists, and after
+    # setup they give up if one is still missing. A name the doctor cannot
+    # download (SCRFD, removed for its licence) made every fresh checkout
+    # stop at "Setup did not complete cleanly".
+    import re
+    from yewee.doctor import MODELS
+    for launcher in ("Yewee Mac.command", "Yewee Windows.bat"):
+        with open(os.path.join(ROOT, launcher), encoding="utf-8") as f:
+            text = f.read()
+        wanted = set(re.findall(r"models[/\\]([\w.-]+\.onnx)", text))
+        assert wanted, f"{launcher}: no model checks found"
+        unknown = wanted - set(MODELS)
+        assert not unknown, f"{launcher} waits for models nothing provides: {unknown}"
+        missing = {n for n in wanted if not os.path.exists(os.path.join(ROOT, "models", n))}
+        assert not missing, f"{launcher} waits for models not in the repo: {missing}"
+
+
 if FAILURES:
     print(f"\n{len(FAILURES)} test(s) failed: {', '.join(FAILURES)}")
     sys.exit(1)
