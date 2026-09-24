@@ -1281,6 +1281,63 @@ def _():
         pipe.source.close()
 
 
+def _child(code: str, d: str) -> int:
+    """Run `code` in a fresh interpreter with the crash guard following it
+    in directory d, the way main() does."""
+    import subprocess
+    prog = ("import sys; sys.path.insert(0, %r)\n"
+            "from pathlib import Path\n"
+            "from yewee import crashguard\n"
+            "D = Path(%r)\n"
+            "crashguard.begin('1.0.0', D)\n" % (ROOT, d)) + code
+    return subprocess.run([sys.executable, "-c", prog], capture_output=True,
+                          timeout=60).returncode
+
+
+@run("crash guard: a clean exit leaves nothing; each kind of death is told apart")
+def _():
+    from yewee import crashguard as cg
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td)
+        # clean: begin -> end_clean leaves no marker and no report
+        assert _child("crashguard.end_clean(D)\n", td) == 0
+        assert not list(d.glob("running-*")), "a clean exit must remove the marker"
+        assert cg.previous_session(d) is None
+
+        # an uncaught exception on the main thread
+        assert _child("raise ValueError('boom at frame 12')\n", td) != 0
+        rep = cg.previous_session(d)
+        assert rep and rep["kind"] == "exception", rep
+        assert rep["summary"] == "ValueError: boom at frame 12", rep
+        assert "Traceback" in rep["detail"] and rep["version"] == "1.0.0"
+        assert cg.previous_session(d) is None, "a report is produced once"
+
+        # a native crash no Python hook can see: faulthandler's stack
+        if sys.platform != "win32":
+            assert _child("import faulthandler; faulthandler._sigsegv()\n", td) != 0
+            rep = cg.previous_session(d)
+            assert rep and rep["kind"] == "signal", rep
+            assert "Segmentation fault" in rep["summary"], rep
+
+        # killed outright (power cut, force quit): only the marker is left
+        assert _child("import os; os._exit(9)\n", td) == 9
+        rep = cg.previous_session(d)
+        assert rep and rep["kind"] == "unclean-exit" and rep["detail"] == "", rep
+
+        # the watchdog's hang dump
+        assert _child("crashguard.record_hang('stalled for 30s', D)\n"
+                      "import os; os._exit(3)\n", td) == 3
+        rep = cg.previous_session(d)
+        assert rep and rep["kind"] == "hang" and "stalled" in rep["summary"], rep
+        assert "Thread" in rep["detail"] or "File" in rep["detail"], rep["detail"]
+
+        # a marker whose process is still alive is another instance, not a crash
+        other = os.getppid()
+        (d / f"running-{other}.json").write_text('{"version": "1.0.0", "t": 1}')
+        assert cg.previous_session(d) is None
+        assert (d / f"running-{other}.json").exists(), "a live instance's marker is left"
+
+
 @run("emotion: FER+ labels a face")
 def _():
     from yewee.detectors import YuNetDetector

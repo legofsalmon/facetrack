@@ -217,6 +217,9 @@ def _start_watchdog(pipeline) -> None:
                     and time.monotonic() - pipeline.heartbeat > 30):
                 print("[yewee] watchdog: pipeline stalled for 30s — "
                       "exiting so the launcher can restart", flush=True)
+                from yewee import crashguard
+                crashguard.record_hang("The pipeline stopped responding for 30 "
+                                       "seconds and the watchdog restarted yewee")
                 os._exit(3)
     threading.Thread(target=watch, daemon=True, name="yewee-watchdog").start()
 
@@ -250,6 +253,12 @@ def main(argv=None) -> int:
 
     from yewee.logging_setup import setup as setup_logging
     setup_logging()
+
+    # Follow this run (crash marker, faulthandler, exception hooks) and learn
+    # whether the last one ended badly. Its settings come back below exactly
+    # as on any launch; the report on it is only offered, never sent unasked.
+    from yewee import app_version, crashguard
+    previous_crash = crashguard.begin(app_version())
 
     saved = settings.load()
     params = build_params(args, saved["params"])
@@ -294,7 +303,6 @@ def main(argv=None) -> int:
         web_server = start_in_thread(app, args.web_host, args.web_port)
         panel_url = f"http://localhost:{args.web_port}"
 
-    from yewee import app_version
     print(f"\n  yewee {app_version()} is running")
     if panel_url:
         lan = _lan_ip()
@@ -322,6 +330,10 @@ def main(argv=None) -> int:
             from yewee.capture import camera_permission_holder
             print("  ! If this is a permissions issue: System Settings > Privacy & Security"
                   f" > Camera, allow {camera_permission_holder()}, then restart.")
+    if previous_crash:
+        print(f"\n  ! yewee closed unexpectedly last time ({previous_crash['kind']}): "
+              f"{previous_crash['summary'][:160]}"
+              "\n  ! Your source, feeds and settings have been restored.")
     print("  Press Ctrl-C to stop.\n", flush=True)
 
     if panel_url and not args.no_browser:
@@ -334,12 +346,17 @@ def main(argv=None) -> int:
 
     signal.signal(signal.SIGINT, _stop)
     signal.signal(signal.SIGTERM, _stop)
+    if hasattr(signal, "SIGHUP"):
+        # closing the Terminal window: a deliberate quit, not a crash
+        signal.signal(signal.SIGHUP, _stop)
+    crashguard.watch_console_close(pipeline.stop)   # the Windows equivalent
 
     if not args.max_frames:  # not for benchmarks/tests
         _keep_awake()
         _start_watchdog(pipeline)
 
     pipeline.run()
+    crashguard.end_clean()      # everything after this is a deliberate exit
 
     if pipeline.restart_requested:
         # Relaunch ourselves with the same command line (panel "Restart").
