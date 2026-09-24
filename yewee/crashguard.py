@@ -127,6 +127,12 @@ def pid_alive(pid: int) -> bool:
         return True
     except OSError:
         return False
+    try:     # Linux: a killed process nobody has reaped yet is not running
+        with open(f"/proc/{pid}/stat", encoding="ascii", errors="replace") as f:
+            if f.read().rsplit(")", 1)[-1].split()[0] == "Z":
+                return False
+    except (OSError, IndexError):
+        pass
     return True
 
 
