@@ -132,7 +132,10 @@
   .perf-row .pn { flex: 0 0 118px; color: var(--dim); }
   .perf-row .pt { flex: 1; height: 8px; background: var(--panel2); border-radius: 4px;
                   overflow: hidden; }
-  .perf-row .pb { height: 100%; background: var(--accent); border-radius: 4px; }
+  /* block, not the span's default inline: an inline box ignores width and
+     height, so the bars never drew and only the numbers showed */
+  .perf-row .pb { display: block; height: 100%; background: var(--accent);
+                  border-radius: 4px; }
   .perf-row .pb.warn { background: var(--warn); }
   .perf-row .pb.bad { background: var(--bad); }
   .perf-row .pv { flex: 0 0 96px; text-align: right; color: var(--dim);
