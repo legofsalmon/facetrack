@@ -305,6 +305,11 @@ camera signage, and keep this paragraph handy for client conversations.
 
 ### Licensing (product builds)
 
+Yewee's own code is licensed under the **Elastic License 2.0** (see
+`LICENSE`): you may use, copy and modify it, but not offer it to others
+as a hosted or managed service, and not remove or get around its licence
+keys. The models and bundled components keep their own licences (below).
+
 The repo build is **unrestricted** — no keys, no trial, nothing to
 activate. Licensing only switches on when a build is packaged with a
 vendor public key; see `docs/DISTRIBUTION.md` for issuing keys and
