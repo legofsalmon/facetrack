@@ -1,11 +1,10 @@
 name: build installers
 
-# Builds unsigned app bundles for both platforms. Signing and
-# notarisation need paid certificates and are done locally for now —
-# see build/README.md.
+# Test builds: unsigned app bundles for both platforms, kept as run
+# artefacts. Releases are cut by release.yml, which also signs, notarises
+# and publishes; a v* tag starts that one, not this, so a tag never builds
+# twice.
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch:
     inputs:
       version:
