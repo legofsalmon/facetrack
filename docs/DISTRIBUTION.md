@@ -176,8 +176,9 @@ on the environment.
   same operation: paste the key you were emailed. Server-backed
   activation, seat counting and revocation are Phase 4; the key format
   already carries a key id (`k`) for it.
-- **Purchase → key delivery** is Phase 3 (the payment provider's webhook
-  calls `issue_key.py`; the admin's ledger is the record until then).
+- **Purchase → key delivery** is done, and lives outside this repo: the
+  letissier.ie shop issues its own keys on a sale (see "Shop licences"
+  below). YW1 keys minted by hand are still recorded in the admin's ledger.
 - **Revocation** shows in the ledger but cannot be enforced without the
   Phase 4 server — a key already issued keeps working offline.
 
@@ -247,32 +248,38 @@ regresses).
 
 Commands and details in `build/README.md`.
 
-## Phase 3 — selling
+## Phase 3 — selling ✅ done
 
-**Superseded (September 2026):** Yewee is sold through the letissier.ie
-shop, with Paddle as merchant of record and keys issued by the shop's
-licence service; see "Shop licences" above. The plan below is kept for
-the reasoning.
+Yewee is sold through the **letissier.ie shop**, with **Paddle as merchant
+of record** and keys issued by the shop's own licence service. What a buyer
+pastes and what happens then is under "Shop licences" above; this section is
+the reasoning behind landing there.
 
-**Decided: Lemon Squeezy**, as Merchant of Record — it handles global
-VAT/sales-tax registration and remittance, which is the part that quietly
-sinks solo-developer products, and gives customers a hosted portal for
-receipts and re-downloads.
+**Why a merchant of record.** Paddle registers and remits VAT and sales tax
+worldwide, which is the part that quietly sinks solo-developer products, and
+gives customers a hosted portal for receipts and re-downloads. letissier.ie
+is an Irish limited company and is VAT registered.
 
-**Key delivery starts manual.** yewee uses its own signed keys (so
-activation works offline), not Lemon Squeezy's licence feature. On a
-sale, issue a key in the Licence Admin against the order number and reply
-with it — a minute of work, and the signing key never leaves your
-machine. Automating it via their `order_created` webhook means putting
-that private key in a cloud function, where a breach lets anyone mint
-licences; worth it only once the volume justifies the risk.
+**Why the shop rather than this repo.** Accounts, payment, licensing and
+subscriptions all live in
+[`legofsalmon/letissier.ie`](https://github.com/legofsalmon/letissier.ie) —
+one billing stack for the studio instead of a storefront per product. What
+stays here is Yewee's own offline verification, plus `tools/admin.py` and
+`tools/issue_key.py` for minting YW1 keys by hand. A sold build accepts both
+kinds, so a key issued either way activates.
+
+**Automating key delivery from this repo was considered and dropped.** A
+webhook calling `issue_key.py` would need the private signing key in a cloud
+function, where one breach lets anyone mint licences. The shop's licence
+service issues its own keys instead, and the YW1 signing key never leaves
+your machine.
 
 **The landing page** lives in its own repository,
 [`legofsalmon/facetrack-site`](https://github.com/legofsalmon/facetrack-site),
-deployed on Vercel. It is kept separate deliberately: Vercel then never
+deployed on Vercel. It was kept separate deliberately: Vercel then never
 needs read access to this product source, and site deploys don't drag
-~200 MB of models through a build. Checkout and account links point at
-Lemon Squeezy.
+~200 MB of models through a build. It carries no checkout — buying and
+account management are on the letissier.ie shop.
 
 **Downloads are live** (since v1.4): the site's Download section links
 straight to this repo's GitHub release assets, which are public because
@@ -281,9 +288,6 @@ if source-runs bypassing the licence starts to matter commercially. If
 the repo ever goes private, move the installers to a public
 releases-only repo (the `crewbox-dist` pattern) and repoint the two
 links on the site.
-
-**Until checkout opens**, licence keys go out by email — the site says
-so under the price line.
 
 ## Phase 4 — online activation (optional)
 
