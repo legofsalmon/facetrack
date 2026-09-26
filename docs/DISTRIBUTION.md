@@ -176,8 +176,9 @@ on the environment.
   same operation: paste the key you were emailed. Server-backed
   activation, seat counting and revocation are Phase 4; the key format
   already carries a key id (`k`) for it.
-- **Purchase → key delivery** is Phase 3, and now lives outside this repo
-  (see below); the admin's ledger is the record until then.
+- **Purchase → key delivery** is done, and lives outside this repo: the
+  letissier.ie shop issues its own keys on a sale (see "Shop licences"
+  below). YW1 keys minted by hand are still recorded in the admin's ledger.
 - **Revocation** shows in the ledger but cannot be enforced without the
   Phase 4 server — a key already issued keeps working offline.
 
@@ -247,56 +248,38 @@ regresses).
 
 Commands and details in `build/README.md`.
 
-## Phase 3 — selling
+## Phase 3 — selling ✅ done
 
-**Superseded (September 2026):** Yewee is sold through the letissier.ie
-shop, with Paddle as merchant of record and keys issued by the shop's
-licence service; see "Shop licences" above. The plan below is kept for
-the reasoning.
+Yewee is sold through the **letissier.ie shop**, with **Paddle as merchant
+of record** and keys issued by the shop's own licence service. What a buyer
+pastes and what happens then is under "Shop licences" above; this section is
+the reasoning behind landing there.
 
-**Selling moves out of this repo.** Accounts, payment, licensing and
-subscriptions for yewee are handled by
-[`legofsalmon/letissier.ie`](https://github.com/legofsalmon/letissier.ie),
-with **Paddle as Merchant of Record**. Paddle registers and remits VAT and
-sales tax worldwide, which is the part that quietly sinks solo-developer
-products, and gives customers a hosted portal for receipts and re-downloads.
-letissier.ie is an Irish limited company and is VAT registered.
+**Why a merchant of record.** Paddle registers and remits VAT and sales tax
+worldwide, which is the part that quietly sinks solo-developer products, and
+gives customers a hosted portal for receipts and re-downloads. letissier.ie
+is an Irish limited company and is VAT registered.
 
-**What this repo keeps** is minting keys. `tools/admin.py` and
-`tools/issue_key.py` are unchanged: yewee verifies its own Ed25519 keys
-offline, so whatever the storefront does, activation never needs a server
-and the signing key never leaves your machine.
+**Why the shop rather than this repo.** Accounts, payment, licensing and
+subscriptions all live in
+[`legofsalmon/letissier.ie`](https://github.com/legofsalmon/letissier.ie) —
+one billing stack for the studio instead of a storefront per product. What
+stays here is Yewee's own offline verification, plus `tools/admin.py` and
+`tools/issue_key.py` for minting YW1 keys by hand. A sold build accepts both
+kinds, so a key issued either way activates.
 
-**What does not exist yet.** Nothing here has been built, and this repo
-cannot build it — the storefront side is letissier.ie's work. The gaps, so
-they are not mistaken for oversights:
-
-- **No checkout.** There is no product, no price and no checkout URL
-  anywhere. The site's pricing card says the price is announced at launch.
-- **No customer portal.** Nothing to link for receipts and re-downloads, so
-  the site's footer carries no orders link.
-- **No purchase → key delivery.** Nothing turns a completed sale into a
-  licence key. Until something does, a sale is an email and the Licence
-  Admin's ledger is the only record of what was issued.
-- **No account model.** Whether a yewee purchase creates a letissier.ie
-  account, and whether "subscriptions" applies to yewee at all — it is sold
-  as a perpetual one-off — is undecided.
-- **No Paddle specifics on the site.** `privacy.html` and `terms.html` name
-  Paddle as merchant of record, which is the decision, but carry no Paddle
-  links or entity details. Those need filling in from the letissier.ie side
-  before anyone can buy.
-
-When key delivery is automated it will be on a webhook from the storefront
-calling `issue_key.py`. Note the trade before doing it: that function needs
-the private signing key, so a breach there lets anyone mint licences. Manual
-issuing is a minute per sale and is worth keeping until volume says otherwise.
+**Automating key delivery from this repo was considered and dropped.** A
+webhook calling `issue_key.py` would need the private signing key in a cloud
+function, where one breach lets anyone mint licences. The shop's licence
+service issues its own keys instead, and the YW1 signing key never leaves
+your machine.
 
 **The landing page** lives in its own repository,
 [`legofsalmon/facetrack-site`](https://github.com/legofsalmon/facetrack-site),
-deployed on Vercel. It is kept separate deliberately: Vercel then never
+deployed on Vercel. It was kept separate deliberately: Vercel then never
 needs read access to this product source, and site deploys don't drag
-~200 MB of models through a build. Checkout and account links will point at
-whatever letissier.ie exposes; today the page carries neither.
+~200 MB of models through a build. It carries no checkout — buying and
+account management are on the letissier.ie shop.
 
 **Downloads are live** (since v1.4): the site's Download section links
 straight to this repo's GitHub release assets, which are public because
@@ -305,9 +288,6 @@ if source-runs bypassing the licence starts to matter commercially. If
 the repo ever goes private, move the installers to a public
 releases-only repo (the `crewbox-dist` pattern) and repoint the two
 links on the site.
-
-**Until checkout opens**, licence keys go out by email — the site says
-so under the price line.
 
 ## Phase 4 — online activation (optional)
 
