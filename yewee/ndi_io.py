@@ -73,6 +73,13 @@ class NDIInput:
     """Receives an NDI source as BGR frames (so the tracker can sit
     anywhere in an existing NDI chain)."""
 
+    #: Seconds without a new frame from the sender before read() stops
+    #: returning one. NDI's frame sync never runs dry: when a sender goes
+    #: away it repeats the last frame it had, for ever, so a frame coming
+    #: back says nothing about whether the source is still there. Generous
+    #: enough for a sender running at a few frames a second.
+    STALE_AFTER = 2.0
+
     def __init__(self, source_name: str, timeout: float = 10.0):
         from cyndilib.finder import Finder
         from cyndilib.receiver import Receiver
@@ -102,12 +109,36 @@ class NDIInput:
         self.receiver.frame_sync.set_video_frame(self.video_frame)
         self.receiver.set_source(source)
         self.source_display_name = str(source.name)
+        self._last_ts = None        # timestamp of the newest frame seen
+        self._ts_at = 0.0           # when it arrived (monotonic)
+        self._ts_changes = 0        # how often it has changed (capped)
+
+    def _sender_alive(self, now: float) -> bool:
+        """False once the sender has gone: no connection, or the same frame
+        repeated for STALE_AFTER seconds. Call after capture_video()."""
+        if not self.receiver.is_connected():
+            return False
+        ts = self.video_frame.get_timestamp_posix()
+        if ts != self._last_ts:
+            self._ts_changes = min(self._ts_changes + 1, 3)
+            self._last_ts, self._ts_at = ts, now
+            return True
+        # Before the first frame the timestamp reads 0, and a sender that
+        # doesn't stamp its frames sends one constant value after that. Only
+        # a timestamp seen moving from frame to frame (a second change) can
+        # go stale; for the others the connection is all there is to go on.
+        return self._ts_changes < 3 or now - self._ts_at < self.STALE_AFTER
 
     def read(self, timeout: float = 5.0):
-        """Returns (ok, frame_bgr)."""
+        """Returns (ok, frame_bgr); (False, None) when no frame arrives
+        within timeout, including when the sender has gone and the frame
+        sync is only repeating its last picture."""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             self.receiver.frame_sync.capture_video()
+            if not self._sender_alive(time.monotonic()):
+                time.sleep(0.02)
+                continue
             xres, yres = self.video_frame.xres, self.video_frame.yres
             if xres > 0 and yres > 0:
                 # View the frame buffer, convert (copies), then drop the view:

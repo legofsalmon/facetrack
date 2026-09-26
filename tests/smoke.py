@@ -1608,6 +1608,37 @@ def _():
     assert "THIRD-PARTY-NOTICES.txt" in spec and "NSLocalNetworkUsageDescription" in spec
 
 
+@run("build: notices and buildinfo are UTF-8 whatever the console's encoding")
+def _():
+    # The Windows release build died reading the notices child's cp1252
+    # output as UTF-8. Here the child is handed Windows' pipe encoding and
+    # the build still has to come back with the real dash; and every file
+    # the build writes must name its encoding (warn_default_encoding turns
+    # a bare write_text into an error on any platform, not just Windows).
+    import subprocess
+    probe = (
+        "import importlib.util, os, sys, tempfile\n"
+        "from pathlib import Path\n"
+        "spec = importlib.util.spec_from_file_location('ft_build', sys.argv[1])\n"
+        "b = importlib.util.module_from_spec(spec); spec.loader.exec_module(b)\n"
+        "text = b.third_party_notices()\n"
+        "assert text.startswith('Yewee \\u2014 third-party notices'), repr(text[:40])\n"
+        "with tempfile.TemporaryDirectory() as td:\n"
+        "    b.BUILDINFO = Path(td) / '_buildinfo.py'\n"
+        "    b.write_buildinfo(True, 'ab' * 32, '1.0.0')\n"
+        "    raw = b.BUILDINFO.read_bytes()\n"
+        "    compile(raw, '_buildinfo.py', 'exec')\n"
+        "    assert '\\u2014'.encode('utf-8') in raw, raw[:60]\n"
+        "print('ok')\n")
+    env = dict(os.environ, PYTHONIOENCODING="cp1252", PYTHONUTF8="0")
+    res = subprocess.run(
+        [sys.executable, "-X", "warn_default_encoding", "-W", "error::EncodingWarning",
+         "-c", probe, os.path.join(ROOT, "build", "build.py")],
+        cwd=ROOT, env=env, capture_output=True, timeout=120)
+    assert res.returncode == 0 and res.stdout.strip() == b"ok", \
+        res.stderr.decode("utf-8", "replace")[-2000:]
+
+
 @run("emotion: FER+ labels a face")
 def _():
     from yewee.detectors import YuNetDetector
@@ -1665,6 +1696,178 @@ def _():
     assert build_params(args, {"emotion_enabled": True}).snapshot()["emotion_enabled"] is True
     no = parse_args(["--no-emotion"])
     assert build_params(no, {"emotion_enabled": True}).snapshot()["emotion_enabled"] is False
+
+
+@run("--no-ndi: every NDI feed starts off, texture share is left alone")
+def _():
+    from main import build_params, parse_args
+    saved = {f"ndi_{c}": True for c in ("program", "overlay", "faces", "mask")}
+    saved.update(tex_program=True, tex_mask=True)
+    p = build_params(parse_args(["--no-ndi"]), saved).snapshot()
+    on = [c for c in ("program", "overlay", "faces", "mask") if p[f"ndi_{c}"]]
+    assert not on, f"--no-ndi left these NDI feeds on: {on}"
+    assert p["tex_program"] and p["tex_mask"], "--no-ndi must not touch texture share"
+    p = build_params(parse_args([]), saved).snapshot()
+    assert all(p[f"ndi_{c}"] for c in ("program", "overlay", "faces", "mask"))
+
+
+@run("presets: a fresh install's detection settings are the Mid crowd preset")
+def _():
+    from main import DEFAULTS
+    html = open(os.path.join(ROOT, "yewee", "static", "index.html"), encoding="utf-8").read()
+    body = re.search(r"\bmid:\s*\{([^}]*)\}", html).group(1)
+    mid = {k: float(v) for k, v in re.findall(r"(\w+):\s*([\d.]+)", body)}
+    assert mid, "no Mid crowd preset found in the panel"
+    for k, v in mid.items():
+        assert abs(DEFAULTS[k] - v) < 1e-9, (
+            f"fresh install has {k}={DEFAULTS[k]}, Mid crowd (\"good default\") has {v}")
+
+
+def _fake_cyndilib():
+    """Just enough of cyndilib to import yewee.ndi_io where it isn't
+    installed (CI); the tests build NDIInput around fakes anyway."""
+    import types
+    try:
+        import cyndilib  # noqa: F401
+        return
+    except ImportError:
+        pass
+    names = ("cyndilib", "cyndilib.sender", "cyndilib.video_frame",
+             "cyndilib.wrapper", "cyndilib.wrapper.ndi_structs")
+    for n in names:
+        sys.modules[n] = types.ModuleType(n)
+    sys.modules["cyndilib.sender"].Sender = object
+    sys.modules["cyndilib.video_frame"].VideoSendFrame = object
+    sys.modules["cyndilib.wrapper.ndi_structs"].FourCC = object
+
+
+class _FakeNDI:
+    """A receiver and its frame sync. Like NDI's, the frame sync keeps
+    handing back the last frame after the sender stops."""
+
+    def __init__(self):
+        self.connected, self.sending, self.ts, self.stamps = True, True, 0.0, True
+        self.xres, self.yres = 8, 4
+        self.frame_sync = self
+        self.receiver = self
+
+    def is_connected(self):
+        return self.connected
+
+    def capture_video(self):
+        if self.sending and self.stamps:
+            self.ts += 1 / 30
+
+    def get_timestamp_posix(self):
+        return self.ts if self.stamps else 9.2e9   # "undefined": one constant
+
+    def __array__(self, dtype=None, copy=None):
+        return np.full(self.yres * self.xres * 4, 90, np.uint8)
+
+
+def _ndi_input(fake):
+    _fake_cyndilib()
+    from yewee.ndi_io import NDIInput
+    inp = NDIInput.__new__(NDIInput)          # skip the network search
+    inp.receiver, inp.video_frame = fake, fake
+    inp._last_ts, inp._ts_at, inp._ts_changes = None, 0.0, 0
+    inp.STALE_AFTER = 0.3
+    return inp
+
+
+@run("NDI input: a sender that stops or goes away reads as lost, not a frozen frame")
+def _():
+    import time
+    fake = _FakeNDI()
+    inp = _ndi_input(fake)
+    for _ in range(5):
+        ok, frame = inp.read(timeout=0.5)
+        assert ok and frame.shape == (4, 8, 3)
+        time.sleep(0.01)
+    # the sender stops sending but stays connected: the frame sync repeats
+    # the last picture, which must not count as a live input for long
+    fake.sending = False
+    t0 = time.monotonic()
+    while inp.read(timeout=0.1)[0]:
+        assert time.monotonic() - t0 < 2.0, "a repeated frame kept reading as live"
+    assert inp.read(timeout=0.1) == (False, None)
+    fake.sending = True
+    assert inp.read(timeout=0.5)[0], "a sender that comes back reads again"
+    # the sender closes: the connection drops
+    fake.connected = False
+    assert inp.read(timeout=0.2) == (False, None), "a disconnected sender still read as live"
+
+    # a sender that doesn't stamp its frames: only the connection counts
+    quiet = _FakeNDI()
+    quiet.stamps = False
+    inp = _ndi_input(quiet)
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < 0.6:
+        assert inp.read(timeout=0.2)[0], "an unstamped live sender was dropped"
+    quiet.connected = False
+    assert inp.read(timeout=0.2) == (False, None)
+
+
+@run("watchdog: the installed app restarts itself; its Restart relaunches cleanly")
+def _():
+    import main
+    saved = (sys.argv, sys.executable, getattr(sys, "frozen", None))
+    try:
+        # a packaged app is its own executable, and argv[0] is it again
+        sys.frozen, sys.executable = True, "/Applications/Yewee.app/Contents/MacOS/Yewee"
+        sys.argv = [sys.executable, "--no-browser", "--wait-for-pid", "41"]
+        argv = main._relaunch_argv(["--wait-for-pid", "42"])
+        assert argv == [sys.executable, "--no-browser", "--wait-for-pid", "42"], argv
+        assert main.parse_args(argv[1:]).wait_for_pid == 42
+        # from source: the interpreter, then the script and its options
+        del sys.frozen
+        sys.executable, sys.argv = "/usr/bin/python3", ["main.py", "--no-browser"]
+        assert main._relaunch_argv() == ["/usr/bin/python3", "main.py", "--no-browser"]
+    finally:
+        sys.argv, sys.executable = saved[0], saved[1]
+        if saved[2] is None:
+            sys.__dict__.pop("frozen", None)
+        else:
+            sys.frozen = saved[2]
+
+    # a stall: the installed app relaunches before it exits; from source the
+    # exit alone is right, since the launcher's loop starts the next one
+    import threading
+    import time
+    import types
+    for frozen in (True, False):
+        calls, done = [], threading.Event()
+
+        def fake_exit(code):
+            calls.append(("exit", code))
+            done.set()
+            raise SystemExit
+
+        pipe = types.SimpleNamespace(stopped=False, heartbeat=time.monotonic() - 60)
+        real = (main._relaunch_after_stall, main.os, main.time)
+        main._relaunch_after_stall = lambda: calls.append(("relaunch",))
+        main.os = types.SimpleNamespace(_exit=fake_exit, getpid=os.getpid)
+        main.time = types.SimpleNamespace(sleep=lambda s: None, monotonic=time.monotonic)
+        import yewee.paths as paths
+        real_frozen = paths.is_frozen
+        paths.is_frozen = lambda: frozen
+        from yewee import crashguard
+        real_hang = crashguard.record_hang
+        crashguard.record_hang = lambda reason, d=None: None
+        try:
+            main._start_watchdog(pipe)
+            assert done.wait(5), "the watchdog never acted on a 60 s stall"
+        finally:
+            main._relaunch_after_stall, main.os, main.time = real
+            paths.is_frozen = real_frozen
+            crashguard.record_hang = real_hang
+        want = [("relaunch",), ("exit", 3)] if frozen else [("exit", 3)]
+        assert calls == want, f"frozen={frozen}: {calls}"
+
+    # the relaunched copy waits for the stalled one to be gone
+    t0 = time.monotonic()
+    main._wait_for_exit(2 ** 22 + 12345, timeout=5)   # no such process
+    assert time.monotonic() - t0 < 1
 
 
 @run("launchers: every model they wait for is one the doctor provides")
@@ -1960,14 +2163,46 @@ def _chromium() -> str | None:
     return None
 
 
-@run("panel: fits a 390 px phone with no sideways scroll, nothing cut off")
-def _():
+def _panel_in_chromium(probe: str, head: str = "") -> dict | None:
+    """Lays the real panel out in a 390 px frame in headless Chromium, runs
+    `probe` (a script that ends by posting a JSON string to its parent) and
+    returns what it posted, or None when no Chromium is found. `head` goes
+    in before the panel's own scripts run."""
     import subprocess
     chrome = _chromium()
     if chrome is None:
         print("        (no Chromium/Chrome found — skipped; set PW_CHROMIUM)")
-        return
+        return None
     html = open(os.path.join(ROOT, "yewee", "static", "index.html"), encoding="utf-8").read()
+    if head:
+        html = html.replace("<head>", "<head>" + head, 1)
+    # Headless Chrome will not open a window under 500 px, so the panel is
+    # laid out in a 390 px frame, which is a 390 px viewport to its media
+    # queries; the frame posts its measurement to the page around it.
+    wrapper = """<!doctype html><body style="margin:0">
+<iframe src="index.html" style="width:390px;height:844px;border:0"></iframe>
+<script>addEventListener("message", (e) => { const pre = document.createElement("pre");
+  pre.id = "layout-result"; pre.textContent = e.data; document.body.appendChild(pre); });
+</script></body>"""
+    with tempfile.TemporaryDirectory() as td:
+        (Path(td) / "index.html").write_text(html.replace("</body>", probe + "</body>"),
+                                             encoding="utf-8")
+        page = Path(td) / "frame.html"
+        page.write_text(wrapper, encoding="utf-8")
+        res = subprocess.run(
+            [chrome, "--headless=new", "--no-sandbox", "--disable-gpu", "--no-first-run",
+             "--no-default-browser-check", f"--user-data-dir={td}/profile",
+             "--hide-scrollbars", "--window-size=800,900", "--virtual-time-budget=5000",
+             "--dump-dom", page.as_uri()],
+            capture_output=True, text=True, timeout=90)
+    m = re.search(r'<pre id="layout-result">(.*?)</pre>', res.stdout, re.S)
+    assert m, "no measurement from Chromium:\n" + res.stderr[-2000:]
+    import html as _html
+    return json.loads(_html.unescape(m.group(1)))
+
+
+@run("panel: fits a 390 px phone with no sideways scroll, nothing cut off")
+def _():
     # Everything the live panel can show, filled with long values, then
     # measured: the page's width, and any element sticking out of its card
     # (a card clips, so that is a control cut off rather than a scrollbar).
@@ -1997,32 +2232,45 @@ addEventListener("load", () => setTimeout(() => {
   parent.postMessage(JSON.stringify({ vw, sw: document.documentElement.scrollWidth, out }), "*");
 }, 300));
 </script>"""
-    # Headless Chrome will not open a window under 500 px, so the panel is
-    # laid out in a 390 px frame, which is a 390 px viewport to its media
-    # queries; the frame posts its measurement to the page around it.
-    wrapper = """<!doctype html><body style="margin:0">
-<iframe src="index.html" style="width:390px;height:844px;border:0"></iframe>
-<script>addEventListener("message", (e) => { const pre = document.createElement("pre");
-  pre.id = "layout-result"; pre.textContent = e.data; document.body.appendChild(pre); });
-</script></body>"""
-    with tempfile.TemporaryDirectory() as td:
-        (Path(td) / "index.html").write_text(html.replace("</body>", probe + "</body>"),
-                                             encoding="utf-8")
-        page = Path(td) / "frame.html"
-        page.write_text(wrapper, encoding="utf-8")
-        res = subprocess.run(
-            [chrome, "--headless=new", "--no-sandbox", "--disable-gpu", "--no-first-run",
-             "--no-default-browser-check", f"--user-data-dir={td}/profile",
-             "--hide-scrollbars", "--window-size=800,900", "--virtual-time-budget=5000",
-             "--dump-dom", page.as_uri()],
-            capture_output=True, text=True, timeout=90)
-    m = re.search(r'<pre id="layout-result">(.*?)</pre>', res.stdout, re.S)
-    assert m, "no measurement from Chromium:\n" + res.stderr[-2000:]
-    import html as _html
-    r = json.loads(_html.unescape(m.group(1)))
+    r = _panel_in_chromium(probe)
+    if r is None:
+        return
     assert r["vw"] == 390, f"window came out {r['vw']} px wide, not 390"
     assert r["sw"] <= r["vw"], f"the page scrolls sideways: {r['sw']} px wide in a {r['vw']} px phone"
     assert not r["out"], "cut off at 390 px: " + "; ".join(r["out"][:10])
+
+
+@run("panel: a live tick draws the cost bars and lights the fresh install's preset")
+def _():
+    from main import DEFAULTS
+    # A stand-in for the app's socket: once the panel connects, one tick as
+    # the app sends it, with a fresh install's settings and a cost breakdown.
+    tick = {"type": "tick", "params": DEFAULTS,
+            "stats": {"state": "live", "fps": 30.0, "faces": 3, "load_pct": 40,
+                      "budget_ms": 33.3,
+                      "perf": {"detect": 9.0, "track": 0.5, "outputs": 3.0}}}
+    head = """<script>
+window.WebSocket = class {
+  constructor() { setTimeout(() => { this.onopen && this.onopen();
+    this.onmessage({ data: %s }); }, 50); }
+  send() {} close() {}
+};
+</script>""" % json.dumps(json.dumps(tick))
+    probe = """<script>
+addEventListener("load", () => setTimeout(() => {
+  const bars = [...document.querySelectorAll("#perf .pb")].map(
+    (b) => Math.round(b.getBoundingClientRect().width));
+  const lit = [...document.querySelectorAll(".preset.active")].map((b) => b.dataset.preset);
+  parent.postMessage(JSON.stringify({ bars, lit }), "*");
+}, 400));
+</script>"""
+    r = _panel_in_chromium(probe, head)
+    if r is None:
+        return
+    assert len(r["bars"]) == 4, f"expected 3 stage bars and a total, got {r['bars']}"
+    assert all(w > 0 for w in r["bars"]), f"cost bars drew with no width: {r['bars']}"
+    assert r["bars"][0] > r["bars"][1], f"the priciest stage isn't the widest bar: {r['bars']}"
+    assert r["lit"] == ["mid"], f"a fresh install lights {r['lit']}, not Mid crowd"
 
 
 # ---- OSC data output -------------------------------------------------

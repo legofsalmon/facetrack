@@ -137,9 +137,12 @@ names. That's it.
 
 ### If something's wrong
 
-- **It crashed?** The launcher restarts it automatically after 3 seconds
-  (clean quits don't restart). A watchdog also force-restarts the app if
-  the pipeline wedges for 30 seconds (stalled driver, blocked I/O).
+- **It crashed?** Run from source, the launcher restarts it automatically
+  after 3 seconds (clean quits don't restart). A watchdog also
+  force-restarts the app if the pipeline wedges for 30 seconds (stalled
+  driver, blocked I/O); the installed app has no launcher around it, so
+  there the watchdog starts the new copy itself. A crash of the installed
+  app is not restarted: open Yewee again.
   Everything the app printed is also in `logs/yewee.log` for
   after-the-fact diagnosis — or the *view log* link in the panel.
 - **After a crash** yewee restores your source, feeds and every panel
@@ -192,10 +195,11 @@ panel port, and prints the fix for anything broken.
   M2 Max; 100+ fps at 720p.
 - **Windows + NVIDIA (production, RTX 5080)**: `requirements.txt` installs
   `onnxruntime-gpu`, so the **CenterFace** detector and the matting
-  models run on CUDA/TensorRT. CenterFace is fully convolutional, so
-  raising *Search detail* to 960/1280 costs little on the GPU and is
-  where it pulls ahead of YuNet on distant faces. First TensorRT run
-  compiles an engine (can take a minute).
+  models run on CUDA, falling back to the CPU when CUDA can't load.
+  CenterFace is fully convolutional, so raising *Search detail* to
+  960/1280 costs little on the GPU and is where it pulls ahead of YuNet
+  on distant faces. TensorRT is left out on purpose: it compiles an
+  engine on first use, a stall of a minute or more before a show.
 
 ### Output feeds
 
@@ -312,7 +316,9 @@ override saved settings for that run. Non-panel flags:
 | `--source` | `cam:<device name>` (survives replugs) / camera index / file / URL / `ndi:<name>` |
 | `--width --height --fps` | capture request (default 1280x720@30) |
 | `--backend auto\|yunet\|centerface` | force a detector |
-| `--ndi-name` / `--ndi-overlay` / `--no-ndi` | feed naming |
+| `--ndi-name` / `--ndi-overlay` | feed naming |
+| `--no-ndi` | start with every NDI feed off (texture share is untouched) |
+| `--pin` | set the panel PIN, or `none` to turn it off |
 | `--out-width` | downscale the NDI send |
 | `--osc` / `--osc-target HOST:PORT` | start with the data output on (default `127.0.0.1:7000`) |
 | `--no-web` / `--web-host` / `--web-port` / `--no-browser` | panel control |
@@ -475,13 +481,15 @@ routes that work today:
 
 The machine then boots straight into yewee: the launcher self-heals,
 the watchdog and crash-restart keep it alive, and the panel reconnects
-from any browser.
+from any browser. (The installed app gets the watchdog but not the
+crash-restart; see *If something's wrong*.)
 
 ### Known quirks
 
 - The installed NDI HX driver makes OpenCV's ffmpeg print an `objc`
   duplicate-class warning at startup on this Mac. Harmless.
-- The panel has no authentication — it's meant for a closed production
-  LAN. Use `--web-host 127.0.0.1` to keep it local-only.
+- The panel's only protection is its four-digit PIN (on by default,
+  see above), and it serves plain HTTP — it's meant for a closed
+  production LAN. Use `--web-host 127.0.0.1` to keep it local-only.
 - macOS camera permission belongs to the *terminal app* that launches
   yewee; grant it once when prompted.

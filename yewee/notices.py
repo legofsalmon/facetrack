@@ -166,4 +166,9 @@ def text() -> str:
 
 
 if __name__ == "__main__":
-    sys.stdout.write(generate())
+    # Bytes, as UTF-8, whatever the console or pipe encoding: on Windows a
+    # pipe defaults to cp1252, which garbles the dashes for a UTF-8 reader
+    # and cannot encode every character in the licence texts at all.
+    sys.stdout.flush()
+    sys.stdout.buffer.write(generate().encode("utf-8"))
+    sys.stdout.buffer.flush()

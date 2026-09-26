@@ -24,8 +24,11 @@ from yewee import settings
 from yewee.params import LiveParams
 from yewee.pipeline import Pipeline
 
+# The detection defaults are the panel's "Mid crowd" preset (PRESETS.mid in
+# yewee/static/index.html), which the panel labels the good default, so a
+# fresh install lights that preset. Change the two together.
 DEFAULTS = dict(detector="auto", out_fps=30.0, loop_file=True,
-                det_threshold=0.5, det_size=640, detect_every=1, min_face=0,
+                det_threshold=0.45, det_size=640, detect_every=1, min_face=0,
                 max_misses=15, emotion_enabled=False, emotion_budget=4,
                 show_ids=True, show_stats=True, overlay_color="",
                 clean_main=False, flip=False,
@@ -121,6 +124,8 @@ def parse_args(argv=None):
                           "needs it")
 
     p.add_argument("--doctor", action="store_true", help="run the self-check and exit")
+    # set by the watchdog on Windows when it relaunches a stalled app
+    p.add_argument("--wait-for-pid", type=int, default=0, help=argparse.SUPPRESS)
     p.add_argument("--max-frames", type=int, default=0, help="stop after N frames (0 = run forever)")
     p.add_argument("--quiet", action="store_true", help="no periodic console stats")
     return p.parse_args(argv)
@@ -193,7 +198,7 @@ def build_params(args, saved_params: dict) -> LiveParams:
         cap_backend=(args.capture_backend if args.capture_backend != "any"
                      else saved_params.get("cap_backend", "any")),
         ndi_program=False if args.no_ndi else saved_params.get("ndi_program", True),
-        ndi_mask=saved_params.get("ndi_mask", False),
+        ndi_mask=False if args.no_ndi else saved_params.get("ndi_mask", False),
         tex_program=True if args.texture_share
                     else saved_params.get("tex_program", False),
         tex_overlay=saved_params.get("tex_overlay", False),
@@ -212,7 +217,7 @@ def build_params(args, saved_params: dict) -> LiveParams:
         osc_slots=saved_params.get("osc_slots", 8),
         osc_rate=saved_params.get("osc_rate", 30.0),
         osc_units=saved_params.get("osc_units", "normalised"),
-        ndi_faces=saved_params.get("ndi_faces", False),
+        ndi_faces=False if args.no_ndi else saved_params.get("ndi_faces", False),
         cutout_margin=saved_params.get("cutout_margin", 0.15),
         cutout_shape=saved_params.get("cutout_shape", "rectangle"),
         cutout_feather=saved_params.get("cutout_feather", 0),
@@ -246,19 +251,74 @@ def _keep_awake() -> None:
         pass  # nice-to-have, never fatal
 
 
+def _relaunch_argv(extra=()) -> list[str]:
+    """The command line that starts yewee again with this run's options.
+    From source that is the interpreter plus sys.argv. A packaged app is
+    its own executable and sys.argv[0] is that executable again, so there
+    it must not be passed twice: argparse would refuse the stray argument
+    and the relaunched app would exit before it started."""
+    from yewee.paths import is_frozen
+    rest = sys.argv[1:] if is_frozen() else sys.argv
+    kept, skip = [], False
+    for a in rest:               # a relaunch's own --wait-for-pid is spent
+        if skip or a == "--wait-for-pid" or a.startswith("--wait-for-pid="):
+            skip = a == "--wait-for-pid"
+            continue
+        kept.append(a)
+    return [sys.executable, *kept, *extra]
+
+
+def _relaunch_env() -> dict:
+    """The environment for that relaunch. PyInstaller's bootloader leaves
+    variables that make a copy of the same executable think it is a child
+    of this one; this one asks it to start as a separate instance."""
+    return {**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"}
+
+
+def _relaunch_after_stall() -> None:
+    """Start a fresh yewee in place of this stalled one. macOS: exec into
+    it, keeping the pid, so nothing else can grab the panel port between
+    the two. Windows has no exec, so the new process is told to wait for
+    this one to be gone before its double-launch check, which would
+    otherwise find our still-running panel and bow out."""
+    try:
+        if sys.platform == "win32":
+            import subprocess
+            subprocess.Popen(_relaunch_argv(["--wait-for-pid", str(os.getpid())]),
+                             env=_relaunch_env())
+        else:
+            os.execve(sys.executable, _relaunch_argv(), _relaunch_env())
+    except Exception as e:
+        print(f"[yewee] watchdog: could not relaunch ({e}) — "
+              "start yewee again by hand", flush=True)
+
+
+def _wait_for_exit(pid: int, timeout: float = 20.0) -> None:
+    from yewee.crashguard import pid_alive
+    deadline = time.monotonic() + timeout
+    while pid_alive(pid) and time.monotonic() < deadline:
+        time.sleep(0.2)
+
+
 def _start_watchdog(pipeline) -> None:
     """If the pipeline loop wedges (driver stall, blocked I/O) for 30s,
-    exit non-zero so the launcher's crash-restart brings us back."""
+    end this process and get yewee running again. From source the
+    launcher's crash loop restarts it on the non-zero exit; the installed
+    app has no launcher around it, so it starts its own replacement."""
+    from yewee.paths import is_frozen
+
     def watch():
         while not pipeline.stopped:
             time.sleep(5)
             if (not pipeline.stopped
                     and time.monotonic() - pipeline.heartbeat > 30):
                 print("[yewee] watchdog: pipeline stalled for 30s — "
-                      "exiting so the launcher can restart", flush=True)
+                      "restarting", flush=True)
                 from yewee import crashguard
                 crashguard.record_hang("The pipeline stopped responding for 30 "
                                        "seconds and the watchdog restarted yewee")
+                if is_frozen():
+                    _relaunch_after_stall()
                 os._exit(3)
     threading.Thread(target=watch, daemon=True, name="yewee-watchdog").start()
 
@@ -278,6 +338,9 @@ def main(argv=None) -> int:
     if args.doctor:
         from yewee.doctor import main as doctor_main
         return doctor_main([])
+
+    if args.wait_for_pid:
+        _wait_for_exit(args.wait_for_pid)
 
     # Double-launch guard: a second instance with the same feed names can
     # crash inside the NDI library, so if yewee already serves the
@@ -438,12 +501,12 @@ def main(argv=None) -> int:
         if web_server is not None:
             web_server.should_exit = True  # release the panel port first
             time.sleep(0.7)
-        argv_full = [sys.executable] + sys.argv
+        argv_full = _relaunch_argv()
         if sys.platform == "win32":
             import subprocess
-            subprocess.Popen(argv_full)
+            subprocess.Popen(argv_full, env=_relaunch_env())
             return 0
-        os.execv(sys.executable, argv_full)
+        os.execve(sys.executable, argv_full, _relaunch_env())
     return 0
 
 
