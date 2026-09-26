@@ -58,7 +58,10 @@ names. That's it.
 ### The control panel
 
 - Reachable from **any phone/laptop/tablet on the same network** — the
-  terminal window shows the address (e.g. `http://192.168.1.20:8089`).
+  terminal window and the top of the panel on the yewee machine show the
+  address (e.g. `http://192.168.1.20:8089`) and the **panel PIN**. Open the
+  address on the phone and type the PIN when it asks; it asks once per
+  phone.
 - **Presets** across the top: *Wide crowd*, *Mid crowd*, *Stage close-up*,
   *Power saver*. Start with one of these; fine-tune below if needed.
 - **Video source** lists every connected camera by name (webcams, capture
@@ -107,20 +110,51 @@ names. That's it.
   exactly what each toggle costs and what to switch off when the
   machine is tight. fps and load chips turn amber/red as they approach
   limits.
-- **PIN protection**: on a shared production network, launch with
-  `--pin 4721` (or add `"pin": "4721"` to `settings.json`). The panel then
-  asks once per browser; without it, controls, preview and source listing
-  are locked. No PIN set = open panel (fine at home).
+- **PIN protection is on by default.** The first launch makes a random
+  four-digit PIN and keeps it in `settings.json`; the terminal prints it
+  (`Panel PIN : 4821`) and the panel on the yewee machine shows it at the
+  top. Other devices must enter it before they can see the preview, the
+  log or the sources, or change anything; the yewee machine itself never
+  needs it. Five wrong PINs from one device lock that device out for a
+  minute.
+  - **Change it:** launch once with `--pin 4721`, or set `"pin": "4721"`
+    in `settings.json`. It is kept for next time.
+  - **Turn it off** (a closed network at home): launch once with
+    `--pin none`, or set `"pin": "none"`. That is kept too. Anyone on the
+    network can then change or quit the show.
+  - `settings.json` is next to `main.py` when running from source, and in
+    the app's data folder in the installed app (macOS: `~/Library/Application
+    Support/yewee/`, Windows: `%APPDATA%\yewee\`). Delete the `"pin"` line
+    for a new random PIN.
 - If the input dies or is missing, the app keeps running and shows a
   NO INPUT slate — fix the source from the panel.
 
 ### If something's wrong
 
-- **It crashed?** The launcher restarts it automatically after 3 seconds
-  (clean quits don't restart). A watchdog also force-restarts the app if
-  the pipeline wedges for 30 seconds (stalled driver, blocked I/O).
+- **It crashed?** Run from source, the launcher restarts it automatically
+  after 3 seconds (clean quits don't restart). A watchdog also
+  force-restarts the app if the pipeline wedges for 30 seconds (stalled
+  driver, blocked I/O); the installed app has no launcher around it, so
+  there the watchdog starts the new copy itself. A crash of the installed
+  app is not restarted: open Yewee again.
   Everything the app printed is also in `logs/yewee.log` for
   after-the-fact diagnosis — or the *view log* link in the panel.
+- **After a crash** yewee restores your source, feeds and every panel
+  setting as usual, and the panel asks once: *"Yewee closed unexpectedly
+  last time. Send a crash report to LeTissier Creative Studios?"* Nothing
+  is sent unless you press Send there or switch on **Send crash reports
+  automatically** (Help & feedback card; off by default). A report holds
+  the error and its stack trace, the app version, OS and a random install
+  id — scrubbed on this machine of your user name, home folder, licence
+  keys, e-mail and IP addresses, and source and feed names. It never
+  holds video, settings or anything about the people in shot. Reports
+  wait in `reports/queue` until the machine is online.
+- **A frame that fails is skipped**, not fatal: tracking carries on with
+  the next one, and the panel says what went wrong.
+- **Send feedback…** in the Help & feedback card sends a bug report, idea,
+  question or praise straight to the studio. Your e-mail is optional, your
+  licence is included only if you tick the box, and nothing is posted on
+  the public issue tracker unless you tick that box too.
 - **The machine can't sleep** while yewee runs (caffeinate on macOS,
   the equivalent power override on Windows) — no dead feed because a
   screensaver kicked in.
@@ -155,10 +189,11 @@ panel port, and prints the fix for anything broken.
   M2 Max; 100+ fps at 720p.
 - **Windows + NVIDIA (production, RTX 5080)**: `requirements.txt` installs
   `onnxruntime-gpu`, so the **CenterFace** detector and the matting
-  models run on CUDA/TensorRT. CenterFace is fully convolutional, so
-  raising *Search detail* to 960/1280 costs little on the GPU and is
-  where it pulls ahead of YuNet on distant faces. First TensorRT run
-  compiles an engine (can take a minute).
+  models run on CUDA, falling back to the CPU when CUDA can't load.
+  CenterFace is fully convolutional, so raising *Search detail* to
+  960/1280 costs little on the GPU and is where it pulls ahead of YuNet
+  on distant faces. TensorRT is left out on purpose: it compiles an
+  engine on first use, a stall of a minute or more before a show.
 
 ### Output feeds
 
@@ -216,7 +251,9 @@ override saved settings for that run. Non-panel flags:
 | `--source` | `cam:<device name>` (survives replugs) / camera index / file / URL / `ndi:<name>` |
 | `--width --height --fps` | capture request (default 1280x720@30) |
 | `--backend auto\|yunet\|centerface` | force a detector |
-| `--ndi-name` / `--ndi-overlay` / `--no-ndi` | feed naming |
+| `--ndi-name` / `--ndi-overlay` | feed naming |
+| `--no-ndi` | start with every NDI feed off (texture share is untouched) |
+| `--pin` | set the panel PIN, or `none` to turn it off |
 | `--out-width` | downscale the NDI send |
 | `--no-web` / `--web-host` / `--web-port` / `--no-browser` | panel control |
 | `--no-preview` | no local window (headless/rack use) |
@@ -237,6 +274,8 @@ yewee/
   params.py              validated live parameters
   settings.py            auto-persistence (settings.json)
   webui.py               FastAPI app: panel, WebSocket, MJPEG, /sources
+  crashguard.py          crash marker, faulthandler, exception hooks
+  reporting.py           opt-in crash reports + feedback to letissier.ie
   static/index.html      the control panel
   doctor.py              self-check (python -m yewee.doctor)
 models/                  ONNX models (doctor --fix re-downloads)
@@ -259,19 +298,31 @@ flags doesn't start a duplicate: it just opens the existing panel.
 
 yewee detects and follows faces; it performs no identity recognition,
 no matching against any database, and records nothing — frames are
-processed and discarded in memory. Expression labels are a cosmetic
+processed and discarded in memory. Expression labels are off until
+you switch them on in the panel, and are a cosmetic
 overlay estimate. For public events, follow your usual venue practice on
 camera signage, and keep this paragraph handy for client conversations.
 
 ### Licensing (product builds)
+
+Yewee's own code is licensed under the **Elastic License 2.0** (see
+`LICENSE`): you may use, copy and modify it, but not offer it to others
+as a hosted or managed service, and not remove or get around its licence
+keys. The models and bundled components keep their own licences (below).
 
 The repo build is **unrestricted** — no keys, no trial, nothing to
 activate. Licensing only switches on when a build is packaged with a
 vendor public key; see `docs/DISTRIBUTION.md` for issuing keys and
 building a licensed app. In such a build, an unlicensed copy runs for 72
 hours and then holds its feeds on a TRIAL ENDED slate until a key is
-entered in the panel's Licence card. Keys are Ed25519-signed and verify
-offline, so activation works on an air-gapped show machine.
+entered in the panel's Licence card.
+
+Two kinds of key work there. An **`LT-YEWE-…` key** from the
+letissier.ie shop activates online once, taking one of the licence's
+seats, and is then checked offline with a daily check-in; a machine with
+no internet uses offline activation from letissier.ie/account instead.
+An older **`YW1.…` key** from the Licence Admin keeps working as before,
+fully offline.
 
 ### Model licences
 
@@ -290,7 +341,10 @@ Two deliberate exceptions:
   it as the GPU detector.
 
 If you redistribute, also review the NDI SDK terms for the bundled NDI
-runtime.
+runtime. NDI® is a registered trademark of Vizrt NDI AB. A packaged build
+carries `THIRD-PARTY-NOTICES.txt` (every bundled package's licence text,
+the NDI notice and the models' terms), generated by `build/build.py` from
+the environment it packages; the panel serves it at `/notices`.
 
 ### Keeping the machine healthy
 
@@ -365,13 +419,15 @@ routes that work today:
 
 The machine then boots straight into yewee: the launcher self-heals,
 the watchdog and crash-restart keep it alive, and the panel reconnects
-from any browser.
+from any browser. (The installed app gets the watchdog but not the
+crash-restart; see *If something's wrong*.)
 
 ### Known quirks
 
 - The installed NDI HX driver makes OpenCV's ffmpeg print an `objc`
   duplicate-class warning at startup on this Mac. Harmless.
-- The panel has no authentication — it's meant for a closed production
-  LAN. Use `--web-host 127.0.0.1` to keep it local-only.
+- The panel's only protection is its four-digit PIN (on by default,
+  see above), and it serves plain HTTP — it's meant for a closed
+  production LAN. Use `--web-host 127.0.0.1` to keep it local-only.
 - macOS camera permission belongs to the *terminal app* that launches
   yewee; grant it once when prompted.

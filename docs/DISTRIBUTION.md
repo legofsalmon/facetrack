@@ -1,8 +1,11 @@
 # Distributing yewee commercially
 
 Working notes for turning yewee into a sold product. Phases 0–2 are
-done: v1.4 is released with public downloads on the site and licensing
-active. Phase 3 (checkout) is next; keys go by email meanwhile.
+done and it is sold through the letissier.ie shop.
+
+**Version numbers were reset to 1.0.0 on 2026-09-24.** Mentions of v1.4
+below are the pre-reset numbering: tags v1.0–v1.4 on GitHub are older
+than 1.0.0, not newer. See `build/README.md` for how a version is cut.
 
 *Not legal advice — the licence positions below quote the upstream terms
 directly so a solicitor can check them quickly.*
@@ -178,6 +181,44 @@ on the environment.
 - **Revocation** shows in the ledger but cannot be enforced without the
   Phase 4 server — a key already issued keeps working offline.
 
+### Shop licences (letissier.ie) — how buyers activate now
+
+The letissier.ie shop sells Yewee through Paddle and issues its own keys,
+`LT-YEWE-XXXX-XXXX-XXXX`, from the studio's licence service (the same one
+Light uses; its guide is at <https://letissier.ie/integrate>). A sold build
+accepts them alongside YW1 keys, and the panel's one key field takes
+either, or an offline licence.
+
+| What is pasted | What happens |
+|---|---|
+| `LT-YEWE-…` | checked for typos and for another product's key locally, then `POST /api/licence/activate` with this machine's raw id; the service takes a seat (2 per licence) and returns a signed token |
+| a long `xxxxx.yyyyy` licence | offline activation: made at letissier.ie/account from the request code the panel shows, verified locally, no network |
+| `YW1.…` | as before |
+
+The token is kept in `shop-licence.json` beside `licence.key` and checked
+offline on every status read, against `SHOP_PUBLIC_KEY` compiled into
+`yewee/licensing.py`. A check-in runs a minute after launch and then daily.
+**Remove licence** releases the seat when the service can be reached.
+
+What each state costs the operator:
+
+| Service status | In Yewee |
+|---|---|
+| `active` | licensed |
+| `update_required` | licensed, with a note (Yewee is sold per major version, so the window is open-ended in practice) |
+| `check_in_required` | licensed, with a note. A show machine may sit offline for weeks; the lease never stops it |
+| `expired` (a shop trial) | falls back to the app's own 72-hour trial clock |
+| `wrong_machine`, `invalid` | unlocks nothing; the panel says why |
+
+The one thing that ends a shop licence is the service saying so at a
+check-in: `revoked` (a full refund) or `not_activated` (this machine's
+seat was released from the account page). That is honoured **at the next
+launch**, never mid-show. A network failure is never a licensing failure.
+
+The build stamps `BUILD_DATE` into `_buildinfo.py` for the update-window
+comparison, and bundles `certifi`, because a packaged Python on macOS has
+no CA bundle of its own and activation is HTTPS.
+
 ## Phase 2 — installers ✅ done (two credentials outstanding)
 
 **Shipping since v1.4:** `build/build.py` + `build/yewee.spec` produce a
@@ -206,7 +247,12 @@ regresses).
 
 Commands and details in `build/README.md`.
 
-## Phase 3 — selling (planned)
+## Phase 3 — selling
+
+**Superseded (September 2026):** Yewee is sold through the letissier.ie
+shop, with Paddle as merchant of record and keys issued by the shop's
+licence service; see "Shop licences" above. The plan below is kept for
+the reasoning.
 
 **Selling moves out of this repo.** Accounts, payment, licensing and
 subscriptions for yewee are handled by
