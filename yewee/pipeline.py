@@ -95,6 +95,12 @@ class Pipeline:
         self.texture_kind, self.texture_error = texture_out.probe()
         self.ndi_outs: dict = {}
         self.tex_outs: dict = {}
+        # The data output sits beside the pixel feeds, not among them: it
+        # carries coordinates, has one endpoint rather than a matrix, and
+        # keeps running when every video feed is off.
+        self.osc = None
+        self.osc_error = ""
+        self._osc_key: tuple | None = None
 
         self.source_spec = args.source
         self.startup_error = detector_error
@@ -250,6 +256,47 @@ class Pipeline:
         for out in self.tex_outs.values():
             out.flip = p["flip_tex"]
 
+    def _sync_osc(self, p: dict) -> None:
+        """Match the OSC sender to the live params. Host and port need a
+        fresh socket; slots, rate and units retune in place."""
+        key = (p["osc_enabled"], p["osc_host"], p["osc_port"])
+        if key != self._osc_key:
+            self._osc_key = key
+            if self.osc is not None:
+                self.osc.close()
+                self.osc = None
+            self.osc_error = ""
+            if p["osc_enabled"]:
+                try:
+                    from .osc_out import OSCOutput
+                    self.osc = OSCOutput(p["osc_host"], p["osc_port"],
+                                         slots=p["osc_slots"],
+                                         units=p["osc_units"],
+                                         rate=p["osc_rate"])
+                except Exception as exc:
+                    # Don't retry every frame — changing the address in the
+                    # panel gives a new key, which does retry.
+                    self.osc_error = str(exc)
+                    self.last_error = f"OSC output: {exc}"
+                    self._error_time = time.monotonic()
+        if self.osc is not None:
+            self.osc.slots = p["osc_slots"]
+            self.osc.units = p["osc_units"]
+            self.osc.rate = p["osc_rate"]
+
+    def _osc_clear(self) -> None:
+        """Zero the data feed — paused, no signal, trial over, test card.
+        Stale coordinates left driving a live graphic are worse than none."""
+        if self.osc is not None:
+            self.osc.clear(size=(self._last_size[1], self._last_size[0]))
+
+    def _osc_status(self) -> dict:
+        return {"on": self.osc is not None,
+                "target": self.osc.target if self.osc is not None else "",
+                "slots": self.osc.slots if self.osc is not None else 0,
+                "units": self.osc.units if self.osc is not None else "",
+                "error": self.osc.error if self.osc is not None else self.osc_error}
+
     def _receiver_counts(self, frame_idx: int) -> dict:
         """Connected-receiver counts per NDI feed, refreshed ~3x/second."""
         if frame_idx - self._conn_check_frame >= 10:
@@ -308,6 +355,8 @@ class Pipeline:
         """One loop iteration while paused: keep feeds up with a standby
         slate (overlay goes fully transparent), keep the panel informed."""
         self._sync_outputs(p)
+        self._sync_osc(p)
+        self._osc_clear()
         slate, _ = self._standby_frames()
         self._send_idle(p, slate)
         if self.web_enabled and p["panel_preview"]:
@@ -321,6 +370,8 @@ class Pipeline:
         """Send the test pattern to every active feed, with motion (a
         sweeping block and a wall clock) so a frozen link is obvious."""
         self._sync_outputs(p)
+        self._sync_osc(p)
+        self._osc_clear()   # also proves the data link while you check the rest
         w, h = self._last_size
         if self._card_cache is None or self._card_cache[0] != (w, h):
             base, ovl = render_test_card(w, h, [
@@ -384,6 +435,8 @@ class Pipeline:
         """Trial is over: hold the feeds up with a slate that says so,
         rather than dropping them, so the operator can see why."""
         self._sync_outputs(p)
+        self._sync_osc(p)
+        self._osc_clear()
         slate, _ = self._standby_frames(
             "TRIAL ENDED", "enter a licence key in the control panel")
         self._send_idle(p, slate)
@@ -401,6 +454,8 @@ class Pipeline:
         now = time.monotonic()
         p = self.params.snapshot()
         self._sync_outputs(p)
+        self._sync_osc(p)
+        self._osc_clear()
         # Outputs get plain black — graceful on a live screen. The panel
         # preview keeps the diagnostic slate for the operator.
         black, _ = self._standby_frames("")
@@ -737,6 +792,7 @@ class Pipeline:
                     self._sync_detector(p)
                     p = self._relieved(p)
                     self._sync_outputs(p)
+                    self._sync_osc(p)
                     self._last_size = (frame.shape[1], frame.shape[0])
                     if p["flip"]:
                         frame = cv2.flip(frame, 1)
@@ -764,6 +820,21 @@ class Pipeline:
                             self.last_error = f"Expressions disabled: {exc}"
                             self._error_time = time.monotonic()
                         laps["express"] = (time.perf_counter() - t0) * 1000.0
+                    if self.osc is not None:
+                        # Sent here rather than beside the pixel feeds: the
+                        # coordinates are ready now, and a receiver drawing
+                        # its own graphics should not wait on rendering ours.
+                        t0 = time.perf_counter()
+                        try:
+                            self.osc.send(tracks, frame.shape[:2], fps_ema)
+                        except Exception as exc:
+                            # Caught here rather than left to the frame guard:
+                            # a data feed that keeps raising would otherwise
+                            # skip every frame and black the video out.
+                            self.params.set("osc_enabled", False)
+                            self.last_error = f"Data output disabled: {exc}"
+                            self._error_time = time.monotonic()
+                        laps["osc"] = (time.perf_counter() - t0) * 1000.0
                     proc_ms = sum(laps.values())
                     proc_ema = proc_ms if frame_idx == 0 else 0.9 * proc_ema + 0.1 * proc_ms
 
@@ -955,6 +1026,7 @@ class Pipeline:
                             "out_res": f"{ow}x{oh}",
                             "out_fps_target": p["out_fps"],
                             "texture_kind": self.texture_kind,
+                            "osc": self._osc_status(),
                             "no_input": isinstance(self.source, NullSource),
                             "uptime_s": int(time.time() - self._t0),
                             "perf": {k: round(v, 2) for k, v in self._perf.items()
@@ -1014,6 +1086,9 @@ class Pipeline:
                     except Exception:
                         pass
                 outs.clear()
+            if self.osc is not None:
+                self.osc.close()
+                self.osc = None
             if window_open:
                 cv2.destroyAllWindows()
 
