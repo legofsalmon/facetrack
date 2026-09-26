@@ -314,7 +314,7 @@ def main(argv=None) -> int:
         url = f"http://localhost:{args.web_port}"
         print(f"yewee is already running on this machine — control panel: {url}")
         if not args.no_browser:
-            webbrowser.open(url)
+            webbrowser.open(url)   # the running instance knows its own PIN
         return 0
 
     from yewee.logging_setup import setup as setup_logging
@@ -435,7 +435,10 @@ def main(argv=None) -> int:
     print("  Press Ctrl-C to stop.\n", flush=True)
 
     if panel_url and not args.no_browser:
-        t = threading.Timer(1.2, webbrowser.open, args=(panel_url,))
+        # This browser is on the machine that printed the PIN, so hand it
+        # over rather than prompting the operator for their own number.
+        open_url = f"{panel_url}/?pin={panel_pin}" if panel_pin else panel_url
+        t = threading.Timer(1.2, webbrowser.open, args=(open_url,))
         t.daemon = True
         t.start()
 

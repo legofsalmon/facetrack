@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import re
+import socket
 import sys
 import tempfile
 import traceback
@@ -1648,10 +1649,15 @@ def _():
     trk = FaceTracker(min_hits=1)
     tracks = trk.step(YuNetDetector(score_threshold=0.4).detect(frame))
     est = EmotionEstimator(budget_per_frame=2)
-    est.update(frame, tracks, 100)
-    labelled = [t for t in tracks if t.emotion is not None]
-    assert labelled, "no track got an emotion label"
-    assert all(t.emotion[0] in EMOTIONS for t in labelled)
+    try:
+        # update() now only crops and hands over, so wait for the worker
+        est.update(frame, tracks, 100)
+        assert est.wait_idle(20), "expression worker never finished"
+        labelled = [t for t in tracks if t.emotion is not None]
+        assert labelled, "no track got an emotion label"
+        assert all(t.emotion[0] in EMOTIONS for t in labelled)
+    finally:
+        est.close()
 
 
 def _load_build_script():
@@ -2271,6 +2277,412 @@ addEventListener("load", () => setTimeout(() => {
     assert all(w > 0 for w in r["bars"]), f"cost bars drew with no width: {r['bars']}"
     assert r["bars"][0] > r["bars"][1], f"the priciest stage isn't the widest bar: {r['bars']}"
     assert r["lit"] == ["mid"], f"a fresh install lights {r['lit']}, not Mid crowd"
+
+
+@run("pacing: a blocking source is not capped by the fps it reports")
+def _():
+    """The regression this guards: the loop used to take its frame-rate
+    ceiling from the source's declared fps for every source alike. A
+    capture card that reports 30 while sending 60 then had half its
+    frames dropped by latest-frame-wins, with the panel showing a
+    healthy 30 fps and nothing saying the input was being halved."""
+    import threading
+    import time
+
+    from main import DEFAULTS, parse_args
+    from yewee.params import LiveParams
+    from yewee.pipeline import Pipeline
+
+    class PacedSource:
+        """Delivers at `rate`, blocking like CameraSource.read does, while
+        reporting whatever `fps` it is told to report."""
+        is_live = True
+
+        def __init__(self, rate, fps, self_paced):
+            self.rate = rate
+            self.fps = fps
+            self.self_paced = self_paced
+            self.delivered = 0
+            self._next = None
+            self._frame = np.zeros((120, 160, 3), dtype=np.uint8)
+
+        def read(self, timeout: float = 2.0):
+            now = time.perf_counter()
+            if self._next is None:
+                self._next = now
+            self._next += 1.0 / self.rate
+            if self.self_paced and self._next > now:
+                time.sleep(min(self._next - now, timeout))
+            self.delivered += 1
+            return True, self._frame
+
+        def close(self):
+            pass
+
+    def frames_in(source, seconds):
+        args = parse_args(["--source", os.path.join(ROOT, "test_media", "synth.mp4"),
+                           "--no-ndi", "--no-preview", "--no-web", "--no-browser",
+                           "--quiet", "--backend", "yunet"])
+        params = LiveParams(**{**DEFAULTS, "ndi_program": False,
+                               "panel_preview": False, "local_preview": False,
+                               "emotion_enabled": False})
+        pipe = Pipeline(args, params, web_enabled=False)
+        pipe.source.close()
+        pipe.source = source
+        t = threading.Thread(target=pipe.run, daemon=True)
+        t.start()
+        time.sleep(seconds)
+        pipe.stop()
+        t.join(timeout=5)
+        return pipe.get_stats().get("frame", 0)
+
+    # A source that blocks on its own clock: the declared 30 must not cap it.
+    fast = PacedSource(rate=100.0, fps=30.0, self_paced=True)
+    got = frames_in(fast, 1.0)
+    assert got > 45, (f"blocking source delivering 100/s was held to {got} "
+                      f"frames in a second — the declared fps is capping it")
+
+    # A source that does not block (a video file) still gets paced at `fps`,
+    # or a file would play back at whatever speed the disk manages.
+    slow = PacedSource(rate=1000.0, fps=10.0, self_paced=False)
+    got = frames_in(slow, 1.5)
+    assert got <= 25, f"unpaced source ran to {got} frames in 1.5s — not paced"
+
+
+@run("pacing: every source declares whether it paces itself")
+def _():
+    from yewee.capture import CameraSource, FileSource, NullSource
+    assert CameraSource.self_paced is True   # read() waits for a new seq
+    assert NullSource.self_paced is True     # read() sleeps a frame period
+    assert FileSource.self_paced is False    # reads as fast as it is asked
+
+
+@run("panel: a slider drag does not flood the socket with stats")
+def _():
+    """Every inbound message used to be answered with a full stats
+    frame, so one drag of a slider became a burst of them. Ticks keep
+    their own cadence now — but the panel must still get one promptly
+    afterwards, or it looks frozen."""
+    import asyncio
+    import json
+    import threading
+    import time
+
+    try:
+        import websockets
+    except ImportError:
+        print("        (websockets not installed — skipped)")
+        return
+
+    from main import DEFAULTS, parse_args
+    from yewee.params import LiveParams
+    from yewee.pipeline import Pipeline
+    from yewee.webui import create_app, start_in_thread
+
+    # An ephemeral port, not a fixed one: two runs close together left
+    # the previous server still holding a hardcoded port, and the test
+    # failed with "the panel never came up" for a reason that had
+    # nothing to do with the panel.
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    args = parse_args(["--source", os.path.join(ROOT, "test_media", "synth.mp4"),
+                       "--no-ndi", "--no-preview", "--no-browser", "--quiet",
+                       "--backend", "yunet", "--web-port", str(port)])
+    params = LiveParams(**{**DEFAULTS, "ndi_program": False, "panel_preview": False,
+                           "local_preview": False, "emotion_enabled": False,
+                           "loop_file": True})
+    pipe = Pipeline(args, params, web_enabled=True)
+    server = start_in_thread(create_app(pipe, params), "127.0.0.1", port)
+    runner = threading.Thread(target=pipe.run, daemon=True)
+    runner.start()
+
+    async def session():
+        uri = f"ws://127.0.0.1:{port}/ws"
+        for _ in range(40):                       # wait for the port to bind
+            try:
+                sock = await websockets.connect(uri)
+                break
+            except OSError:
+                await asyncio.sleep(0.25)
+        else:
+            raise AssertionError("the panel never came up")
+        async with sock:
+            async def ticks(seconds, per_recv=1.0):
+                n, end = 0, time.monotonic() + seconds
+                while time.monotonic() < end:
+                    try:
+                        m = await asyncio.wait_for(sock.recv(), timeout=per_recv)
+                    except asyncio.TimeoutError:
+                        continue
+                    if json.loads(m).get("type") == "tick":
+                        n += 1
+                return n
+
+            idle = await ticks(1.5)
+            for i in range(40):                   # a slider drag
+                await sock.send(json.dumps(
+                    {"type": "set", "data": {"det_threshold": 0.3 + i * 0.005}}))
+            during = await ticks(1.0, per_recv=0.2)
+            after = await ticks(1.5)
+            return idle, during, after
+
+    try:
+        idle, during, after = asyncio.run(session())
+    finally:
+        pipe.stop()
+        runner.join(timeout=5)
+        server.should_exit = True
+
+    assert idle >= 2, f"only {idle} ticks in 1.5s while idle — the panel is starved"
+    assert during <= 8, f"a 40-message drag drew {during} stats frames back"
+    assert after >= 2, f"only {after} ticks after the drag — the panel looks frozen"
+    assert params.snapshot()["det_threshold"] > 0.3, "the drag did not apply"
+
+
+@run("tracking: numbers survive a detector dropout")
+def _():
+    """A face lost for longer than the miss window and then found again
+    used to mint a fresh number every time. Retired tracks are reclaimed
+    on geometry now — see tests/idbench.py for the scenes."""
+    from tests.idbench import evaluate
+    from yewee.tracker import FaceTracker
+
+    kw = dict(n_people=12, kind="dropout", frames=400)
+    without = evaluate(lambda: FaceTracker(reid=False), **kw)["switches"]
+    with_reid = evaluate(lambda: FaceTracker(reid=True), **kw)["switches"]
+    assert without >= 15, (f"the dropout scene only produced {without} "
+                           "switches without re-identification — it has "
+                           "stopped exercising the case it exists for")
+    assert with_reid <= 5, f"re-identification left {with_reid} switches"
+
+
+@run("tracking: crossing faces keep their numbers")
+def _():
+    """Association quality proper, with re-identification out of the way.
+    Measured rather than assumed: a globally optimal assignment over the
+    same costs gives an identical count here, which is why the greedy
+    pass stayed."""
+    from tests.idbench import evaluate
+    from yewee.tracker import FaceTracker
+
+    for kw in (dict(n_people=12), dict(n_people=12, miss_rate=0.30),
+               dict(n_people=12, detect_every=3)):
+        r = evaluate(lambda: FaceTracker(reid=False), **kw)
+        assert r["matched"] > 500, "the scene produced almost no matches"
+        assert r["switches"] == 0, f"{r['switches']} switches on {kw}"
+
+
+@run("tracking: a crowd nothing matches stays inside the frame budget")
+def _():
+    """When auto-relief raises detect_every, tracks coast, coasting makes
+    IoU miss, and every track falls through to the centre-distance pass.
+    As a pair of Python loops that cost 40 ms at 120 faces and 75 ms at
+    200 — a frame and a half, at the exact moment the machine was
+    already struggling."""
+    from tests.idbench import unmatched_cost
+
+    ms = unmatched_cost(120)
+    assert ms < 15.0, (f"120 tracks against 120 unmatched faces took "
+                       f"{ms:.1f} ms — the fallback is not vectorised")
+
+
+@run("faces cutout: matches the straightforward implementation exactly")
+def _():
+    """apply_cutout premultiplies only inside the mask's bounding box,
+    which is where most of the stage's cost went. Guard it against the
+    obvious implementation, because the whole point is that the output
+    does not change."""
+    from yewee.overlay import apply_cutout, cutout_alpha, hard_rect_regions
+    from yewee.tracker import Track
+
+    def straightforward(frame, alpha):
+        a3 = cv2.cvtColor(alpha, cv2.COLOR_GRAY2BGR)
+        b, g, r = cv2.split(cv2.multiply(frame, a3, scale=1 / 255.0))
+        return cv2.merge((b, g, r, alpha))
+
+    rng = np.random.default_rng(0)
+    frame = rng.integers(0, 255, (240, 320, 3), dtype=np.uint8)
+    spread = [Track(i + 1, np.array([20 + i * 60, 40 + (i % 2) * 90, 40., 50.],
+                                    np.float32), 0.9) for i in range(4)]
+    clustered = [Track(i + 1, np.array([30 + i * 12, 30 + i * 9, 20., 24.],
+                                       np.float32), 0.9) for i in range(3)]
+    people = cv2.GaussianBlur(
+        (rng.integers(0, 2, (240, 320), dtype=np.uint8) * 255), (21, 21), 0)
+
+    cases = {
+        "oval, feathered": dict(tracks=spread, shape="oval", feather=9),
+        "rectangle, feathered": dict(tracks=spread, shape="rectangle", feather=5),
+        "clustered in a corner": dict(tracks=clustered, shape="oval", feather=7),
+        "people, soft matte": dict(tracks=spread, shape="people",
+                                   people_mask=people, people_soft=True),
+        "no faces at all": dict(tracks=[], shape="oval", feather=4),
+    }
+    for label, kw in cases.items():
+        tracks = kw.pop("tracks")
+        alpha = cutout_alpha(frame.shape[:2], tracks, **kw)
+        assert np.array_equal(apply_cutout(frame, alpha),
+                              straightforward(frame, alpha)), \
+            f"the cutout differs from the reference on: {label}"
+
+    # and the hard-rectangle path is untouched by any of it
+    alpha = cutout_alpha(frame.shape[:2], spread, shape="rectangle", feather=0)
+    hard = hard_rect_regions(frame.shape[:2], spread, 0.15)
+    out = apply_cutout(frame, alpha, hard_regions=hard)
+    assert np.array_equal(out[:, :, 3], alpha)
+    x1, y1, x2, y2 = hard[0]
+    assert np.array_equal(out[y1:y2, x1:x2, :3], frame[y1:y2, x1:x2])
+
+
+@run("preview: nothing is rendered for a preview nobody is watching")
+def _():
+    """`panel_preview` says the operator left the preview on, not that a
+    browser is streaming it. With the preview set to Faces and the tab
+    closed — the normal state once a show starts — the loop used to run
+    the cutout every frame and then throw the result away."""
+    import threading
+    import time
+
+    from main import DEFAULTS, parse_args
+    from yewee.params import LiveParams
+    from yewee.pipeline import Pipeline
+
+    args = parse_args(["--source", os.path.join(ROOT, "test_media", "synth.mp4"),
+                       "--no-ndi", "--no-preview", "--no-browser", "--quiet",
+                       "--backend", "yunet"])
+    params = LiveParams(**{**DEFAULTS, "ndi_program": False, "ndi_faces": False,
+                           "tex_faces": False, "local_preview": False,
+                           "emotion_enabled": False, "loop_file": True,
+                           "panel_preview": True, "preview_source": "faces",
+                           "cutout_shape": "oval", "cutout_feather": 8})
+    # web_enabled=True is the point: the panel is up, just unwatched.
+    pipe = Pipeline(args, params, web_enabled=True)
+    t = threading.Thread(target=pipe.run, daemon=True)
+    t.start()
+    try:
+        def perf_after(seconds):
+            start = pipe.get_stats().get("frame", 0)
+            deadline = time.monotonic() + seconds
+            while time.monotonic() < deadline:
+                if pipe.get_stats().get("frame", 0) > start + 15:
+                    break
+                time.sleep(0.05)
+            return pipe.get_stats().get("perf", {})
+
+        assert "cutout" not in perf_after(5), \
+            "the cutout ran with no browser streaming the preview"
+
+        pipe.add_preview_client(+1)          # a browser opens the preview
+        assert "cutout" in perf_after(5), \
+            "the cutout did not run once a viewer was watching"
+        pipe.add_preview_client(-1)
+    finally:
+        pipe.stop()
+        t.join(timeout=5)
+
+
+@run("emotion: scoring stays off the show loop")
+def _():
+    """FER+ costs ~7.6 ms a face and the default budget is four, which
+    was most of a 30 fps frame spent inside the loop on labels that only
+    refresh every twelve frames. update() must now only crop and hand
+    over."""
+    import time
+
+    from yewee.detectors import YuNetDetector
+    from yewee.emotion import EmotionEstimator
+    from yewee.tracker import FaceTracker
+    frame = _first_frame()
+    trk = FaceTracker(min_hits=1)
+    tracks = trk.step(YuNetDetector(score_threshold=0.4).detect(frame))
+    assert len(tracks) >= 2, "need a couple of faces to make this meaningful"
+
+    inline = EmotionEstimator(budget_per_frame=4, threaded=False)
+    threaded = EmotionEstimator(budget_per_frame=4)
+    try:
+        t0 = time.perf_counter()
+        inline.update(frame, list(tracks), 100)
+        inline_ms = (time.perf_counter() - t0) * 1000
+
+        for t in tracks:
+            t.emotion, t.emotion_frame = None, -(10 ** 9)
+        t0 = time.perf_counter()
+        threaded.update(frame, tracks, 100)
+        dispatch_ms = (time.perf_counter() - t0) * 1000
+
+        assert dispatch_ms < inline_ms / 2, (
+            f"dispatch cost {dispatch_ms:.1f} ms against {inline_ms:.1f} ms "
+            "inline — scoring is still on the show loop")
+        assert threaded.wait_idle(20), "expression worker never finished"
+        assert any(t.emotion is not None for t in tracks), \
+            "worker never labelled anything"
+    finally:
+        inline.close()
+        threaded.close()
+
+
+@run("silhouette: segmentation stays off the show loop")
+def _():
+    """PP-HumanSeg is the priciest thing in the picture — 6.2 ms a frame
+    measured inside the running loop at 1080p, which is why it used to
+    run on every second frame and still cost more than everything else
+    combined. The loop must now only hand the frame over, and must be
+    able to draw a mask afterwards."""
+    import time
+
+    import numpy as np
+    from main import DEFAULTS, parse_args
+    from yewee.params import LiveParams
+    from yewee.pipeline import Pipeline
+    from yewee.tracker import FaceTracker
+    from yewee.detectors import YuNetDetector
+
+    frame = _first_frame()
+    trk = FaceTracker(min_hits=1)
+    tracks = trk.step(YuNetDetector(score_threshold=0.4).detect(frame))
+
+    args = parse_args(["--source", os.path.join(ROOT, "test_media", "synth.mp4"),
+                       "--no-ndi", "--no-preview", "--no-browser", "--quiet",
+                       "--backend", "yunet"])
+    params = LiveParams(**{**DEFAULTS, "cutout_shape": "people",
+                           "people_model": "pphumanseg", "cutout_steady": 0.0})
+    pipe = Pipeline(args, params, web_enabled=False)
+    try:
+        roi = pipe._people_roi_for(frame, tracks)
+        t0 = time.perf_counter()
+        inline = pipe._people_mask(frame, roi, 0.0, "pphumanseg")
+        inline_ms = (time.perf_counter() - t0) * 1000
+        assert inline is not None, "the segmenter produced nothing to compare against"
+
+        t0 = time.perf_counter()
+        pipe._dispatch_people_mask(frame, tracks, 0.0, "pphumanseg")
+        dispatch_ms = (time.perf_counter() - t0) * 1000
+
+        assert dispatch_ms < inline_ms / 3, (
+            f"handover cost {dispatch_ms:.1f} ms against {inline_ms:.1f} ms "
+            "inline — segmentation is still on the show loop")
+
+        mask = pipe._people_now(frame.shape[:2])
+        assert mask is not None, "the worker never published a mask"
+        assert mask.shape == frame.shape[:2] and mask.dtype == np.uint8
+        # same model, same frame, no smoothing: it must agree with inline
+        assert np.array_equal(mask, inline[0]), \
+            "the worker's mask differs from the inline one"
+
+        # a busy worker is skipped rather than queued behind, so a slow
+        # machine gets an older mask instead of a slower frame rate
+        pipe._seg_busy = True
+        t0 = time.perf_counter()
+        pipe._dispatch_people_mask(frame, tracks, 0.0, "pphumanseg")
+        assert (time.perf_counter() - t0) * 1000 < 1.0, \
+            "dispatch waited on a busy worker"
+        pipe._seg_busy = False
+    finally:
+        with pipe._seg_cond:
+            pipe._seg_stop = True
+            pipe._seg_cond.notify_all()
+        if pipe._seg_thread is not None:
+            pipe._seg_thread.join(timeout=2.0)
 
 
 if FAILURES:
