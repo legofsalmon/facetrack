@@ -50,7 +50,20 @@ class Pipeline:
 
         p = params.snapshot()
         self._detector_choice = p["detector"]
-        self.detector = pick_backend(p["detector"], p["det_size"], p["det_threshold"])
+        detector_error = ""
+        try:
+            self.detector = pick_backend(p["detector"], p["det_size"], p["det_threshold"])
+        except Exception as exc:
+            # A saved choice that no longer loads (a GPU runtime gone, a
+            # model file damaged) must not stop the app starting — that
+            # would crash-loop the launcher on every restart. YuNet ships
+            # inside OpenCV's own model and is the fallback everywhere else.
+            if p["detector"] == "yunet":
+                raise
+            detector_error = f"detector '{p['detector']}' unavailable: {exc} — using YuNet"
+            self._detector_choice = "yunet"
+            params.set("detector", "yunet")
+            self.detector = pick_backend("yunet", p["det_size"], p["det_threshold"])
         self.tracker = FaceTracker(max_misses=p["max_misses"])
         self.emotion = EmotionEstimator(budget_per_frame=p["emotion_budget"])
 
@@ -84,13 +97,14 @@ class Pipeline:
         self.tex_outs: dict = {}
 
         self.source_spec = args.source
-        self.startup_error = ""
+        self.startup_error = detector_error
         try:
             w, h, fps = self._cap_settings(p)
             self.source = open_source(args.source, w, h, fps,
                                       p["cap_backend"], loop=p["loop_file"])
         except Exception as exc:
-            self.startup_error = f"source '{args.source}': {exc}"
+            self.startup_error = "; ".join(
+                e for e in (detector_error, f"source '{args.source}': {exc}") if e)
             self.source = NullSource(args.width or 1280, args.height or 720)
 
         self._connections: dict = {}
@@ -117,7 +131,7 @@ class Pipeline:
         self._pv_jpeg: bytes | None = None
         self._pv_time = 0.0
         self._checker: np.ndarray | None = None  # alpha-preview backdrop
-        self._pv_clients = 0            # MJPEG viewers (maintained by webui)
+        self._pv_clients = 0            # MJPEG viewers (see add_preview_client)
         self._pv_clients_lock = threading.Lock()
         self.heartbeat = time.monotonic()  # watchdog liveness signal
         self._t0 = time.time()
@@ -141,6 +155,16 @@ class Pipeline:
         self._seg_prev: np.ndarray | None = None   # worker-owned, for smoothing
         self._seg_result: tuple | None = None      # (mask, soft) it publishes
         self._seg_ms = 0.0              # its own cost, reported separately
+        self._failed_in_row = 0         # consecutive frames that raised
+        self._failures_seen: dict = {}  # signature -> count, this run
+        self.on_frame_error = None      # optional callback(exc), e.g. reporting
+
+    # A frame that raises is skipped. After this many in a row the outputs
+    # go to plain black (as on signal loss) instead of holding a frozen
+    # picture, and a non-default detector is swapped for YuNet in case it
+    # is the part failing (a GPU runtime that dies mid-show).
+    FAILED_FRAMES_BLACK = 15
+    FAILED_FRAMES_FALLBACK = 30
 
     # ---- control surface (called from web threads) ----
 
@@ -164,6 +188,24 @@ class Pipeline:
             with self._source_lock:
                 self._pending_source = spec
 
+    @property
+    def preview_clients(self) -> int:
+        return self._pv_clients
+
+    def add_preview_client(self, delta: int) -> None:
+        """Called from the web threads as panel previews come and go."""
+        with self._pv_clients_lock:
+            self._pv_clients = max(0, self._pv_clients + delta)
+
+    def _preview_wanted(self, p: dict) -> bool:
+        """Whether the panel preview is worth rendering this frame.
+
+        The switch being on is not enough: with nobody streaming it, the
+        cutout and overlay were still being rendered every frame for a
+        JPEG that was then thrown away. That is around 10 ms a frame with
+        the people silhouette on, spent for no viewer at all."""
+        return p["panel_preview"] and self._pv_clients > 0
+
     def _cap_settings(self, p: dict) -> tuple[int, int, float]:
         """Requested capture size/rate from the live cap_format param;
         (0, 0, 0) = auto (let the device decide)."""
@@ -172,29 +214,6 @@ class Pipeline:
     def get_stats(self) -> dict:
         with self._stats_lock:
             return dict(self._stats)
-
-    @property
-    def preview_clients(self) -> int:
-        with self._pv_clients_lock:
-            return self._pv_clients
-
-    def add_preview_client(self, delta: int) -> None:
-        """Called by the panel's MJPEG endpoint as viewers come and go."""
-        with self._pv_clients_lock:
-            self._pv_clients = max(0, self._pv_clients + delta)
-
-    def _preview_wanted(self, p: dict) -> bool:
-        """Whether anything should be rendered for the panel preview.
-
-        `panel_preview` is a setting; it says the operator left the
-        preview switched on, not that a browser is streaming it. Those
-        came apart the moment a show started and the tab was closed —
-        with the preview set to Faces or Mask the loop kept running a
-        full segmentation and cutout every frame, and _publish_preview
-        threw the result away on its first line. The viewer count is the
-        honest signal, so the work follows it."""
-        return (self.web_enabled and p["panel_preview"]
-                and self.preview_clients > 0)
 
     def wait_preview(self, last_seq: int, timeout: float = 1.0):
         """Blocks until a preview newer than last_seq exists. -> (seq, jpeg) | None"""
@@ -318,7 +337,7 @@ class Pipeline:
         self._sync_outputs(p)
         slate, _ = self._standby_frames()
         self._send_idle(p, slate)
-        if self._preview_wanted(p):
+        if self.web_enabled and self._preview_wanted(p):
             self._publish_preview(slate)
         with self._stats_lock:
             self._stats.update({"state": "paused", "fps": 0.0, "faces": 0,
@@ -363,7 +382,7 @@ class Pipeline:
                     out.send(table[c])
                 except Exception:
                     pass
-        if self._preview_wanted(p):
+        if self.web_enabled and self._preview_wanted(p):
             self._publish_preview(card)
         with self._stats_lock:
             self._stats.update({"state": "test-card", "fps": 0.0, "faces": 0,
@@ -395,7 +414,7 @@ class Pipeline:
         slate, _ = self._standby_frames(
             "TRIAL ENDED", "enter a licence key in the control panel")
         self._send_idle(p, slate)
-        if self._preview_wanted(p):
+        if self.web_enabled and self._preview_wanted(p):
             self._publish_preview(slate)
         with self._stats_lock:
             self._stats.update({"state": "unlicensed", "fps": 0.0, "faces": 0,
@@ -413,7 +432,7 @@ class Pipeline:
         # preview keeps the diagnostic slate for the operator.
         black, _ = self._standby_frames("")
         self._send_idle(p, black)
-        if self._preview_wanted(p):
+        if self.web_enabled and self._preview_wanted(p):
             slate, _ = self._standby_frames(
                 "NO SIGNAL", f"input '{self.source_spec}' lost - reconnecting")
             self._publish_preview(slate)
@@ -544,11 +563,12 @@ class Pipeline:
         """Hand this frame's silhouette to the worker and return.
 
         Segmentation is the most expensive thing in the loop — PP-HumanSeg
-        measures 14 ms at 1080p, and it used to run inline on every second
-        frame, so half a frame's budget on average. It does not belong on
-        the critical path: the mask is already up to two frames old by
-        design and temporally smoothed on top, so a frame of extra latency
-        changes nothing an audience could see.
+        measures 6.2 ms a frame inside the running loop at 1080p, and it
+        used to run inline on every second frame, still costing more than
+        every other stage put together. It does not belong on the critical
+        path: the mask was already up to two frames old by design and is
+        temporally smoothed on top, so a frame of extra latency changes
+        nothing an audience could see.
 
         The frame is copied here rather than shared, because the loop
         draws on it in place when the main feed carries graphics. One job
@@ -599,18 +619,23 @@ class Pipeline:
                 frame, roi, steady, model_name = self._seg_job
                 self._seg_job = None
             t0 = time.perf_counter()
+            result = None
             try:
                 result = self._people_mask(frame, roi, steady, model_name)
             except Exception as exc:                 # noqa: BLE001
-                result = None
                 self.last_error = f"People cutout failed: {exc}"
                 self._error_time = time.monotonic()
-            self._seg_ms = (time.perf_counter() - t0) * 1000.0
-            if result is not None:
-                self._seg_result = result   # one rebind: mask and soft together
-            with self._seg_cond:
-                self._seg_busy = False
-                self._seg_cond.notify_all()
+            finally:
+                # Clearing the busy flag is in a finally for a reason: the
+                # loop waits on it when it has no mask yet, so a worker
+                # that died holding it would cost every later frame the
+                # full wait. A frame is skipped, never the show.
+                self._seg_ms = (time.perf_counter() - t0) * 1000.0
+                if result is not None:
+                    self._seg_result = result   # one rebind: mask and soft
+                with self._seg_cond:
+                    self._seg_busy = False
+                    self._seg_cond.notify_all()
 
     def _people_mask(self, frame, roi, steady: float, model_name: str):
         """(mask, soft) from the selected silhouette model, loading it on
@@ -652,6 +677,47 @@ class Pipeline:
             mask = cv2.addWeighted(prev, steady, mask, 1 - steady, 0)
         self._seg_prev = mask
         return mask, soft
+
+    def _frame_failed(self, exc: BaseException) -> None:
+        """One frame raised. Log it (in full the first time each distinct
+        error is seen, then every 500th), tell the panel, and keep going."""
+        import traceback
+        self._failed_in_row += 1
+        tb = traceback.extract_tb(exc.__traceback__)
+        where = f"{tb[-1].name}:{tb[-1].lineno}" if tb else "?"
+        sig = f"{type(exc).__name__}@{where}"
+        seen = self._failures_seen.get(sig, 0) + 1
+        self._failures_seen[sig] = seen
+        if seen == 1 or seen % 500 == 0:
+            print(f"[yewee] a frame failed and was skipped ({seen}x so far): "
+                  f"{type(exc).__name__}: {exc}", flush=True)
+            if seen == 1:
+                traceback.print_exception(type(exc), exc, exc.__traceback__)
+        if seen == 1 and self.on_frame_error is not None:
+            try:
+                self.on_frame_error(exc)
+            except Exception:
+                pass
+        self.last_error = (f"A frame failed and was skipped ({type(exc).__name__}: "
+                           f"{str(exc)[:120]}) — tracking continues")
+        self._error_time = time.monotonic()
+        p = self.params.snapshot()
+        if self._failed_in_row == self.FAILED_FRAMES_FALLBACK and \
+                self._detector_choice != "yunet":
+            self.params.set("detector", "yunet")
+            self.last_error = ("Frames keep failing — switched the detector to YuNet. "
+                               f"Last error: {type(exc).__name__}: {str(exc)[:120]}")
+        if self._failed_in_row >= self.FAILED_FRAMES_BLACK:
+            try:
+                black, _ = self._standby_frames("")
+                self._send_idle(p, black)
+            except Exception:
+                pass
+        with self._stats_lock:
+            self._stats.update({"error": self.last_error,
+                                "frame_errors": sum(self._failures_seen.values())})
+        # never spin: a file source returns instantly, so give it a frame time
+        time.sleep(1.0 / max(1.0, min(120.0, getattr(self.source, "fps", 30.0) or 30.0)))
 
     def _maybe_swap_source(self) -> None:
         with self._source_lock:
@@ -736,7 +802,7 @@ class Pipeline:
         t_last = time.perf_counter()
         window_open = False
         pace_next = None  # file playback pacing (real-time unless benchmarking)
-        paced_for = self.source  # the source pace_next belongs to
+        paced_for = None  # the source pace_next belongs to
 
         try:
             while not self._stop.is_set():
@@ -772,290 +838,299 @@ class Pipeline:
                     if self.last_error.startswith("Signal lost"):
                         self.last_error = ""
                     t_last = time.perf_counter()  # don't count the outage in fps
-                self._apply_cpu_limit(p)
-                self._sync_detector(p)
-                p = self._relieved(p)
-                self._sync_outputs(p)
-                self._last_size = (frame.shape[1], frame.shape[0])
-                if p["flip"]:
-                    frame = cv2.flip(frame, 1)
+                # One bad frame (a detector or model error, a malformed capture
+                # buffer, a feed that throws) is skipped, not fatal: the loop keeps
+                # tracking on the next frame. See _frame_failed.
+                try:
+                    self._apply_cpu_limit(p)
+                    self._sync_detector(p)
+                    p = self._relieved(p)
+                    self._sync_outputs(p)
+                    self._last_size = (frame.shape[1], frame.shape[0])
+                    if p["flip"]:
+                        frame = cv2.flip(frame, 1)
 
-                laps: dict = {}
-                t0 = time.perf_counter()
-                self.detector.apply_live(p["det_threshold"], p["det_size"])
-                self.tracker.max_misses = p["max_misses"]
-                dets = None
-                if frame_idx % p["detect_every"] == 0:
-                    dets = self.detector.detect(frame)
-                    if p["min_face"] > 0 and len(dets):
-                        dets = dets[(dets[:, 2] >= p["min_face"]) & (dets[:, 3] >= p["min_face"])]
-                laps["detect"] = (time.perf_counter() - t0) * 1000.0
-                t0 = time.perf_counter()
-                tracks = self.tracker.step(dets)
-                laps["track"] = (time.perf_counter() - t0) * 1000.0
-                if p["emotion_enabled"] and p["emotion_budget"] > 0:
+                    laps: dict = {}
                     t0 = time.perf_counter()
-                    try:
-                        self.emotion.budget = p["emotion_budget"]
-                        self.emotion.update(frame, tracks, frame_idx)
-                    except Exception as exc:
-                        self.params.set("emotion_enabled", False)
-                        self.last_error = f"Expressions disabled: {exc}"
-                        self._error_time = time.monotonic()
-                    laps["express"] = (time.perf_counter() - t0) * 1000.0
-                proc_ms = sum(laps.values())
-                proc_ema = proc_ms if frame_idx == 0 else 0.9 * proc_ema + 0.1 * proc_ms
-
-                pv_on = self._preview_wanted(p)
-                pv_src = p["preview_source"]
-
-                def wants(c):
-                    return p[f"ndi_{c}"] or (p[f"tex_{c}"] and bool(self.texture_kind))
-
-                overlay_bgra = None
-                if wants("overlay") or (pv_on and pv_src == "overlay"):
+                    self.detector.apply_live(p["det_threshold"], p["det_size"])
+                    self.tracker.max_misses = p["max_misses"]
+                    dets = None
+                    if frame_idx % p["detect_every"] == 0:
+                        dets = self.detector.detect(frame)
+                        if p["min_face"] > 0 and len(dets):
+                            dets = dets[(dets[:, 2] >= p["min_face"]) & (dets[:, 3] >= p["min_face"])]
+                    laps["detect"] = (time.perf_counter() - t0) * 1000.0
                     t0 = time.perf_counter()
-                    overlay_bgra = render_overlay_bgra(
-                        frame.shape[:2], tracks,
-                        show_emotion=p["emotion_enabled"], show_ids=p["show_ids"],
-                        color=self._brand_color(p["overlay_color"]))
-                    laps["overlay"] = (time.perf_counter() - t0) * 1000.0
-                faces_bgra = None
-                mask_img = None
-                need_faces = wants("faces") or (pv_on and pv_src == "faces")
-                need_mask = wants("mask") or (pv_on and pv_src == "mask")
-                if need_faces or need_mask:
-                    people = None
-                    if p["cutout_shape"] == "people":
-                        # Off the critical path entirely: this only hands
-                        # the frame over. Under auto-relief, hand one over
-                        # every other frame so a struggling machine gets
-                        # the CPU back rather than a fresher mask.
+                    tracks = self.tracker.step(dets)
+                    laps["track"] = (time.perf_counter() - t0) * 1000.0
+                    if p["emotion_enabled"] and p["emotion_budget"] > 0:
                         t0 = time.perf_counter()
-                        if not (self._relief and frame_idx % 2):
-                            self._dispatch_people_mask(frame, tracks,
-                                                       p["cutout_steady"],
-                                                       p["people_model"])
-                        laps["silhouette"] = (time.perf_counter() - t0) * 1000.0
-                        people = self._people_now(frame.shape[:2])
-                    t0 = time.perf_counter()
-                    alpha = cutout_alpha(frame.shape[:2], tracks,
-                                         margin=p["cutout_margin"],
-                                         shape=p["cutout_shape"],
-                                         feather=p["cutout_feather"],
-                                         people_mask=people,
-                                         people_soft=self._people_soft,
-                                         grow=p["cutout_grow"])
-                    if need_faces:
-                        hard = (hard_rect_regions(frame.shape[:2], tracks,
-                                                  p["cutout_margin"])
-                                if p["cutout_shape"] == "rectangle"
-                                and p["cutout_feather"] == 0 else None)
-                        faces_bgra = apply_cutout(frame, alpha, hard_regions=hard)
-                    if need_mask:
-                        mask_img = render_mask(alpha, p["mask_style"])
-                    laps["cutout"] = (time.perf_counter() - t0) * 1000.0
-
-                now = time.perf_counter()
-                dt = now - t_last
-                t_last = now
-                # Average the frame TIME, not 1/dt: with work that lands on
-                # alternate frames (segmentation), averaging instantaneous
-                # rates over-weights the cheap frames and reports an fps
-                # well above the real one.
-                dt_ema = dt if dt_ema is None else 0.9 * dt_ema + 0.1 * dt
-                fps_ema = 1.0 / dt_ema if dt_ema > 0 else 0.0
-
-                # Skip annotation entirely when nothing consumes it (previews
-                # off + clean main feed): detection -> tracking -> outputs only.
-                # The annotated display draws in place on `frame` when the
-                # main feed carries graphics — keep a pristine copy if the
-                # panel is watching the clean view.
-                clean_frame = frame
-                if pv_on and pv_src == "clean" and not p["clean_main"]:
-                    clean_frame = frame.copy()
-                brand = self._brand_color(p["overlay_color"])
-                display = None
-                if (p["local_preview"] or (pv_on and pv_src == "annotated")
-                        or not p["clean_main"]):
-                    t0 = time.perf_counter()
-                    display = frame.copy() if p["clean_main"] else frame
-                    draw_tracks(display, tracks, show_emotion=p["emotion_enabled"],
-                                show_ids=p["show_ids"], color=brand)
-                    if p["show_stats"]:
-                        n_feeds = len(self.ndi_outs) + len(self.tex_outs)
-                        draw_stats(display, [
-                            f"{fps_ema:5.1f} fps   faces {len(tracks):3d}   proc {proc_ema:5.1f} ms",
-                            f"{self.detector.name}   feeds {n_feeds}",
-                        ])
-                    laps["annotate"] = (time.perf_counter() - t0) * 1000.0
-
-                out_width = p["out_width"]
-                scale_cache: dict = {}  # same image scaled once per frame
-
-                def _scaled(img):
-                    """Downscale once per distinct image per frame — the
-                    same picture goes to both transports, and at 1080p
-                    the resize is nearly 3 ms.
-
-                    The cache keys on id(), which is only an identity
-                    while the object is alive; the entry keeps a
-                    reference to the image itself and checks it, so a
-                    recycled id can never return the wrong picture."""
-                    if not out_width or img.shape[1] == out_width:
-                        return img
-                    hit = scale_cache.get(id(img))
-                    if hit is not None and hit[0] is img:
-                        return hit[1]
-                    oh = int(round(img.shape[0] * out_width / img.shape[1]))
-                    got = cv2.resize(img, (out_width, oh),
-                                     interpolation=cv2.INTER_AREA)
-                    scale_cache[id(img)] = (img, got)
-                    return got
-
-                t0 = time.perf_counter()
-                program = frame if p["clean_main"] else display
-                content_img = {"program": program, "overlay": overlay_bgra,
-                               "faces": faces_bgra, "mask": mask_img}
-
-                def _send_from(outs, c, kind):
-                    """Send, and on failure tear the feed down with a panel
-                    error — _sync_outputs recreates it next frame, so a
-                    transient NDI/texture hiccup can't kill the show."""
-                    out = outs.get(c)
-                    img = content_img[c]
-                    if out is None or img is None:
-                        return
-                    try:
-                        out.send(_scaled(img))
-                    except Exception as exc:
-                        self.last_error = f"{kind} {c} output error: {exc} — restarting feed"
-                        self._error_time = time.monotonic()
                         try:
-                            out.close()
-                        except Exception:
-                            pass
-                        outs.pop(c, None)
+                            self.emotion.budget = p["emotion_budget"]
+                            self.emotion.update(frame, tracks, frame_idx)
+                        except Exception as exc:
+                            self.params.set("emotion_enabled", False)
+                            self.last_error = f"Expressions disabled: {exc}"
+                            self._error_time = time.monotonic()
+                        laps["express"] = (time.perf_counter() - t0) * 1000.0
+                    proc_ms = sum(laps.values())
+                    proc_ema = proc_ms if frame_idx == 0 else 0.9 * proc_ema + 0.1 * proc_ms
 
-                for c in self.CONTENTS:
-                    _send_from(self.ndi_outs, c, "NDI")
-                    _send_from(self.tex_outs, c, self.texture_kind or "texture")
-                laps["outputs"] = (time.perf_counter() - t0) * 1000.0
+                    pv_on = self.web_enabled and self._preview_wanted(p)
+                    pv_src = p["preview_source"]
 
-                if pv_on:
+                    def wants(c):
+                        return p[f"ndi_{c}"] or (p[f"tex_{c}"] and bool(self.texture_kind))
+
+                    overlay_bgra = None
+                    if wants("overlay") or (pv_on and pv_src == "overlay"):
+                        t0 = time.perf_counter()
+                        overlay_bgra = render_overlay_bgra(
+                            frame.shape[:2], tracks,
+                            show_emotion=p["emotion_enabled"], show_ids=p["show_ids"],
+                            color=self._brand_color(p["overlay_color"]))
+                        laps["overlay"] = (time.perf_counter() - t0) * 1000.0
+                    faces_bgra = None
+                    mask_img = None
+                    need_faces = wants("faces") or (pv_on and pv_src == "faces")
+                    need_mask = wants("mask") or (pv_on and pv_src == "mask")
+                    if need_faces or need_mask:
+                        people = None
+                        if p["cutout_shape"] == "people":
+                            # Off the critical path entirely: this only
+                            # hands the frame over. Under auto-relief, hand
+                            # one over every other frame so a struggling
+                            # machine gets the CPU back rather than a
+                            # fresher mask.
+                            t0 = time.perf_counter()
+                            if not (self._relief and frame_idx % 2):
+                                self._dispatch_people_mask(
+                                    frame, tracks, p["cutout_steady"],
+                                    p["people_model"])
+                            laps["silhouette"] = (time.perf_counter() - t0) * 1000.0
+                            people = self._people_now(frame.shape[:2])
+                        t0 = time.perf_counter()
+                        alpha = cutout_alpha(frame.shape[:2], tracks,
+                                             margin=p["cutout_margin"],
+                                             shape=p["cutout_shape"],
+                                             feather=p["cutout_feather"],
+                                             people_mask=people,
+                                             people_soft=self._people_soft,
+                                             grow=p["cutout_grow"])
+                        if need_faces:
+                            hard = (hard_rect_regions(frame.shape[:2], tracks,
+                                                      p["cutout_margin"])
+                                    if p["cutout_shape"] == "rectangle"
+                                    and p["cutout_feather"] == 0 else None)
+                            faces_bgra = apply_cutout(frame, alpha, hard_regions=hard)
+                        if need_mask:
+                            mask_img = render_mask(alpha, p["mask_style"])
+                        laps["cutout"] = (time.perf_counter() - t0) * 1000.0
+
+                    now = time.perf_counter()
+                    dt = now - t_last
+                    t_last = now
+                    # Average the frame TIME, not 1/dt: with work that lands on
+                    # alternate frames (segmentation), averaging instantaneous
+                    # rates over-weights the cheap frames and reports an fps
+                    # well above the real one.
+                    dt_ema = dt if dt_ema is None else 0.9 * dt_ema + 0.1 * dt
+                    fps_ema = 1.0 / dt_ema if dt_ema > 0 else 0.0
+
+                    # Skip annotation entirely when nothing consumes it (previews
+                    # off + clean main feed): detection -> tracking -> outputs only.
+                    # The annotated display draws in place on `frame` when the
+                    # main feed carries graphics — keep a pristine copy if the
+                    # panel is watching the clean view.
+                    clean_frame = frame
+                    if pv_on and pv_src == "clean" and not p["clean_main"]:
+                        clean_frame = frame.copy()
+                    brand = self._brand_color(p["overlay_color"])
+                    display = None
+                    if (p["local_preview"] or (pv_on and pv_src == "annotated")
+                            or not p["clean_main"]):
+                        t0 = time.perf_counter()
+                        display = frame.copy() if p["clean_main"] else frame
+                        draw_tracks(display, tracks, show_emotion=p["emotion_enabled"],
+                                    show_ids=p["show_ids"], color=brand)
+                        if p["show_stats"]:
+                            n_feeds = len(self.ndi_outs) + len(self.tex_outs)
+                            draw_stats(display, [
+                                f"{fps_ema:5.1f} fps   faces {len(tracks):3d}   proc {proc_ema:5.1f} ms",
+                                f"{self.detector.name}   feeds {n_feeds}",
+                            ])
+                        laps["annotate"] = (time.perf_counter() - t0) * 1000.0
+
+                    out_width = p["out_width"]
+                    scale_cache: dict = {}  # same image scaled once per frame
+
+                    def _scaled(img):
+                        if not out_width or img.shape[1] == out_width:
+                            return img
+                        # Keyed on id(), so keep the array alive alongside
+                        # its result and check identity on the way out: a
+                        # freed array's id can be handed to the next one,
+                        # and a wrong hit here scales the wrong picture
+                        # into a live feed.
+                        hit = scale_cache.get(id(img))
+                        if hit is not None and hit[0] is img:
+                            return hit[1]
+                        oh = int(round(img.shape[0] * out_width / img.shape[1]))
+                        got = cv2.resize(img, (out_width, oh),
+                                         interpolation=cv2.INTER_AREA)
+                        scale_cache[id(img)] = (img, got)
+                        return got
+
                     t0 = time.perf_counter()
-                    pv_img = {"annotated": display, "clean": clean_frame,
-                              "overlay": overlay_bgra, "faces": faces_bgra,
-                              "mask": mask_img}[pv_src]
-                    if pv_img is not None:
-                        self._publish_preview(pv_img)
-                    laps["preview"] = (time.perf_counter() - t0) * 1000.0
-                if p["local_preview"] and display is not None:
-                    try:
-                        cv2.imshow("yewee (q to quit)", _scaled(display))
-                        window_open = True
-                        if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
-                            break
-                    except cv2.error:
-                        self.params.set("local_preview", False)
-                        self.last_error = ("Preview window unavailable on this "
-                                           "machine (running headless?)")
-                        self._error_time = time.monotonic()
+                    program = frame if p["clean_main"] else display
+                    content_img = {"program": program, "overlay": overlay_bgra,
+                                   "faces": faces_bgra, "mask": mask_img}
+
+                    def _send_from(outs, c, kind):
+                        """Send, and on failure tear the feed down with a panel
+                        error — _sync_outputs recreates it next frame, so a
+                        transient NDI/texture hiccup can't kill the show."""
+                        out = outs.get(c)
+                        img = content_img[c]
+                        if out is None or img is None:
+                            return
+                        try:
+                            out.send(_scaled(img))
+                        except Exception as exc:
+                            self.last_error = f"{kind} {c} output error: {exc} — restarting feed"
+                            self._error_time = time.monotonic()
+                            try:
+                                out.close()
+                            except Exception:
+                                pass
+                            outs.pop(c, None)
+
+                    for c in self.CONTENTS:
+                        _send_from(self.ndi_outs, c, "NDI")
+                        _send_from(self.tex_outs, c, self.texture_kind or "texture")
+                    laps["outputs"] = (time.perf_counter() - t0) * 1000.0
+
+                    if pv_on:
+                        t0 = time.perf_counter()
+                        pv_img = {"annotated": display, "clean": clean_frame,
+                                  "overlay": overlay_bgra, "faces": faces_bgra,
+                                  "mask": mask_img}[pv_src]
+                        if pv_img is not None:
+                            self._publish_preview(pv_img)
+                        laps["preview"] = (time.perf_counter() - t0) * 1000.0
+                    if p["local_preview"] and display is not None:
+                        try:
+                            cv2.imshow("yewee (q to quit)", _scaled(display))
+                            window_open = True
+                            if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
+                                break
+                        except cv2.error:
+                            self.params.set("local_preview", False)
+                            self.last_error = ("Preview window unavailable on this "
+                                               "machine (running headless?)")
+                            self._error_time = time.monotonic()
+                            window_open = False
+                    elif window_open:
+                        cv2.destroyAllWindows()
                         window_open = False
-                elif window_open:
-                    cv2.destroyAllWindows()
-                    window_open = False
 
-                if self.last_error and time.monotonic() - self._error_time > 20:
-                    self.last_error = ""
-                conns = self._receiver_counts(frame_idx)
-                # per-stage cost EMAs for the panel's performance meter
-                for k in set(self._perf) | set(laps):
-                    self._perf[k] = (0.9 * self._perf.get(k, laps.get(k, 0.0))
-                                     + 0.1 * laps.get(k, 0.0))
-                budget_ms = 1000.0 / (p["out_fps"] or 30)
-                load_ms = sum(self._perf.values())
-                self._update_relief(p, int(round(load_ms / budget_ms * 100)),
-                                    time.monotonic())
-                ow = out_width or frame.shape[1]
-                oh = int(round(frame.shape[0] * ow / frame.shape[1]))
-                with self._stats_lock:
-                    self._stats = {
-                        "state": "live",
-                        "fps": round(fps_ema, 1),
-                        "faces": len(tracks),
-                        "proc_ms": round(proc_ema, 1),
-                        "frame": frame_idx,
-                        "backend": self.detector.name,
-                        "source": self.source_spec,
-                        "ndi_feeds": [
-                            {"content": c,
-                             "name": f"{self.hostname} ({self.ndi_feed_names[c]})",
-                             "watching": conns.get(c, 0)}
-                            for c in self.CONTENTS if c in self.ndi_outs],
-                        "tex_feeds": [
-                            {"content": c, "name": self.tex_feed_names[c]}
-                            for c in self.CONTENTS if c in self.tex_outs],
-                        "out_res": f"{ow}x{oh}",
-                        "out_fps_target": p["out_fps"],
-                        "texture_kind": self.texture_kind,
-                        "no_input": isinstance(self.source, NullSource),
-                        "uptime_s": int(time.time() - self._t0),
-                        "perf": {k: round(v, 2) for k, v in self._perf.items()
-                                 if v >= 0.02},
-                        "budget_ms": round(budget_ms, 1),
-                        "load_pct": int(round(load_ms / budget_ms * 100)),
-                        "relief": self._relief,
-                        # Not folded into `perf`: the panel totals that
-                        # against the frame budget, and this runs beside
-                        # the loop rather than inside it.
-                        "silhouette_ms": (round(self._seg_ms, 1)
-                                          if p["cutout_shape"] == "people" else 0.0),
-                        "cpu_threads": _rt.budget(),
-                        "cv_threads": _rt.cv_threads(),
-                        "cpu_cores": _rt.cores(),
-                        "people_models": _people_model_choices(),
-                        "licence": self.licence(),
-                        "error": self.last_error,
-                    }
+                    if self.last_error and time.monotonic() - self._error_time > 20:
+                        self.last_error = ""
+                    conns = self._receiver_counts(frame_idx)
+                    # per-stage cost EMAs for the panel's performance meter
+                    for k in set(self._perf) | set(laps):
+                        self._perf[k] = (0.9 * self._perf.get(k, laps.get(k, 0.0))
+                                         + 0.1 * laps.get(k, 0.0))
+                    budget_ms = 1000.0 / (p["out_fps"] or 30)
+                    load_ms = sum(self._perf.values())
+                    self._update_relief(p, int(round(load_ms / budget_ms * 100)),
+                                        time.monotonic())
+                    ow = out_width or frame.shape[1]
+                    oh = int(round(frame.shape[0] * ow / frame.shape[1]))
+                    with self._stats_lock:
+                        self._stats = {
+                            "state": "live",
+                            "fps": round(fps_ema, 1),
+                            "faces": len(tracks),
+                            "proc_ms": round(proc_ema, 1),
+                            "frame": frame_idx,
+                            "backend": self.detector.name,
+                            "source": self.source_spec,
+                            "ndi_feeds": [
+                                {"content": c,
+                                 "name": f"{self.hostname} ({self.ndi_feed_names[c]})",
+                                 "watching": conns.get(c, 0)}
+                                for c in self.CONTENTS if c in self.ndi_outs],
+                            "tex_feeds": [
+                                {"content": c, "name": self.tex_feed_names[c]}
+                                for c in self.CONTENTS if c in self.tex_outs],
+                            "out_res": f"{ow}x{oh}",
+                            "out_fps_target": p["out_fps"],
+                            # Not folded into `perf`: the panel totals that
+                            # against the frame budget, and this runs beside
+                            # the loop rather than inside it.
+                            "silhouette_ms": (round(self._seg_ms, 1)
+                                              if p["cutout_shape"] == "people"
+                                              else 0.0),
+                            "texture_kind": self.texture_kind,
+                            "no_input": isinstance(self.source, NullSource),
+                            "uptime_s": int(time.time() - self._t0),
+                            "perf": {k: round(v, 2) for k, v in self._perf.items()
+                                     if v >= 0.02},
+                            "budget_ms": round(budget_ms, 1),
+                            "load_pct": int(round(load_ms / budget_ms * 100)),
+                            "relief": self._relief,
+                            "cpu_threads": _rt.budget(),
+                            "cv_threads": _rt.cv_threads(),
+                            "cpu_cores": _rt.cores(),
+                            "people_models": _people_model_choices(),
+                            "licence": self.licence(),
+                            "frame_errors": sum(self._failures_seen.values()),
+                            "error": self.last_error,
+                        }
 
-                # Frame-rate ceiling, for sources that need one.
-                #
-                # A source that blocks until it has a genuinely new frame
-                # already sets the loop's rhythm, and adding a ceiling on
-                # top only throws frames away: `fps` is a claim, and a
-                # capture card claiming 30 while sending 50 or 60 had two
-                # frames in five silently dropped, with the panel showing
-                # a healthy 30 throughout. Those sources are left alone.
-                # A video file, which hands frames over as fast as the
-                # disk allows, still needs pacing to play at real speed.
-                # Unpaced too for --max-frames benchmark runs.
-                if self.source is not paced_for:
-                    paced_for = self.source   # a swap restarts the cadence
-                    pace_next = None
-                if not args.max_frames and not getattr(self.source,
-                                                       "self_paced", False):
-                    src_fps = min(max(getattr(self.source, "fps", 0) or 30.0, 1.0), 120.0)
-                    period = 1.0 / src_fps
-                    now2 = time.perf_counter()
-                    if pace_next is None:
-                        pace_next = now2
-                    pace_next += period
-                    if pace_next > now2:
-                        time.sleep(pace_next - now2)
+                    # Frame-rate ceiling, for sources that need one.
+                    #
+                    # A source that blocks until it has a genuinely new
+                    # frame already sets the loop's rhythm, and a ceiling
+                    # on top only throws frames away: `fps` is a claim,
+                    # and a capture card claiming 30 while sending 50 or
+                    # 60 had two frames in five silently dropped, with the
+                    # panel showing a healthy 30 throughout. Those sources
+                    # are left alone. A video file, which hands frames
+                    # over as fast as the disk allows, still needs pacing
+                    # to play at real speed. Unpaced too for --max-frames
+                    # benchmark runs.
+                    if self.source is not paced_for:
+                        paced_for = self.source   # a swap restarts the cadence
+                        pace_next = None
+                    if not args.max_frames and not getattr(self.source,
+                                                           "self_paced", False):
+                        src_fps = min(max(getattr(self.source, "fps", 0) or 30.0, 1.0), 120.0)
+                        period = 1.0 / src_fps
+                        now2 = time.perf_counter()
+                        if pace_next is None:
+                            pace_next = now2
+                        pace_next += period
+                        if pace_next > now2:
+                            time.sleep(pace_next - now2)
+                        else:
+                            # behind schedule: reset rather than bank the debt,
+                            # or the loop bursts to "catch up" and runs hot
+                            pace_next = now2
                     else:
-                        # behind schedule: reset rather than bank the debt,
-                        # or the loop bursts to "catch up" and runs hot
-                        pace_next = now2
-                else:
-                    pace_next = None
+                        pace_next = None
 
-                frame_idx += 1
-                if not args.quiet and frame_idx % 150 == 0:
-                    print(f"[yewee] {fps_ema:5.1f} fps | faces {len(tracks):3d} | "
-                          f"proc {proc_ema:5.1f} ms | frame {frame_idx}")
-                if args.max_frames and frame_idx >= args.max_frames:
-                    break
+                    self._failed_in_row = 0
+                    frame_idx += 1
+                    if not args.quiet and frame_idx % 150 == 0:
+                        print(f"[yewee] {fps_ema:5.1f} fps | faces {len(tracks):3d} | "
+                              f"proc {proc_ema:5.1f} ms | frame {frame_idx}")
+                    if args.max_frames and frame_idx >= args.max_frames:
+                        break
+                except Exception as exc:  # noqa: BLE001 — never end the show over one frame
+                    self._frame_failed(exc)
+                    continue
         finally:
             self._stop.set()
             with self._pv_cond:

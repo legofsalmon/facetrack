@@ -36,7 +36,8 @@ jobs:
         run: |
           python -c "import main, yewee.webui, yewee.ndi_io, yewee.doctor, \
                             yewee.licensing, yewee.segmenter, yewee.emotion, \
-                            yewee.texture_out, tests.idbench"
+                            yewee.texture_out, yewee.crashguard, yewee.notices, \
+                            yewee.reporting, tests.idbench"
 
       - name: Smoke tests
         run: python -m tests.smoke

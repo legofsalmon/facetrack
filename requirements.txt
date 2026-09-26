@@ -20,6 +20,16 @@ fastapi==0.141.1
 uvicorn==0.53.0
 websockets==17.1
 
+# CA certificates for activating shop licences over HTTPS: a packaged
+# Python on macOS has no system bundle of its own.
+#
+# Pinned like the rest, but this one is a trust store rather than code:
+# a frozen bundle goes stale as roots are added and withdrawn, and a
+# stale one shows up as licence activation failing on a customer's
+# machine months after the build. Refresh it deliberately at release
+# time rather than leaving it to whatever the build host resolves.
+certifi==2026.7.22
+
 # Real camera names in the source picker (Windows/DirectShow)
 pygrabber==0.2; sys_platform == "win32"
 

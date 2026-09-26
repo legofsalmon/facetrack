@@ -4,11 +4,16 @@
 pip install pyinstaller
 
 # what you keep — everything, no licensing
-python build/build.py --version 1.3.0
+python build/build.py
 
 # what you sell — licensing on, GPL models left out
-python build/build.py --distribution --pubkey <hex from Licence Admin> --version 1.3.0
+python build/build.py --distribution
 ```
+
+The version comes from `__version__` in `yewee/__init__.py` (1.0.0 since
+the reset on 2026-09-24). `--version` is optional, and a distribution build
+refuses one that disagrees with `__version__`, so bump it in the commit you
+tag: tag `v1.0.1` builds only once `__version__` says `1.0.1`.
 
 Output lands in `build/dist/` — `Yewee.app` on macOS, a `yewee/` folder on
 Windows. Roughly **340 MB**; most of it is OpenCV (118 MB), the models
@@ -60,12 +65,19 @@ people's machines. Both platforms need paid certificates.
 ### macOS (Apple Developer Program, $99/yr) — working
 
 ```bash
-YEWEE_VERSION=1.3.0 build/sign_macos.sh
+build/sign_macos.sh                 # version read from yewee/__init__.py
 ```
 
-Signs every nested binary, signs the app with the hardened runtime and
-`build/entitlements.plist`, verifies, and builds the DMG. Verified with
-`Developer ID Application: Colm Hewson (PKN49VCQZQ)`.
+Signs every nested Mach-O binary (found with `file`, so helpers without
+an extension are included), then each framework, then the app with the
+hardened runtime and `build/entitlements.plist`. It then runs
+`codesign --verify --deep --strict` and builds the DMG only if that
+passes. The DMG holds `Yewee.app` with `build/TERMS.txt` beside it
+(the Windows installer shows the same file as its licence page). Any
+nested signing failure stops the script with codesign's own
+message rather than leaving a half-signed bundle to fail at notarisation.
+Verified with `Developer ID Application: Colm Hewson (PKN49VCQZQ)` before
+that change; the stricter version has not yet been run on a Mac.
 
 Two things the script handles that catch people out:
 
@@ -94,7 +106,7 @@ Use an [app-specific password](https://appleid.apple.com), not the Apple
 ID password. Then:
 
 ```bash
-YEWEE_VERSION=1.3.0 build/sign_macos.sh --notarize
+build/sign_macos.sh --notarize
 ```
 
 That submits, waits, and staples the ticket to the DMG so it validates

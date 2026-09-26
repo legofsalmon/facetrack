@@ -23,6 +23,11 @@ for name in sorted(os.listdir(os.path.join(ROOT, "models"))):
 
 datas += [(os.path.join(ROOT, "LICENSE"), "."),
           (os.path.join(ROOT, "models", "README.md"), "models")]
+# written by build.py from this environment: every bundled package's licence
+# text, the NDI trademark and copyright notice, and the models' terms
+NOTICES = os.path.join(ROOT, "build", "THIRD-PARTY-NOTICES.txt")
+if os.path.exists(NOTICES):
+    datas.append((NOTICES, "."))
 
 # ---- packages whose binaries PyInstaller can't infer -------------------
 binaries = []
@@ -31,7 +36,8 @@ hiddenimports = [
     "uvicorn.logging", "uvicorn.loops.auto", "uvicorn.protocols.http.auto",
     "uvicorn.protocols.websockets.auto", "uvicorn.lifespan.on",
 ]
-for pkg in ("cyndilib", "onnxruntime"):     # NDI runtime / ORT providers
+# NDI runtime / ORT providers / the CA bundle shop licences activate over
+for pkg in ("cyndilib", "onnxruntime", "certifi"):
     try:
         d, b, h = collect_all(pkg)
         # onnxruntime ships sample models and test data we don't need
@@ -100,6 +106,14 @@ if MACOS:
             # cannot show it the camera prompt and silently denies instead.
             # The app must be a normal foreground app to ever get permission.
             "LSBackgroundOnly": False,
+            # macOS 15 asks before an app talks to the local network. Yewee
+            # must: NDI finds sources by multicast DNS and sends feeds to
+            # receivers on the LAN, and the control panel is served there.
+            "NSLocalNetworkUsageDescription":
+                "Yewee finds NDI video sources on your local network, sends "
+                "its NDI feeds to your mixer, and serves its control panel to "
+                "phones and computers on the same network.",
+            "NSBonjourServices": ["_ndi._tcp"],
             "NSHighResolutionCapable": True,
             "LSMinimumSystemVersion": "11.0",
             "CFBundleShortVersionString": os.environ.get("YEWEE_VERSION", "0.0.0"),

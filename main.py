@@ -24,9 +24,12 @@ from yewee import settings
 from yewee.params import LiveParams
 from yewee.pipeline import Pipeline
 
+# The detection defaults are the panel's "Mid crowd" preset (PRESETS.mid in
+# yewee/static/index.html), which the panel labels the good default, so a
+# fresh install lights that preset. Change the two together.
 DEFAULTS = dict(detector="auto", out_fps=30.0, loop_file=True,
-                det_threshold=0.5, det_size=640, detect_every=1, min_face=0,
-                max_misses=15, emotion_enabled=True, emotion_budget=4,
+                det_threshold=0.45, det_size=640, detect_every=1, min_face=0,
+                max_misses=15, emotion_enabled=False, emotion_budget=4,
                 show_ids=True, show_stats=True, overlay_color="",
                 clean_main=False, flip=False,
                 cap_format="1280x720@30", cap_backend="any",
@@ -106,46 +109,19 @@ def parse_args(argv=None):
     web.add_argument("--web-host", default="0.0.0.0",
                      help="control panel bind address (default: all interfaces)")
     web.add_argument("--web-port", type=int, default=8089, help="control panel port")
-    web.add_argument("--pin", default="",
-                     help="require this PIN in the control panel (also settable as "
-                          '"pin" in settings.json)')
-    web.add_argument("--no-pin", action="store_true",
-                     help="run the control panel with no PIN (it is then open to "
-                          "everyone on the network)")
+    web.add_argument("--pin", default=None,
+                     help="the PIN other devices must give the control panel, kept "
+                          "for next time; 'none' turns it off (also kept). Default: "
+                          "the saved PIN, or four random digits made on first run "
+                          "(\"pin\" in settings.json). The machine itself never "
+                          "needs it")
 
     p.add_argument("--doctor", action="store_true", help="run the self-check and exit")
+    # set by the watchdog on Windows when it relaunches a stalled app
+    p.add_argument("--wait-for-pid", type=int, default=0, help=argparse.SUPPRESS)
     p.add_argument("--max-frames", type=int, default=0, help="stop after N frames (0 = run forever)")
     p.add_argument("--quiet", action="store_true", help="no periodic console stats")
     return p.parse_args(argv)
-
-
-def _is_loopback(host: str) -> bool:
-    return host in ("127.0.0.1", "::1", "localhost", "")
-
-
-def resolve_pin(args, saved_pin: str | None) -> tuple[str, bool]:
-    """The panel's PIN, and whether it was just generated.
-
-    The panel binds to every interface by default — that is the point of
-    it, an operator works from a phone across the room — and it carries a
-    live camera preview, the output switches and a Quit button. Event
-    Wi-Fi is regularly shared with guests, so leaving it open to anyone
-    who finds port 8089 was the wrong default.
-
-    An install that has never been asked the question gets a PIN made for
-    it and saved. Running open stays available and deliberate: --no-pin
-    for one run, or "pin": "" in settings.json for good. A panel bound to
-    loopback only is not exposed, so it is left alone."""
-    if args.pin:
-        return args.pin, False
-    if args.no_pin or _is_loopback(args.web_host):
-        return "", False
-    if saved_pin is not None:
-        return saved_pin, False
-    import secrets
-    pin = f"{secrets.randbelow(10 ** 6):06d}"
-    settings.save(pin=pin)
-    return pin, True
 
 
 def _lan_ip() -> str | None:
@@ -176,7 +152,11 @@ def build_params(args, saved_params: dict) -> LiveParams:
         detect_every=rv(args.detect_every, "detect_every"),
         min_face=rv(args.min_face, "min_face"),
         max_misses=rv(args.max_misses, "max_misses"),
-        emotion_enabled=False if args.no_emotion else saved_params.get("emotion_enabled", True),
+        # Off unless the operator switches it on: the product page promises
+        # "expression labels, if switched on", and inferring emotions from
+        # faces is a regulated use in the EU (see the release review).
+        emotion_enabled=False if args.no_emotion
+                        else saved_params.get("emotion_enabled", DEFAULTS["emotion_enabled"]),
         emotion_budget=rv(args.emotion_budget, "emotion_budget"),
         show_ids=False if args.no_ids else saved_params.get("show_ids", True),
         show_stats=False if args.no_stats else saved_params.get("show_stats", True),
@@ -189,7 +169,7 @@ def build_params(args, saved_params: dict) -> LiveParams:
         cap_backend=(args.capture_backend if args.capture_backend != "any"
                      else saved_params.get("cap_backend", "any")),
         ndi_program=False if args.no_ndi else saved_params.get("ndi_program", True),
-        ndi_mask=saved_params.get("ndi_mask", False),
+        ndi_mask=False if args.no_ndi else saved_params.get("ndi_mask", False),
         tex_program=True if args.texture_share
                     else saved_params.get("tex_program", False),
         tex_overlay=saved_params.get("tex_overlay", False),
@@ -201,7 +181,7 @@ def build_params(args, saved_params: dict) -> LiveParams:
         ndi_overlay=False if args.no_ndi
                     else (True if args.ndi_overlay else saved_params.get("ndi_overlay", False)),
         out_width=rv(args.out_width, "out_width"),
-        ndi_faces=saved_params.get("ndi_faces", False),
+        ndi_faces=False if args.no_ndi else saved_params.get("ndi_faces", False),
         cutout_margin=saved_params.get("cutout_margin", 0.15),
         cutout_shape=saved_params.get("cutout_shape", "rectangle"),
         cutout_feather=saved_params.get("cutout_feather", 0),
@@ -235,16 +215,74 @@ def _keep_awake() -> None:
         pass  # nice-to-have, never fatal
 
 
+def _relaunch_argv(extra=()) -> list[str]:
+    """The command line that starts yewee again with this run's options.
+    From source that is the interpreter plus sys.argv. A packaged app is
+    its own executable and sys.argv[0] is that executable again, so there
+    it must not be passed twice: argparse would refuse the stray argument
+    and the relaunched app would exit before it started."""
+    from yewee.paths import is_frozen
+    rest = sys.argv[1:] if is_frozen() else sys.argv
+    kept, skip = [], False
+    for a in rest:               # a relaunch's own --wait-for-pid is spent
+        if skip or a == "--wait-for-pid" or a.startswith("--wait-for-pid="):
+            skip = a == "--wait-for-pid"
+            continue
+        kept.append(a)
+    return [sys.executable, *kept, *extra]
+
+
+def _relaunch_env() -> dict:
+    """The environment for that relaunch. PyInstaller's bootloader leaves
+    variables that make a copy of the same executable think it is a child
+    of this one; this one asks it to start as a separate instance."""
+    return {**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"}
+
+
+def _relaunch_after_stall() -> None:
+    """Start a fresh yewee in place of this stalled one. macOS: exec into
+    it, keeping the pid, so nothing else can grab the panel port between
+    the two. Windows has no exec, so the new process is told to wait for
+    this one to be gone before its double-launch check, which would
+    otherwise find our still-running panel and bow out."""
+    try:
+        if sys.platform == "win32":
+            import subprocess
+            subprocess.Popen(_relaunch_argv(["--wait-for-pid", str(os.getpid())]),
+                             env=_relaunch_env())
+        else:
+            os.execve(sys.executable, _relaunch_argv(), _relaunch_env())
+    except Exception as e:
+        print(f"[yewee] watchdog: could not relaunch ({e}) — "
+              "start yewee again by hand", flush=True)
+
+
+def _wait_for_exit(pid: int, timeout: float = 20.0) -> None:
+    from yewee.crashguard import pid_alive
+    deadline = time.monotonic() + timeout
+    while pid_alive(pid) and time.monotonic() < deadline:
+        time.sleep(0.2)
+
+
 def _start_watchdog(pipeline) -> None:
     """If the pipeline loop wedges (driver stall, blocked I/O) for 30s,
-    exit non-zero so the launcher's crash-restart brings us back."""
+    end this process and get yewee running again. From source the
+    launcher's crash loop restarts it on the non-zero exit; the installed
+    app has no launcher around it, so it starts its own replacement."""
+    from yewee.paths import is_frozen
+
     def watch():
         while not pipeline.stopped:
             time.sleep(5)
             if (not pipeline.stopped
                     and time.monotonic() - pipeline.heartbeat > 30):
                 print("[yewee] watchdog: pipeline stalled for 30s — "
-                      "exiting so the launcher can restart", flush=True)
+                      "restarting", flush=True)
+                from yewee import crashguard
+                crashguard.record_hang("The pipeline stopped responding for 30 "
+                                       "seconds and the watchdog restarted yewee")
+                if is_frozen():
+                    _relaunch_after_stall()
                 os._exit(3)
     threading.Thread(target=watch, daemon=True, name="yewee-watchdog").start()
 
@@ -265,6 +303,9 @@ def main(argv=None) -> int:
         from yewee.doctor import main as doctor_main
         return doctor_main([])
 
+    if args.wait_for_pid:
+        _wait_for_exit(args.wait_for_pid)
+
     # Double-launch guard: a second instance with the same feed names can
     # crash inside the NDI library, so if yewee already serves the
     # panel port, just show the existing panel instead of starting again.
@@ -279,6 +320,12 @@ def main(argv=None) -> int:
     from yewee.logging_setup import setup as setup_logging
     setup_logging()
 
+    # Follow this run (crash marker, faulthandler, exception hooks) and learn
+    # whether the last one ended badly. Its settings come back below exactly
+    # as on any launch; the report on it is only offered, never sent unasked.
+    from yewee import app_version, crashguard
+    previous_crash = crashguard.begin(app_version())
+
     saved = settings.load()
     params = build_params(args, saved["params"])
     # Apply the CPU budget before any model loads — ONNX Runtime bakes its
@@ -287,6 +334,22 @@ def main(argv=None) -> int:
     limit_threads(params.snapshot()["limit_cpu"])
     if args.source is None:
         args.source = saved["source"] or "0"
+
+    # Crash reports: names of sources and custom feed names never leave the
+    # machine (the scrubber replaces them), and the report on a bad last run
+    # is queued only if sending is switched on — otherwise the panel asks.
+    from yewee import reporting
+    reporting.add_secrets(saved["source"], args.source)
+    # The panel PIN: on unless the operator turned it off, since anyone on a
+    # venue's Wi-Fi could otherwise change or quit the show. Printed once in
+    # the banner and shown on the machine's own panel, and scrubbed from
+    # reports (including the one about the last run, built just below).
+    panel_pin, _ = settings.panel_pin(args.pin)
+    reporting.add_pin(panel_pin, saved["pin"])
+    for custom in (args.ndi_name, args.ndi_overlay):
+        if custom and not custom.startswith("Yewee"):
+            reporting.add_secrets(custom)
+    crash_report = reporting.handle_previous_session(previous_crash)
 
     if sys.platform == "darwin":
         # First-ever run: put the macOS camera prompt up now and wait for the
@@ -306,31 +369,41 @@ def main(argv=None) -> int:
                   flush=True)
 
     pipeline = Pipeline(args, params, web_enabled=not args.no_web)
-    pipeline.on_source_change = lambda spec: settings.save(source=spec)
+    # shop licences check in with letissier.ie daily, off the startup path
+    from yewee.licensing import start_check_ins
+    start_check_ins()
+    def _source_changed(spec: str) -> None:
+        settings.save(source=spec)
+        reporting.add_secrets(spec)
+
+    pipeline.on_source_change = _source_changed
+    # errors yewee recovers from are reported only when sending is on
+    pipeline.on_frame_error = reporting.note_nonfatal
+    crashguard.on_thread_exception = reporting.note_nonfatal
+    reporting.flush_in_background(delay=5.0)    # consented reports, off the startup path
 
     panel_url = None
     web_server = None
-    panel_pin, pin_is_new = resolve_pin(args, saved["pin"])
+    lan = _lan_ip() if not args.no_web and args.web_host == "0.0.0.0" else None
+    phone_url = f"http://{lan}:{args.web_port}" if lan else None
     if not args.no_web:
         from yewee.webui import create_app, start_in_thread
         app = create_app(pipeline, params,
                          on_params_change=settings.save_debounced,
-                         pin=panel_pin)
+                         pin=panel_pin, phone_url=phone_url)
         web_server = start_in_thread(app, args.web_host, args.web_port)
         panel_url = f"http://localhost:{args.web_port}"
 
-    print("\n  yewee is running")
+    print(f"\n  yewee {app_version()} is running")
     if panel_url:
-        lan = _lan_ip()
-        extra = f"   (from other devices: http://{lan}:{args.web_port})" \
-            if lan and args.web_host == "0.0.0.0" else ""
+        extra = f"   (from other devices: {phone_url})" if phone_url else ""
         print(f"  Control panel : {panel_url}{extra}")
         if panel_pin:
-            print(f"  Panel PIN     : {panel_pin}")
-            if pin_is_new:
-                print("                  (new — the panel is on the network, so it "
-                      "is no longer open to\n                  everyone who finds "
-                      "it. Saved for next time; --no-pin turns it off.)")
+            print(f"  Panel PIN     : {panel_pin}   (other devices ask for it once;"
+                  " --pin to change, --pin none to turn off)")
+        else:
+            print("  Panel PIN     : off — anyone on this network can use the panel"
+                  " (--pin to set one)")
     p0 = params.snapshot()
     notes = {"program": "", "overlay": "  [graphics on alpha]",
              "faces": "  [cutout on alpha]", "mask": "  [matte]"}
@@ -350,6 +423,15 @@ def main(argv=None) -> int:
             from yewee.capture import camera_permission_holder
             print("  ! If this is a permissions issue: System Settings > Privacy & Security"
                   f" > Camera, allow {camera_permission_holder()}, then restart.")
+    if previous_crash:
+        print(f"\n  ! yewee closed unexpectedly last time ({previous_crash['kind']}): "
+              f"{previous_crash['summary'][:160]}"
+              "\n  ! Your source, feeds and settings have been restored.")
+        if crash_report == "queued":
+            print("  ! A crash report will be sent (\"Send crash reports "
+                  "automatically\" is on).")
+        elif crash_report == "prompt" and panel_url:
+            print("  ! The control panel asks whether to send a crash report.")
     print("  Press Ctrl-C to stop.\n", flush=True)
 
     if panel_url and not args.no_browser:
@@ -365,12 +447,17 @@ def main(argv=None) -> int:
 
     signal.signal(signal.SIGINT, _stop)
     signal.signal(signal.SIGTERM, _stop)
+    if hasattr(signal, "SIGHUP"):
+        # closing the Terminal window: a deliberate quit, not a crash
+        signal.signal(signal.SIGHUP, _stop)
+    crashguard.watch_console_close(pipeline.stop)   # the Windows equivalent
 
     if not args.max_frames:  # not for benchmarks/tests
         _keep_awake()
         _start_watchdog(pipeline)
 
     pipeline.run()
+    crashguard.end_clean()      # everything after this is a deliberate exit
 
     if pipeline.restart_requested:
         # Relaunch ourselves with the same command line (panel "Restart").
@@ -378,12 +465,12 @@ def main(argv=None) -> int:
         if web_server is not None:
             web_server.should_exit = True  # release the panel port first
             time.sleep(0.7)
-        argv_full = [sys.executable] + sys.argv
+        argv_full = _relaunch_argv()
         if sys.platform == "win32":
             import subprocess
-            subprocess.Popen(argv_full)
+            subprocess.Popen(argv_full, env=_relaunch_env())
             return 0
-        os.execv(sys.executable, argv_full)
+        os.execve(sys.executable, argv_full, _relaunch_env())
     return 0
 
 

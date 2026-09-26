@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "version to stamp into the build"
+        description: "version to stamp (blank = yewee/__init__.py's __version__; a distribution build must match it)"
         required: false
-        default: "0.0.0"
+        default: ""
 
 jobs:
   build:
@@ -48,10 +48,14 @@ jobs:
         shell: bash
         run: |
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+            VERSION="${GITHUB_REF_NAME#v}"
           else
-            echo "VERSION=${{ inputs.version }}" >> "$GITHUB_ENV"
+            VERSION="${{ inputs.version }}"
           fi
+          # blank means "what the code declares"; build.py fails a
+          # distribution build whose version disagrees with __version__
+          [ -n "$VERSION" ] || VERSION="$(python build/build.py --print-version)"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
       # Always --distribution. Falling back to an internal build produced
       # artefacts with licensing switched off that also carried RVM, which is
