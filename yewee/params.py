@@ -50,6 +50,15 @@ SPEC = {
     "flip_ndi": (bool, None, None),
     "flip_tex": (bool, None, None),
     "out_width": (int, 0, 3840),          # 0 = match input resolution
+    # The data output: face coordinates over OSC/UDP, for VJ and
+    # generative tools that would rather draw the graphics themselves
+    # than key a video layer. Off until switched on.
+    "osc_enabled": (bool, None, None),
+    "osc_host": (str, None, None),        # IP or hostname of the receiver
+    "osc_port": (int, 1, 65535),
+    "osc_slots": (int, 1, 32),            # how many faces get a fixed address
+    "osc_rate": (float, 1.0, 120.0),      # updates per second
+    "osc_units": (str, ("normalised", "pixels"), None),
     "cutout_shape": (str, ("rectangle", "oval", "people"), None),
     "cutout_margin": (float, 0.0, 0.5),   # extra room around each face box
     "cutout_feather": (int, 0, 60),       # mask edge softness, px
@@ -81,8 +90,8 @@ class LiveParams:
         if typ is bool:
             return bool(value)
         if typ is str:
-            if lo is None:  # free-form string (e.g. a colour), length-capped
-                return str(value).strip()[:32]
+            if lo is None:  # free-form string (e.g. a colour, a host), capped
+                return str(value).strip()[:64]  # 64 fits any real hostname
             v = str(value)
             return v if v in lo else lo[0]
         v = typ(value)

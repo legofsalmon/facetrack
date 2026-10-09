@@ -38,6 +38,8 @@ DEFAULTS = dict(detector="auto", out_fps=30.0, loop_file=True,
                 tex_faces=False, tex_mask=False, mask_style="white",
                 flip_ndi=False, flip_tex=False,
                 out_width=0, cutout_margin=0.15,
+                osc_enabled=False, osc_host="127.0.0.1", osc_port=7000,
+                osc_slots=8, osc_rate=30.0, osc_units="normalised",
                 cutout_shape="rectangle", cutout_feather=0, cutout_grow=0,
                 cutout_steady=0.55,
                 people_model="pphumanseg",
@@ -95,6 +97,11 @@ def parse_args(argv=None):
                      help="scale output to this width before sending (0 = capture size)")
     out.add_argument("--texture-share", action="store_const", const=True, default=None,
                      help="also publish via Syphon (macOS) / Spout (Windows)")
+    out.add_argument("--osc", action="store_const", const=True, default=None,
+                     help="send face coordinates over OSC as well as pixels "
+                          "(also a panel toggle)")
+    out.add_argument("--osc-target", default="", metavar="HOST:PORT",
+                     help="where to send OSC (default 127.0.0.1:7000); implies --osc")
     out.add_argument("--no-preview", action="store_true",
                      help="start with the local preview window off (also a live panel toggle)")
     out.add_argument("--no-ids", action="store_const", const=True, default=None,
@@ -136,9 +143,31 @@ def _lan_ip() -> str | None:
         return None
 
 
+def parse_osc_target(spec: str, host: str, port: int) -> tuple[str, int]:
+    """'host:port', 'host', ':port' or '[::1]:port' -> (host, port). Either
+    half may be left out; what's missing keeps the value passed in."""
+    spec = (spec or "").strip()
+    if not spec:
+        return host, port
+    if spec.startswith("["):                       # bracketed IPv6 literal
+        addr, _, rest = spec[1:].partition("]")
+        return (addr or host), (int(rest[1:]) if rest[1:].isdigit() else port)
+    if spec.count(":") > 1:                        # bare IPv6, no port
+        return spec, port
+    head, sep, tail = spec.rpartition(":")
+    if not sep:
+        return spec, port
+    return (head or host), (int(tail) if tail.isdigit() else port)
+
+
 def build_params(args, saved_params: dict) -> LiveParams:
     def rv(cli, key):
         return cli if cli is not None else saved_params.get(key, DEFAULTS[key])
+
+    osc_host, osc_port = parse_osc_target(
+        args.osc_target,
+        saved_params.get("osc_host", DEFAULTS["osc_host"]),
+        saved_params.get("osc_port", DEFAULTS["osc_port"]))
 
     return LiveParams(
         # CLI wins over the saved value only when explicitly given
@@ -181,6 +210,13 @@ def build_params(args, saved_params: dict) -> LiveParams:
         ndi_overlay=False if args.no_ndi
                     else (True if args.ndi_overlay else saved_params.get("ndi_overlay", False)),
         out_width=rv(args.out_width, "out_width"),
+        osc_enabled=(True if (args.osc or args.osc_target)
+                     else saved_params.get("osc_enabled", False)),
+        osc_host=osc_host,
+        osc_port=osc_port,
+        osc_slots=saved_params.get("osc_slots", 8),
+        osc_rate=saved_params.get("osc_rate", 30.0),
+        osc_units=saved_params.get("osc_units", "normalised"),
         ndi_faces=False if args.no_ndi else saved_params.get("ndi_faces", False),
         cutout_margin=saved_params.get("cutout_margin", 0.15),
         cutout_shape=saved_params.get("cutout_shape", "rectangle"),
@@ -415,6 +451,9 @@ def main(argv=None) -> int:
         tex_on = [c for c in ("program", "overlay", "faces", "mask") if p0[f"tex_{c}"]]
         state = ", ".join(tex_on) if tex_on else "available (enable in the panel)"
         print(f"  {pipeline.texture_kind.capitalize():<13} : {state}")
+    if p0["osc_enabled"]:
+        print(f"  Data out      : OSC to {p0['osc_host']}:{p0['osc_port']}"
+              f"   ({p0['osc_slots']} faces, {p0['osc_rate']:g}/s, {p0['osc_units']})")
     print(f"  Input         : {args.source}   detector: {pipeline.detector.name}")
     if pipeline.startup_error:
         print(f"\n  ! {pipeline.startup_error}")

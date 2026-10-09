@@ -506,6 +506,54 @@
       </div>
     </details>
 
+    <details class="card" data-card="osc" id="osc-card">
+      <summary>Data out (OSC) <span class="tag" id="osc-tag"></span></summary>
+      <div class="row">
+        <div class="lbl"><label for="osc_enabled">Send face positions</label>
+          <span class="hint">coordinates instead of pixels — Resolume, TouchDesigner, Notch and MadMapper draw the graphics themselves</span></div>
+        <label class="switch"><input type="checkbox" id="osc_enabled"><span class="slider"></span></label>
+      </div>
+      <div class="row" id="osc-target-row">
+        <div class="lbl"><label for="osc_host">Send to</label>
+          <span class="hint">the machine running the receiving app — 127.0.0.1 is this one</span></div>
+        <input type="text" id="osc_host" spellcheck="false" style="flex: 2">
+        <input type="text" id="osc_port" inputmode="numeric" style="flex: 0 0 72px"
+               title="OSC port (Resolume listens on 7000 by default)">
+      </div>
+      <div class="row" id="osc-slots-row">
+        <div class="lbl"><label for="osc_slots">Faces sent</label>
+          <span class="hint">each gets a fixed address and keeps it while that person is tracked</span></div>
+        <select id="osc_slots">
+          <option value="4">4 faces</option>
+          <option value="8">8 faces</option>
+          <option value="12">12 faces</option>
+          <option value="16">16 faces</option>
+          <option value="24">24 faces</option>
+          <option value="32">32 faces</option>
+        </select>
+      </div>
+      <div class="row" id="osc-rate-row">
+        <div class="lbl"><label for="osc_rate">Update rate</label>
+          <span class="hint">never faster than the video rate; lower it if the receiver struggles</span></div>
+        <select id="osc_rate">
+          <option value="10">10 per second</option>
+          <option value="25">25 per second</option>
+          <option value="30">30 per second</option>
+          <option value="50">50 per second</option>
+          <option value="60">60 per second</option>
+        </select>
+      </div>
+      <div class="row" id="osc-units-row">
+        <div class="lbl"><label for="osc_units">Coordinates</label>
+          <span class="hint">0–1 maps straight onto a Resolume parameter; pixels suit TouchDesigner</span></div>
+        <select id="osc_units">
+          <option value="normalised">0 – 1 across the frame</option>
+          <option value="pixels">Pixels</option>
+        </select>
+      </div>
+      <div class="hint" id="osc-info" style="padding: 0 14px 11px"></div>
+    </details>
+
     <details class="card" data-card="cutout" id="cutout-card">
       <summary>Cutout shape <span class="tag" id="cutout-tag"></span></summary>
       <div class="row" id="cutout-shape-row">
@@ -650,13 +698,14 @@
                   "flip_ndi","flip_tex",
                   "cutout_shape","cutout_margin","cutout_feather","cutout_grow","cutout_steady",
                   "people_model","out_width",
+                  "osc_enabled","osc_host","osc_port","osc_slots","osc_rate","osc_units",
                   "limit_cpu","auto_relief",
                   "test_card","panel_preview","local_preview"];
   const PERF_LABELS = { detect: "Face finding", track: "Tracking",
                         express: "Expressions", silhouette: "Silhouette model",
                         cutout: "Cutout render", overlay: "Overlay render",
                         annotate: "Annotation", outputs: "Feed outputs",
-                        preview: "Panel preview" };
+                        preview: "Panel preview", osc: "Data out (OSC)" };
   const PRESETS = {
     wide:  { det_size: 960, det_threshold: 0.35, min_face: 0,  detect_every: 1 },
     mid:   { det_size: 640, det_threshold: 0.45, min_face: 0,  detect_every: 1 },
@@ -671,6 +720,10 @@
   document.body.classList.add("offline");  // controls unlock when connected
 
   function send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
+
+  // for the few places that build markup around a value an operator typed
+  const esc = (s) => String(s).replace(/[&<>"]/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
   function flashSaved() {
     savedBadge.classList.add("show");
@@ -706,7 +759,10 @@
     if (!el) return;
     el.addEventListener(el.type === "range" ? "input" : "change", () => {
       const num = parseFloat(el.value);
+      // Text boxes stay text: parseFloat("127.0.0.1") is 127, not NaN, so
+      // the NaN test alone would post a host as a number.
       const v = el.type === "checkbox" ? el.checked
+              : el.type === "text" ? el.value
               : Number.isNaN(num) ? el.value : num;  // string params pass through
       if (el.type === "range") fmtOutput(el);
       queueSet(key, v);
@@ -839,6 +895,12 @@
     $("cutout_steady").disabled = !steadyOn;
     $("people-model-row").classList.toggle("dimmed", !steadyOn);
     $("people_model").disabled = !steadyOn;
+    const oscOn = !!p.osc_enabled;
+    $("osc-card").classList.toggle("off", !oscOn);
+    ["osc-target-row","osc-slots-row","osc-rate-row","osc-units-row"].forEach((r) =>
+      $(r).classList.toggle("dimmed", !oscOn));
+    ["osc_host","osc_port","osc_slots","osc_rate","osc_units"].forEach((k) =>
+      { $(k).disabled = !oscOn; });
     if (document.activeElement !== brandPick) {
       brandChk.checked = !!p.overlay_color;
       if (p.overlay_color) brandPick.value = p.overlay_color;
@@ -875,6 +937,10 @@
       onair.classList.add("nosignal");
     } else if (ndiFeeds.length || texFeeds.length) {
       onair.textContent = "ON AIR";
+      onair.classList.add("live");
+    } else if (s.osc && s.osc.on && !s.osc.error) {
+      // coordinates only is a real way to run: the receiving app draws
+      onair.textContent = "DATA ONLY";
       onair.classList.add("live");
     } else {
       onair.textContent = "FEEDS OFF";
@@ -932,6 +998,7 @@
       feeds.push("<b>" + f.name + "</b> (" + (f.watching ?? 0) + " watching)"));
     texFeeds.forEach((f) =>
       feeds.push("<b>" + f.name + "</b> (" + (s.texture_kind || "texture") + ")"));
+    if (s.osc && s.osc.on) feeds.push("<b>OSC → " + esc(s.osc.target) + "</b>");
     info += " &nbsp;·&nbsp; " + (feeds.length ? feeds.join(" &nbsp;+&nbsp; ") : "no feeds on");
     $("feedinfo").innerHTML = info;
     // texture column adapts to the platform, and greys out if unavailable
@@ -943,6 +1010,29 @@
       el.classList.toggle("unavail", !kindName);
       el.title = kindName ? "" : "texture share unavailable on this machine";
     });
+    // data feed: what to map in the receiving app, and whether it's going
+    const osc = s.osc || {};
+    const oscTag = $("osc-tag"), oscInfo = $("osc-info");
+    if (!osc.on) {
+      oscTag.textContent = "off";
+      oscInfo.textContent = "Switch it on to send face positions as data. "
+                          + "The video feeds keep working either way.";
+      oscInfo.style.color = "";
+    } else if (osc.error) {
+      oscTag.textContent = "problem";
+      oscInfo.textContent = "Not reaching " + osc.target + " — " + osc.error;
+      oscInfo.style.color = "var(--warn)";
+    } else {
+      oscTag.textContent = "→ " + osc.target;
+      const unit = osc.units === "pixels" ? "pixels" : "0–1";
+      oscInfo.innerHTML = "Listen on <b>" + esc(osc.target) + "</b> for "
+        + "<b>/yewee/face/1…" + osc.slots + "/x</b>, <b>/y</b>, <b>/w</b>, <b>/h</b>, "
+        + "<b>/size</b>, <b>/active</b>, <b>/id</b>, <b>/expression</b>, <b>/confidence</b> ("
+        + unit + "), plus <b>/yewee/faces</b>, <b>/yewee/crowd</b> and "
+        + "<b>/yewee/center/x</b>. Slot 1 stays the same person while they're tracked.";
+      oscInfo.style.color = "";
+    }
+
     // the silhouette engines this build ships (RVM is internal-only)
     if (s.people_models && s.people_models.length) {
       const sel = $("people_model");
