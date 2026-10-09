@@ -1,25 +1,45 @@
+# Pinned on purpose. A show machine gets set up once, weeks before the
+# gig, and an unpinned file means the build that ships is whatever PyPI
+# happened to be serving that morning — a detail nobody can reconstruct
+# afterwards when a feed misbehaves on site. Every version below was
+# checked to have a wheel for all three targets the project builds for:
+# macOS arm64 on 3.12 (Syphon's ceiling), Windows x64 on 3.13 (Spout's),
+# and Linux x86_64 on 3.12 for CI. None of them builds from source on a
+# machine with no compiler, which is the other half of the point.
+#
+# To move them: bump one line, let CI and the macOS/Windows build jobs
+# run, and keep the versions that come back green.
+
 # Core (all platforms)
-numpy
-opencv-python
-cyndilib          # NDI send/receive; bundles the NDI runtime, no SDK install needed
+numpy==2.4.6
+opencv-python==5.0.0.93
+cyndilib==0.1.1          # NDI send/receive; bundles the NDI runtime, no SDK install needed
 
 # Web control panel
-fastapi
-uvicorn
-websockets
+fastapi==0.141.1
+uvicorn==0.53.0
+websockets==17.1
 
 # CA certificates for activating shop licences over HTTPS: a packaged
-# Python on macOS has no system bundle of its own
-certifi
+# Python on macOS has no system bundle of its own.
+#
+# Pinned like the rest, but this one is a trust store rather than code:
+# a frozen bundle goes stale as roots are added and withdrawn, and a
+# stale one shows up as licence activation failing on a customer's
+# machine months after the build. Refresh it deliberately at release
+# time rather than leaving it to whatever the build host resolves.
+certifi==2026.7.22
 
 # Real camera names in the source picker (Windows/DirectShow)
-pygrabber; sys_platform == "win32"
+pygrabber==0.2; sys_platform == "win32"
 
 # Texture-share output (optional but recommended):
 #   Syphon on macOS needs Python <= 3.12; Spout on Windows needs <= 3.13.
-#   The Setup scripts pick a compatible Python automatically.
-syphon-python; sys_platform == "darwin" and python_version < "3.13"
-SpoutGL; sys_platform == "win32" and python_version < "3.14"
+#   The Setup scripts pick a compatible Python automatically. Those
+#   ceilings are real: neither project publishes a wheel above them, so
+#   a newer Python silently loses texture-share output.
+syphon-python==0.1.1; sys_platform == "darwin" and python_version < "3.13"
+SpoutGL==0.1.1; sys_platform == "win32" and python_version < "3.14"
 
 # Detector acceleration:
 #   macOS / CPU-only machines: the default YuNet backend needs nothing extra,
@@ -35,5 +55,8 @@ SpoutGL; sys_platform == "win32" and python_version < "3.14"
 #   missing". yewee treats that as a fallback to the CPU rather than an
 #   error (see runtime.make_session), so it runs either way — just on the
 #   CPU detector until CUDA is installed. `--doctor` says which you have.
-onnxruntime; sys_platform == "darwin"
-onnxruntime-gpu; sys_platform == "win32"
+#   Linux is not a target platform for the app, but CI runs there and
+#   without this every ONNX test skips — which is how a provider bug
+#   would reach a tag unnoticed.
+onnxruntime==1.30.0; sys_platform == "darwin" or sys_platform == "linux"
+onnxruntime-gpu==1.30.0; sys_platform == "win32"

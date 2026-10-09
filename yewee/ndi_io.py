@@ -112,6 +112,17 @@ class NDIInput:
         self._last_ts = None        # timestamp of the newest frame seen
         self._ts_at = 0.0           # when it arrived (monotonic)
         self._ts_changes = 0        # how often it has changed (capped)
+        self._fresh = False         # did the last capture bring a new frame?
+
+    @property
+    def stamped(self) -> bool:
+        """Whether this feed's timestamps can be trusted to tell one frame
+        from the next — the same three changes _sender_alive waits for.
+
+        Once they can, read() waits for a frame the caller has not had yet,
+        which is what lets the sender set the show loop's pace instead of a
+        rate the receiver merely claims. See capture.NDISource.self_paced."""
+        return self._ts_changes >= 3
 
     def _sender_alive(self, now: float) -> bool:
         """False once the sender has gone: no connection, or the same frame
@@ -119,7 +130,8 @@ class NDIInput:
         if not self.receiver.is_connected():
             return False
         ts = self.video_frame.get_timestamp_posix()
-        if ts != self._last_ts:
+        self._fresh = ts != self._last_ts
+        if self._fresh:
             self._ts_changes = min(self._ts_changes + 1, 3)
             self._last_ts, self._ts_at = ts, now
             return True
@@ -130,14 +142,25 @@ class NDIInput:
         return self._ts_changes < 3 or now - self._ts_at < self.STALE_AFTER
 
     def read(self, timeout: float = 5.0):
-        """Returns (ok, frame_bgr); (False, None) when no frame arrives
-        within timeout, including when the sender has gone and the frame
-        sync is only repeating its last picture."""
+        """Returns (ok, frame_bgr) for a frame the caller has not had yet;
+        (False, None) when none arrives within timeout, including when the
+        sender has gone and the frame sync is only repeating its last
+        picture.
+
+        The frame sync hands back its last picture on demand, new or not,
+        so without the freshness check a 50 Hz feed and a 25 Hz one look
+        identical from here and both get processed at whatever rate the
+        receiver claims. Only skipped while the timestamps have proved
+        themselves; a sender that stamps every frame the same still gets
+        read at the pipeline's pace rather than starving the show."""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             self.receiver.frame_sync.capture_video()
             if not self._sender_alive(time.monotonic()):
                 time.sleep(0.02)
+                continue
+            if self.stamped and not self._fresh:
+                time.sleep(0.002)      # the same frame again: keep waiting
                 continue
             xres, yres = self.video_frame.xres, self.video_frame.yres
             if xres > 0 and yres > 0:
