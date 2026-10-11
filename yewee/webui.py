@@ -231,7 +231,9 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None,
 
         def gen():
             last = -1
-            pipeline.preview_clients += 1  # JPEG encoding pauses at zero viewers
+            # At zero viewers the pipeline skips the preview's render work
+            # entirely, not just the JPEG encode.
+            pipeline.add_preview_client(+1)
             try:
                 while not pipeline.stopped:
                     item = pipeline.wait_preview(last, timeout=1.0)
@@ -242,7 +244,7 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None,
                            b"Content-Length: " + str(len(jpg)).encode() + b"\r\n\r\n"
                            + jpg + b"\r\n")
             finally:
-                pipeline.preview_clients -= 1
+                pipeline.add_preview_client(-1)
 
         return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")
 
@@ -271,12 +273,14 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None,
                 return
         # Only the machine's own panel is told the PIN and the phone address.
         phones = {"pin": pin, "url": phone_url} if local else None
+        last_tick = 0.0
         try:
             while not pipeline.stopped:
                 try:
                     msg = await asyncio.wait_for(sock.receive_text(), timeout=0.5)
                 except asyncio.TimeoutError:
                     msg = None
+                kind = None
                 if msg is not None:
                     try:  # a malformed message must not kill the socket
                         data = json.loads(msg)
@@ -354,15 +358,24 @@ def create_app(pipeline: Pipeline, params: LiveParams, on_params_change=None,
                             pipeline.request_restart()
                         elif action == "quit":
                             pipeline.stop()
-                await sock.send_text(json.dumps({
-                    "type": "tick",
-                    "stats": pipeline.get_stats(),
-                    "params": params.snapshot(),
-                    "version": app_version(),
-                    "reports": reporting.panel_state(),
-                    "licence_offer": bool(_licence_for_feedback()),
-                    **({"phones": phones} if phones else {}),
-                }))
+                # Ticks keep their own cadence rather than answering every
+                # inbound message: a slider drag arrives as a burst of
+                # `set` messages, and replying to each with a full stats
+                # frame turned one drag into a flood of them. A control
+                # action still gets an immediate tick, because the panel
+                # is waiting to see the state actually change.
+                now = time.monotonic()
+                if kind == "control" or now - last_tick >= 0.25:
+                    last_tick = now
+                    await sock.send_text(json.dumps({
+                        "type": "tick",
+                        "stats": pipeline.get_stats(),
+                        "params": params.snapshot(),
+                        "version": app_version(),
+                        "reports": reporting.panel_state(),
+                        "licence_offer": bool(_licence_for_feedback()),
+                        **({"phones": phones} if phones else {}),
+                    }))
         except WebSocketDisconnect:
             pass
 

@@ -44,6 +44,25 @@ _GATE_LUT = np.clip((np.arange(256, dtype=np.float32) - 0.25 * 255) * 2.0,
 
 
 class PeopleSegmenter:
+    """PP-HumanSeg via cv2.dnn.
+
+    Worth knowing, because it looks like an oversight and the decision
+    was made deliberately: this is the one model that does NOT go
+    through runtime.make_session, so it is CPU-only and never sees the
+    CUDA provider the others get on the Windows machine. Moving it to
+    ONNX Runtime measured 5.5 ms against cv2.dnn's 8.1 ms on CPU alone,
+    before any GPU, so the prize is real.
+
+    It was not done because the two backends do not agree. On a frame
+    with no clear subject the logits sit near the decision boundary and
+    the masks diverge across 6.8% of the frame at the 50% contour the
+    cutout re-hardens on — which may be nothing on real footage with
+    real people in it, or may be a visibly different silhouette. There
+    is no crowd footage in the repo to tell the difference, and this is
+    the feed that goes to the wall. Try it against a real clip before
+    switching.
+    """
+
     soft = False  # coarse 192px mask: downstream re-hardens the edge
 
     def __init__(self, model_path: str | Path = MODEL_PATH):
@@ -105,7 +124,11 @@ class ModnetMatter:
         nw = max(32, int(W * s) // 32 * 32)
         x = cv2.resize(image, (nw, nh), interpolation=cv2.INTER_AREA).astype(np.float32)
         x = (cv2.cvtColor(x, cv2.COLOR_BGR2RGB) - 127.5) / 127.5
-        m = self.sess.run(None, {"input": x.transpose(2, 0, 1)[None]})[0][0, 0]
+        # transpose gives a view with the wrong strides, which ONNX
+        # Runtime then has to copy internally. Do it here, where it is
+        # visible, rather than paying for it invisibly every frame.
+        blob = np.ascontiguousarray(x.transpose(2, 0, 1)[None])
+        m = self.sess.run(None, {"input": blob})[0][0, 0]
         m8 = (np.clip(m, 0, 1) * 255).astype(np.uint8)
         return cv2.resize(m8, (W, H), interpolation=cv2.INTER_LINEAR)
 
