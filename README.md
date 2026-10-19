@@ -289,6 +289,16 @@ tests/
   idbench.py             track-identity benchmark (python -m tests.idbench)
 ```
 
+The control panel follows the studio's shared design system
+([legofsalmon/design-system](https://github.com/legofsalmon/design-system),
+private): its colour roles, density, components and motion are inlined in
+`yewee/static/index.html` between `/* ds:tokens:start */ … /* ds:components:end */`
+markers, so the panel stays one file. Don't edit inside the markers; with the
+design system checked out beside this repository,
+`python3 scripts/design-system.py --sync` refills them, and `--check` (in CI)
+fails on a hand edit or a role the system doesn't define. The ON AIR tally red
+is yewee's own (`--tally`); the overlay's box colours are content.
+
 ### Running two instances (e.g. two cameras)
 
 Each instance needs its own panel port and NDI name:

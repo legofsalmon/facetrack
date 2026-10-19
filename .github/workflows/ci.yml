@@ -39,5 +39,9 @@ jobs:
                             yewee.texture_out, yewee.crashguard, yewee.notices, \
                             yewee.reporting, tests.idbench"
 
+      # the panel's inlined design system: not edited by hand, every role it reads exists
+      - name: Design system copy
+        run: python3 scripts/design-system.py --check
+
       - name: Smoke tests
         run: python -m tests.smoke

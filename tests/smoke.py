@@ -2266,7 +2266,7 @@ window.WebSocket = class {
 addEventListener("load", () => setTimeout(() => {
   const bars = [...document.querySelectorAll("#perf .pb")].map(
     (b) => Math.round(b.getBoundingClientRect().width));
-  const lit = [...document.querySelectorAll(".preset.active")].map((b) => b.dataset.preset);
+  const lit = [...document.querySelectorAll('.preset[aria-pressed="true"]')].map((b) => b.dataset.preset);
   parent.postMessage(JSON.stringify({ bars, lit }), "*");
 }, 400));
 </script>"""
