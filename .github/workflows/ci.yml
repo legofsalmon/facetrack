@@ -18,5 +18,8 @@ jobs:
       # fastapi (from requirements.txt) so the panel's PIN checks run here too
       - name: Install minimal dependencies
         run: pip install numpy opencv-python fastapi
+      # the panel's inlined design system: not edited by hand, every role it reads exists
+      - name: Design system copy
+        run: python3 scripts/design-system.py --check
       - name: Smoke tests
         run: python -m tests.smoke
