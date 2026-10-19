@@ -101,7 +101,7 @@ names. That's it.
   yewee reconnects automatically the moment the source returns.
 - **Data out (OSC)** sends where the faces are as coordinates rather than
   pixels, straight into Resolume, TouchDesigner, Notch or MadMapper —
-  see [Data out (OSC)](#data-out-osc). The header reads DATA ONLY when
+  see [Data out (OSC)](#data-out-osc). The header reads "Data only" when
   that is the only output running.
 - **Number badges / expressions** draw in a per-person colour palette, or
   flip on **Brand colour** to draw every box in one colour that matches
@@ -348,6 +348,16 @@ yewee/
 models/                  ONNX models (doctor --fix re-downloads)
 ```
 
+The control panel follows the studio's shared design system
+([legofsalmon/design-system](https://github.com/legofsalmon/design-system),
+private): its colour roles, density, components and motion are inlined in
+`yewee/static/index.html` between `/* ds:tokens:start */ … /* ds:components:end */`
+markers, so the panel stays one file. Don't edit inside the markers; with the
+design system checked out beside this repository,
+`python3 scripts/design-system.py --sync` refills them, and `--check` (in CI)
+fails on a hand edit or a role the system doesn't define. The ON AIR tally red
+is yewee's own (`--tally`); the overlay's box colours are content.
+
 ### Running two instances (e.g. two cameras)
 
 Each instance needs its own panel port and NDI name:
@@ -371,6 +381,11 @@ overlay estimate. For public events, follow your usual venue practice on
 camera signage, and keep this paragraph handy for client conversations.
 
 ### Licensing (product builds)
+
+Yewee's own code is licensed under the **Elastic License 2.0** (see
+`LICENSE`): you may use, copy and modify it, but not offer it to others
+as a hosted or managed service, and not remove or get around its licence
+keys. The models and bundled components keep their own licences (below).
 
 The repo build is **unrestricted** — no keys, no trial, nothing to
 activate. Licensing only switches on when a build is packaged with a

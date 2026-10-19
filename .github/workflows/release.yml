@@ -1,0 +1,306 @@
+name: release
+
+# Builds, signs, notarises and publishes a Yewee release in one run.
+#
+# Two ways to start it:
+#   - Actions -> release -> "Run workflow", type the version (v1.0.0). The
+#     tag is created at the commit being built, so nobody has to push one.
+#   - Push a v* tag.
+#
+# What it refuses, and why each one matters:
+#   - a version that disagrees with yewee/__init__.py: the app would report
+#     one version and its release another;
+#   - a tag that already points at a different commit: the release would
+#     carry binaries built from source it does not describe;
+#   - no release notes at docs/releases/<version>.md: buyers read them on
+#     the release page and the site;
+#   - a Mac build it cannot sign and notarise: an unsigned or un-notarised
+#     dmg is refused or warned about on every buyer's Mac, and a quietly
+#     downgraded release is worse than a failed one. The one exception is
+#     the explicit "unnotarised" box below, for a release while notarisation
+#     is still being set up; the notes then have to say so themselves.
+#
+# Secrets (Settings -> Secrets and variables -> Actions), see build/README.md:
+#   MACOS_CERTIFICATE           base64 of the Developer ID Application .p12
+#   MACOS_CERTIFICATE_PASSWORD  the password that .p12 was exported with
+#   APPLE_ID                    the Apple ID that notarises
+#   APPLE_APP_PASSWORD          an app-specific password for that Apple ID
+# The team id is not a secret; it is APPLE_TEAM_ID below.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish, e.g. v1.0.0 (the tag is created at the selected ref)"
+        required: true
+        type: string
+      unnotarised:
+        description: "Publish a signed but NOT notarised Mac build (only while notarisation is being set up)"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  APPLE_TEAM_ID: PKN49VCQZQ
+
+jobs:
+  validate:
+    name: Validate version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: resolve
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+          BUILD_SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${INPUT_VERSION:-$REF_NAME}"
+          # accept 1.0.0 as well as v1.0.0
+          [[ "$TAG" == v* ]] || TAG="v$TAG"
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Version must look like v1.2.3 (got '$TAG')"
+            exit 1
+          fi
+          VERSION="${TAG#v}"
+          DECLARED="$(python3 build/build.py --print-version)"
+          if [ "$DECLARED" != "$VERSION" ]; then
+            echo "::error::yewee/__init__.py says $DECLARED but this release is $TAG. Bump __version__ first."
+            exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            EXISTING="$(git rev-parse "refs/tags/$TAG^{commit}")"
+            if [ "$EXISTING" != "$BUILD_SHA" ]; then
+              echo "::error::Tag $TAG already points at ${EXISTING:0:12}, but this run builds ${BUILD_SHA:0:12}."
+              exit 1
+            fi
+          fi
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::A release named $TAG already exists. Delete it first, or publish a new version."
+            exit 1
+          fi
+          if [ ! -s "docs/releases/$TAG.md" ]; then
+            echo "::error::No release notes at docs/releases/$TAG.md. Write them in a PR first."
+            exit 1
+          fi
+          echo "Publishing $TAG from ${BUILD_SHA:0:12}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+  macos:
+    name: macOS dmg
+    needs: validate
+    runs-on: macos-latest
+    timeout-minutes: 60
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"      # Syphon needs 3.12
+
+      # Before anything slow: a run that cannot sign should stop in seconds,
+      # not after the build.
+      - name: Check the signing secrets are there
+        env:
+          CERT: ${{ secrets.MACOS_CERTIFICATE }}
+          CERT_PW: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          UNNOTARISED: ${{ inputs.unnotarised }}
+        run: |
+          missing=""
+          [ -n "$CERT" ] || missing="$missing MACOS_CERTIFICATE"
+          [ -n "$CERT_PW" ] || missing="$missing MACOS_CERTIFICATE_PASSWORD"
+          if [ "$UNNOTARISED" != "true" ]; then
+            [ -n "$APPLE_ID" ] || missing="$missing APPLE_ID"
+            [ -n "$APPLE_APP_PASSWORD" ] || missing="$missing APPLE_APP_PASSWORD"
+          fi
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secrets:$missing (see build/README.md, 'Releasing from CI')"
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Smoke tests
+        run: python -m tests.smoke
+
+      - name: Build
+        run: python build/build.py --distribution --version "$VERSION"
+
+      # A throwaway keychain holding only the Developer ID identity and the
+      # notary credentials, made the default so sign_macos.sh finds both
+      # exactly as it does on a desk Mac. Deleted in the last step.
+      - name: Load the Developer ID certificate
+        env:
+          CERT: ${{ secrets.MACOS_CERTIFICATE }}
+          CERT_PW: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KC="$RUNNER_TEMP/yewee-signing.keychain-db"
+          KC_PW="$(uuidgen)"
+          echo "KC=$KC" >> "$GITHUB_ENV"
+          security create-keychain -p "$KC_PW" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KC_PW" "$KC"
+          echo "$CERT" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$CERT_PW" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KC_PW" "$KC" >/dev/null
+          # keep the runner's own keychains in the search list, after ours
+          # shellcheck disable=SC2046
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          security default-keychain -s "$KC"
+          security find-identity -v -p codesigning "$KC" | grep "Developer ID Application" \
+            || { echo "::error::MACOS_CERTIFICATE holds no Developer ID Application identity"; exit 1; }
+
+      - name: Store the notary credentials
+        if: ${{ inputs.unnotarised != true }}
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          xcrun notarytool store-credentials yewee \
+            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" --keychain "$KC"
+
+      - name: Sign, notarise and package
+        env:
+          YEWEE_VERSION: ${{ needs.validate.outputs.version }}
+          UNNOTARISED: ${{ inputs.unnotarised }}
+        run: |
+          if [ "$UNNOTARISED" = "true" ]; then
+            build/sign_macos.sh
+          else
+            build/sign_macos.sh --notarize
+          fi
+          DMG="build/dist/Yewee-$VERSION.dmg"
+          test -s "$DMG" || { echo "::error::$DMG was not produced"; exit 1; }
+          # the same checks a buyer's Mac makes
+          hdiutil attach -nobrowse -readonly -mountpoint "$RUNNER_TEMP/dmg" "$DMG" >/dev/null
+          codesign --verify --deep --strict "$RUNNER_TEMP/dmg/Yewee.app"
+          test -s "$RUNNER_TEMP/dmg/TERMS.txt"
+          if [ "$UNNOTARISED" != "true" ]; then
+            xcrun stapler validate "$DMG"
+            spctl --assess --type execute --verbose "$RUNNER_TEMP/dmg/Yewee.app"
+          fi
+          hdiutil detach "$RUNNER_TEMP/dmg" >/dev/null
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-macos
+          path: build/dist/Yewee-${{ env.VERSION }}.dmg
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove the signing keychain
+        if: always()
+        run: |
+          [ -n "${KC:-}" ] && security delete-keychain "$KC" || true
+
+  windows:
+    name: Windows installer
+    needs: validate
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"      # Spout supports up to 3.13
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Smoke tests
+        run: python -m tests.smoke
+
+      - name: Build
+        run: python build/build.py --distribution --version "$env:VERSION"
+
+      # Unsigned until there is a code-signing certificate; SmartScreen
+      # warns, as it did for every release so far. The signtool step goes
+      # here when there is one (build/README.md).
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" `
+            /DVersion=$env:VERSION build\yewee.iss
+          if (!(Test-Path "build\dist\yewee-setup-$env:VERSION.exe")) {
+            throw "installer was not produced"
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: build/dist/yewee-setup-${{ env.VERSION }}.exe
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish the release
+    needs: [validate, macos, windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create the tag and the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate.outputs.tag }}
+          VERSION: ${{ needs.validate.outputs.version }}
+          UNNOTARISED: ${{ inputs.unnotarised }}
+        run: |
+          set -euo pipefail
+          ls -l dist
+          test -s "dist/Yewee-$VERSION.dmg"
+          test -s "dist/yewee-setup-$VERSION.exe"
+          NOTES="$RUNNER_TEMP/notes.md"
+          cp "docs/releases/$TAG.md" "$NOTES"
+          # the notes must never claim more than the build did
+          if [ "$UNNOTARISED" = "true" ]; then
+            printf '\n- This Mac build is signed but not yet notarised. The first time you open it, right-click the app and choose Open.\n' >> "$NOTES"
+          fi
+          # --target creates the tag at the commit that was built, if the
+          # tag does not exist yet; validate refused one pointing elsewhere.
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "yewee $TAG" \
+            --notes-file "$NOTES" \
+            "dist/Yewee-$VERSION.dmg" \
+            "dist/yewee-setup-$VERSION.exe"
+          echo "published: $(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url -q .url)"

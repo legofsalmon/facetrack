@@ -132,7 +132,41 @@ time, or an EV certificate skips the wait.
 
 ## CI
 
-`.github/workflows/build.yml` builds both platforms on every tag and
-uploads the results as artefacts. It builds **unsigned** — signing runs
-locally, or add the certificates as repository secrets and extend the
-workflow.
+`.github/workflows/build.yml` makes **test builds**: unsigned, for both
+platforms, kept as run artefacts for 14 days. Start it from Actions.
+
+`.github/workflows/release.yml` **cuts releases**. Run it from Actions →
+release → "Run workflow" on `main` with the version (`v1.0.1`), or push a
+`v*` tag. In one run it:
+
+1. checks the version matches `__version__`, that no tag of that name
+   points elsewhere, and that `docs/releases/<tag>.md` exists;
+2. builds, signs and notarises the Mac dmg with `sign_macos.sh`, then
+   checks the dmg the way a buyer's Mac will;
+3. builds the Windows installer;
+4. creates the tag at the commit it built and publishes the release with
+   both files and the notes.
+
+If anything fails, nothing is published. See `docs/releases/README.md` for
+the steps around it.
+
+### Releasing from CI: the four secrets
+
+The Mac half needs the signing identity and the notary login as repository
+secrets (Settings → Secrets and variables → Actions → New repository
+secret). The run stops in its first minute, naming what's missing, if any
+of them is absent.
+
+| Secret | What goes in it |
+|---|---|
+| `MACOS_CERTIFICATE` | The Developer ID Application certificate *with its private key*, as base64. In Keychain Access, right-click "Developer ID Application: Colm Hewson (PKN49VCQZQ)" → Export → .p12 with a password, then `base64 -i yewee-signing.p12 \| pbcopy`. |
+| `MACOS_CERTIFICATE_PASSWORD` | The password chosen for that .p12. |
+| `APPLE_ID` | The Apple ID that notarises. |
+| `APPLE_APP_PASSWORD` | An app-specific password for that Apple ID, from appleid.apple.com → Sign-In and Security → App-Specific Passwords. It is never the Apple ID's own password. |
+
+The team id (`PKN49VCQZQ`) is not a secret; it is set in the workflow.
+Delete the exported .p12 file once the secret is saved.
+
+While notarisation is being set up, tick **unnotarised** when running the
+workflow: it then needs only the first two secrets, and adds a line to the
+release notes telling Mac users to right-click → Open.
