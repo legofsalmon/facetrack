@@ -37,7 +37,7 @@ jobs:
           python -c "import main, yewee.webui, yewee.ndi_io, yewee.doctor, \
                             yewee.licensing, yewee.segmenter, yewee.emotion, \
                             yewee.texture_out, yewee.crashguard, yewee.notices, \
-                            yewee.reporting, tests.idbench"
+                            yewee.reporting, yewee.osc_out, tests.idbench"
 
       # the panel's inlined design system: not edited by hand, every role it reads exists
       - name: Design system copy
