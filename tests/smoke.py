@@ -2258,8 +2258,11 @@ window.WebSocket = class {
 </script>""" % json.dumps(json.dumps(tick))
     probe = """<script>
 addEventListener("load", () => setTimeout(() => {
-  const bars = [...document.querySelectorAll("#perf .pb")].map(
-    (b) => Math.round(b.getBoundingClientRect().width));
+  // a meter's fill is clipped to its value, so its drawn width is the
+  // track's width times --value
+  const bars = [...document.querySelectorAll("#perf .ds-meter")].map(
+    (m) => Math.round(m.getBoundingClientRect().width *
+                      parseFloat(m.style.getPropertyValue("--value"))));
   const lit = [...document.querySelectorAll('.preset[aria-pressed="true"]')].map((b) => b.dataset.preset);
   parent.postMessage(JSON.stringify({ bars, lit }), "*");
 }, 400));
