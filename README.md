@@ -111,11 +111,13 @@ names. That's it.
   any device — no need to walk to the machine.
 - **Performance card + load chip**: the header shows total pipeline
   **load** as a percentage of the frame budget, and the Performance card
-  breaks it down per feature (face finding, expressions, silhouette
-  model, feed outputs, previews…) with live bars — so you can see
+  breaks it down per feature (face finding, expressions, cutout,
+  feed outputs, previews…) with live bars — so you can see
   exactly what each toggle costs and what to switch off when the
   machine is tight. fps and load chips turn amber/red as they approach
-  limits.
+  limits. The *Silhouette model* row sits below the total, because it
+  runs on its own thread: a figure bigger than the frame budget is not
+  a warning there, it only means the mask is a frame or two old.
 - **PIN protection is on by default.** The first launch makes a random
   four-digit PIN and keeps it in `settings.json`; the terminal prints it
   (`Panel PIN : 4821`) and the panel on the yewee machine shows it at the
@@ -184,8 +186,9 @@ panel port, and prints the fix for anything broken.
 |---|---|---|
 | Capture | OpenCV (camera/capture card/file) or NDI in | threaded, latest-frame-wins for low latency |
 | Detection | YuNet (OpenCV, CPU) or CenterFace (ONNX Runtime, GPU-friendly) | auto-selected per machine, or pick one in the panel |
-| Tracking | SORT-style IoU + velocity tracker | stable IDs, sub-ms for hundreds of faces |
-| Expression | FER+ (8 classes), budgeted round-robin | cost stays flat as crowd grows |
+| Tracking | SORT-style IoU + velocity tracker, with re-identification | a face lost and found again keeps its number; sub-ms for hundreds |
+| Expression | FER+ (8 classes), budgeted round-robin, off-thread | ~7.6 ms a face, none of it on the show loop |
+| Silhouette | PP-HumanSeg / MODNet / RVM, off-thread | the priciest stage, and none of it on the show loop either |
 | Output | NDI via cyndilib (+ local preview window) | NDI runtime bundled |
 | Control | FastAPI + WebSocket panel on :8089 | settings persist in `settings.json` |
 
@@ -322,6 +325,7 @@ override saved settings for that run. Non-panel flags:
 | `--out-width` | downscale the NDI send |
 | `--osc` / `--osc-target HOST:PORT` | start with the data output on (default `127.0.0.1:7000`) |
 | `--no-web` / `--web-host` / `--web-port` / `--no-browser` | panel control |
+| `--pin` | set the panel PIN, or `none` to turn it off |
 | `--no-preview` | no local window (headless/rack use) |
 | `--doctor` | self-check and exit |
 
@@ -332,8 +336,9 @@ main.py                  entry point: flags, saved settings, banner
 yewee/
   capture.py             camera / file / NDI-in / NO-INPUT slate, camera probe
   detectors.py           YuNet + CenterFace backends, live-tunable
-  tracker.py             SORT-style multi-face tracker
-  emotion.py             FER+ expression estimation (budgeted)
+  tracker.py             SORT-style multi-face tracker, with re-identification
+  emotion.py             FER+ expression estimation (budgeted, off-thread)
+  segmenter.py           people-silhouette engines (PP-HumanSeg/MODNet/RVM)
   overlay.py             boxes/labels/stats + alpha overlay rendering
   ndi_io.py              NDI output + NDI input (cyndilib)
   osc_out.py             OSC data output: face coordinates over UDP
@@ -346,6 +351,9 @@ yewee/
   static/index.html      the control panel
   doctor.py              self-check (python -m yewee.doctor)
 models/                  ONNX models (doctor --fix re-downloads)
+tests/
+  smoke.py               the suite (python -m tests.smoke)
+  idbench.py             track-identity benchmark (python -m tests.idbench)
 ```
 
 The control panel follows the studio's shared design system
@@ -438,14 +446,19 @@ swamping a machine (both are switched on by the *Power saver* preset):
   OpenCV wheel uses GCD and ignores thread limits, so only the ONNX
   models (MODNet, CenterFace — the expensive ones) are capped.
 - **Auto relief** (on by default) — if the pipeline can't hold the frame
-  budget for 5 seconds it sheds quality in three steps: silhouette
-  updated less often, then face finding every other frame, then the
+  budget for 5 seconds it sheds quality in three steps: the silhouette
+  handed over less often, then face finding every other frame, then the
   detector size capped. It restores itself step by step once there's
   headroom, and the panel says what it's doing. Your own settings are
   never rewritten — relief is an internal override.
 
-yewee also never runs faster than the source supplies: a 30 fps
-camera caps the loop at 30 fps, a 50 fps one at 50.
+yewee also never runs faster than the source supplies. A camera, a
+capture card and an NDI feed each set the pace themselves — the loop
+takes a frame when one arrives — so a 50 or 60 Hz source is processed
+at 50 or 60, not at whatever rate the device *claims* to run at. (It
+claims wrong more often than you would think: capture cards routinely
+report 0 or a flat 30 whatever they send.) A video file has no clock of
+its own, so it is paced at its real frame rate.
 
 ### Capture cards (Blackmagic, Magewell, Elgato, AVerMedia, AJA)
 

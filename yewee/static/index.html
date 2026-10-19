@@ -3556,6 +3556,15 @@ select.ds-field {
   .perf-row .pv { flex: 0 0 96px; text-align: right; color: var(--ds-ink-secondary);
                   font: var(--ds-text-numeric); font-variant-numeric: tabular-nums slashed-zero; white-space: nowrap; }
   .perf-row.total, .perf-row.total .pn { color: var(--ds-ink-primary); font-weight: var(--ds-weight-semibold); }
+  /* The silhouette model runs beside the show loop, not in it, so its
+     cost is not part of the total above and a figure over the frame
+     budget is not a warning. Set apart below the total, and quieter than
+     the stages that do spend the budget, so it does not read as one. */
+  .perf-row.off { margin-top: var(--ds-space-2); padding-top: var(--ds-space-2);
+                  border-top: var(--ds-space-hairline) dashed var(--ds-line-subtle); }
+  .perf-row.off .ds-meter__fill { background: var(--ds-ink-tertiary); }
+  .perf-note { font: var(--ds-text-caption); color: var(--ds-ink-tertiary);
+               margin-left: calc(118px + var(--ds-space-2)); }
 
   body.offline .controls, body.offline .presets { opacity: .5; pointer-events: none; }
   /* a setting that cannot apply until something else is on: shown, disabled, and the hint says why */
@@ -4090,7 +4099,7 @@ select.ds-field {
                   "limit_cpu","auto_relief",
                   "test_card","panel_preview","local_preview"];
   const PERF_LABELS = { detect: "Face finding", track: "Tracking",
-                        express: "Expressions", silhouette: "Silhouette model",
+                        express: "Expressions", silhouette: "Frame handover",
                         cutout: "Cutout render", overlay: "Overlay render",
                         annotate: "Annotation", outputs: "Feed outputs",
                         preview: "Panel preview", osc: "Data out (OSC)" };
@@ -4103,7 +4112,18 @@ select.ds-field {
   };
   let ws = null, sendTimer = null, pendingSets = {}, lastParams = {}, lastFps = 30;
   let savedTimer = null, lastState = "live", sentQuit = false, sentRestart = false;
+  // The launcher opens this page on the show machine with ?pin= already
+  // set, so the operator is not asked for a number their own terminal
+  // just printed. Keep it, then take it back out of the address bar so
+  // it does not sit in history or in a screenshot of the panel.
   let pin = localStorage.getItem("yewee_pin") || "";
+  (() => {
+    const fromUrl = new URLSearchParams(location.search).get("pin");
+    if (!fromUrl) return;
+    pin = fromUrl;
+    try { localStorage.setItem("yewee_pin", pin); } catch (e) {}
+    history.replaceState(null, "", location.pathname);
+  })();
   const pinQ = () => (pin ? "&pin=" + encodeURIComponent(pin) : "");
   document.body.classList.add("offline");  // controls unlock when connected
 
@@ -4379,11 +4399,13 @@ select.ds-field {
         .filter((k) => s.perf[k] != null)
         .map((k) => [k, s.perf[k]]);
       const total = entries.reduce((acc, [, ms]) => acc + ms, 0);
-      const meter = (name, ms, warnAt, badAt) => {
+      const meter = (name, ms, warnAt, badAt, valuetext) => {
         const v = Math.min(1, ms / budget);
+        const says = valuetext ||
+          `${ms.toFixed(1)} ms, ${Math.round(ms / budget * 100)}% of the frame`;
         return `<span class="ds-meter" role="meter" aria-label="${name}" ` +
                `aria-valuemin="0" aria-valuemax="${budget}" aria-valuenow="${ms.toFixed(1)}" ` +
-               `aria-valuetext="${ms.toFixed(1)} ms, ${Math.round(ms / budget * 100)}% of the frame" ` +
+               `aria-valuetext="${says}" ` +
                `style="--value:${v.toFixed(3)};--warn-at:${warnAt};--bad-at:${badAt}">` +
                `<span class="ds-meter__fill"></span></span>`;
       };
@@ -4396,6 +4418,18 @@ select.ds-field {
       html += `<div class="perf-row total"><span class="pn">Total / budget</span>` +
               meter("Total", total, 0.6, 0.85) +
               `<span class="pv">${total.toFixed(1)} / ${budget} ms</span></div>`;
+      // The silhouette model runs on its own thread, so its cost is not
+      // part of the total above and a figure larger than the budget is
+      // not a warning — it only means the mask is a frame or two old.
+      if (s.silhouette_ms > 0) {
+        // warn and bad are put past full on purpose: over the budget is
+        // not attention here, it only means the mask is a frame or two old
+        html += `<div class="perf-row off"><span class="pn">Silhouette model</span>` +
+                meter("Silhouette model", s.silhouette_ms, 1, 1,
+                      `${s.silhouette_ms.toFixed(1)} ms, beside the show loop`) +
+                `<span class="pv">${s.silhouette_ms.toFixed(1)} ms</span></div>` +
+                `<div class="perf-note">runs beside the show loop, not inside it</div>`;
+      }
       $("perf").innerHTML = html;
     }
 
