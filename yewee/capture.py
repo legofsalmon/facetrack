@@ -4,6 +4,20 @@ video file (sequential), or NDI input.
 Camera capture runs in its own thread so a slow processing frame never
 backs up the driver queue — the pipeline always gets the freshest frame,
 which keeps end-to-end latency low.
+
+Every source declares `self_paced`. True means `read()` already blocks
+until a genuinely new frame exists, so the source sets the loop's rhythm
+and the pipeline must NOT add a frame-rate ceiling on top. False means
+`read()` returns as fast as it is asked (a video file off disk), so the
+pipeline paces it at `fps`.
+
+This distinction matters more than it looks. The ceiling used to be
+derived from `fps` for every source, and `fps` is a claim, not a
+measurement: `CAP_PROP_FPS` is routinely 0 or a flat 30 on capture cards
+whatever they actually deliver, and NDI input simply hard-coded 30. A
+50 Hz source then ran at 30 with two frames in five dropped by
+latest-frame-wins, while the panel read a healthy 30 fps and said
+nothing. Sources that can pace themselves now do.
 """
 from __future__ import annotations
 
@@ -31,6 +45,9 @@ BACKENDS = {
 
 class CameraSource:
     is_live = True
+    #: read() waits for a frame newer than the last one returned, so the
+    #: device's real rate paces the pipeline — whatever CAP_PROP_FPS claims.
+    self_paced = True
 
     def __init__(self, index: int, width: int = 0, height: int = 0,
                  fps: float = 0.0, backend: str = "any"):
@@ -78,6 +95,9 @@ class CameraSource:
 
 class FileSource:
     is_live = False
+    #: a file hands over frames as fast as the disk allows, so the
+    #: pipeline has to pace it at `fps` to play at real speed.
+    self_paced = False
 
     def __init__(self, path: str, loop: bool = False):
         self.path = path
@@ -104,7 +124,15 @@ class NDISource:
     def __init__(self, source_name: str):
         from .ndi_io import NDIInput
         self.ndi = NDIInput(source_name)
+        # Only a fallback, for a receiver that exposes no per-frame stamp.
+        # A stamped feed paces itself at whatever rate it really sends.
         self.fps = 30.0
+
+    @property
+    def self_paced(self) -> bool:
+        """Live, not a snapshot: NDIInput gives up on a stamp that never
+        moves, and the pipeline has to start pacing us again when it does."""
+        return self.ndi.stamped
 
     def read(self, timeout: float = 5.0):
         return self.ndi.read(timeout=timeout)
@@ -118,6 +146,7 @@ class NullSource:
     starts, even when the configured source is unavailable."""
 
     is_live = True
+    self_paced = True  # read() sleeps for its own frame period
 
     def __init__(self, width: int = 1280, height: int = 720, message: str = "NO INPUT"):
         import numpy as np
