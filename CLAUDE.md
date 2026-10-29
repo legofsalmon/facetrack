@@ -32,5 +32,6 @@ facetrack is on the whole system: the tokens, `base.css` and
 `components.css` are inlined into the page between `ds:` markers, dark only,
 density `auto`. ON AIR keeps its red as a local `--tally`, a tally rather than
 an error. The vendor-only licence admin (`tools/admin.py`) has its own look.
-`python3 scripts/design-system.py --sync` refills them from `../design-system`,
-and `--check` runs in CI and fails on a hand edit inside the markers.
+The design system's checker, vendored in `scripts/ds/`, runs in CI: it fails on
+a hand edit inside the markers and warns when they are behind. Add `--sync` to
+its CI command to refill them from `../design-system`.
