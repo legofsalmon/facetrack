@@ -41,7 +41,7 @@ jobs:
 
       # the panel's inlined design system: not edited by hand, every role it reads exists
       - name: Design system copy
-        run: python3 scripts/design-system.py --check
+        run: python3 scripts/ds/ds_check.py yewee/static/index.html scripts/ds --reads yewee/static
 
       - name: Smoke tests
         run: python -m tests.smoke

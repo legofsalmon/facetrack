@@ -362,8 +362,10 @@ private): its colour roles, density, components and motion are inlined in
 `yewee/static/index.html` between `/* ds:tokens:start */ … /* ds:components:end */`
 markers, so the panel stays one file. Don't edit inside the markers; with the
 design system checked out beside this repository,
-`python3 scripts/design-system.py --sync` refills them, and `--check` (in CI)
-fails on a hand edit or a role the system doesn't define. The ON AIR tally red
+`python3 scripts/ds/ds_check.py yewee/static/index.html scripts/ds --sync`
+refills them. Without `--sync` (as CI runs it, with `--reads yewee/static`) it
+fails on a hand edit or a role the system doesn't define, and warns when the
+copy is behind the published design system. The ON AIR tally red
 is yewee's own (`--tally`); the overlay's box colours are content.
 
 ### Running two instances (e.g. two cameras)
