@@ -28,7 +28,9 @@ against), `navigation.md`, `states.md`, `components.md` and `motion.md`.
 - **What stays this app's own:** storage and wire names, layout and flow,
   content, and meanings only this app has.
 
-This app has not moved onto the tokens yet; the adoption plan
-(`docs/adoption.md` in the design system) has its turn. The reasoning applies
-now: new UI follows the grammar and the behaviour rules, so the move is
-smaller when it comes.
+facetrack is on the whole system: the tokens, `base.css` and
+`components.css` are inlined into the page between `ds:` markers, dark only,
+density `auto`. ON AIR keeps its red as a local `--tally`, a tally rather than
+an error. The vendor-only licence admin (`tools/admin.py`) has its own look.
+`python3 scripts/design-system.py --sync` refills them from `../design-system`,
+and `--check` runs in CI and fails on a hand edit inside the markers.
