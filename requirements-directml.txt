@@ -1,0 +1,8 @@
+# Windows with an AMD or Intel card (or NVIDIA without CUDA installed):
+# ONNX Runtime's DirectML provider runs the silhouette and matting
+# models on any DirectX 12 GPU through the driver Windows already has.
+# Installed by the launcher when it finds no NVIDIA card. Lags the main
+# package by a few versions on PyPI; 1.24.4 is the newest with wheels for
+# Python 3.11 to 3.14 on Windows x64. Mutually exclusive with
+# requirements-nvidia.txt.
+onnxruntime-directml==1.24.4; sys_platform == "win32"

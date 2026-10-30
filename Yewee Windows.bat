@@ -15,6 +15,7 @@ if not exist models\face_detection_yunet_2023mar.onnx set "NEEDSETUP=1"
 if not exist models\emotion-ferplus-8.onnx set "NEEDSETUP=1"
 if not exist models\centerface_dynamic.onnx set "NEEDSETUP=1"
 if not exist models\human_segmentation_pphumanseg_2023mar.onnx set "NEEDSETUP=1"
+if not exist models\selfie_segmenter_landscape.onnx set "NEEDSETUP=1"
 if not exist models\modnet_portrait.onnx set "NEEDSETUP=1"
 if not exist models\rvm_mobilenetv3_fp32.onnx set "NEEDSETUP=1"
 set "OLDHASH="
@@ -92,6 +93,23 @@ echo 2/3 Installing components (can take a few minutes)...
 if errorlevel 1 (
   echo Install failed - check your internet connection and run this again.
   exit /b 1
+)
+
+rem The GPU runtime depends on the card: onnxruntime-gpu (CUDA) for
+rem NVIDIA, onnxruntime-directml for anything else (AMD, Intel). Only one
+rem of the two can be installed - they are the same package underneath -
+rem so look for an NVIDIA card and pick. Both fall back to the CPU if the
+rem driver side is missing, so a wrong guess still runs.
+set "ACCEL=requirements-directml.txt"
+where nvidia-smi >nul 2>nul && set "ACCEL=requirements-nvidia.txt"
+if "%ACCEL%"=="requirements-directml.txt" (
+  for /f "tokens=*" %%g in ('wmic path win32_VideoController get name 2^>nul ^| findstr /i NVIDIA') do set "ACCEL=requirements-nvidia.txt"
+)
+echo     GPU runtime: %ACCEL%
+.venv\Scripts\pip install -r %ACCEL% --quiet
+if errorlevel 1 (
+  echo GPU runtime install failed - yewee will run on the CPU. Run this again
+  echo to retry.
 )
 
 echo 3/3 Checking everything works...

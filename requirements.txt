@@ -41,22 +41,23 @@ pygrabber==0.2; sys_platform == "win32"
 syphon-python==0.1.1; sys_platform == "darwin" and python_version < "3.13"
 SpoutGL==0.1.1; sys_platform == "win32" and python_version < "3.14"
 
-# Detector acceleration:
-#   macOS / CPU-only machines: the default YuNet backend needs nothing extra,
-#   but plain onnxruntime lets you test the CenterFace backend on CPU.
-#   Windows + NVIDIA (RTX 5080): onnxruntime-gpu adds the CUDA-accelerated
-#   CenterFace detector. Needs a CUDA 12.8+ capable onnxruntime-gpu build
-#   (>= 1.21) for Blackwell cards, and the NVIDIA CUDA 12 runtime and cuDNN
-#   installed separately — pip does not bring those.
+# ONNX Runtime: the Selfie and MODNet silhouettes, the CenterFace
+# detector, and RVM in internal builds.
 #
-#   onnxruntime-gpu installs whether or not CUDA is present and advertises
-#   providers it cannot actually load, so a machine without the CUDA runtime
-#   fails with "onnxruntime_providers_tensorrt.dll ... cublas64_12.dll is
-#   missing". yewee treats that as a fallback to the CPU rather than an
-#   error (see runtime.make_session), so it runs either way — just on the
-#   CPU detector until CUDA is installed. `--doctor` says which you have.
-#   Linux is not a target platform for the app, but CI runs there and
-#   without this every ONNX test skips — which is how a provider bug
-#   would reach a tag unnoticed.
+#   macOS: the plain wheel carries the CoreML provider, so the silhouette
+#   models reach the Apple GPU / Neural Engine with nothing extra; the
+#   default YuNet detector needs nothing at all.
+#   Linux: not a target for the app, but CI runs there and without this
+#   every ONNX test skips — which is how a provider bug would reach a tag
+#   unnoticed.
+#   Windows: the GPU runtime depends on the card and is not pinned here,
+#   because onnxruntime-gpu (CUDA, NVIDIA) and onnxruntime-directml (any
+#   DirectX 12 card: AMD, Intel, NVIDIA) are the same package underneath
+#   and cannot both be installed. The launcher looks for an NVIDIA card
+#   and installs requirements-nvidia.txt or requirements-directml.txt;
+#   the release workflow installs the NVIDIA one for the installer.
+#   Either runtime advertises providers it cannot necessarily load (a
+#   CUDA build on a machine with no CUDA fails with "cublas64_12.dll is
+#   missing"), and yewee treats that as a fallback to the CPU rather than
+#   an error (see runtime.make_session). `--doctor` says which you have.
 onnxruntime==1.30.0; sys_platform == "darwin" or sys_platform == "linux"
-onnxruntime-gpu==1.30.0; sys_platform == "win32"

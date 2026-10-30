@@ -14,6 +14,7 @@ models_ok() {
   [ -s models/emotion-ferplus-8.onnx ] &&
   [ -s models/centerface_dynamic.onnx ] &&
   [ -s models/human_segmentation_pphumanseg_2023mar.onnx ] &&
+  [ -s models/selfie_segmenter_landscape.onnx ] &&
   [ -s models/modnet_portrait.onnx ] &&
   [ -s models/rvm_mobilenetv3_fp32.onnx ]
 }

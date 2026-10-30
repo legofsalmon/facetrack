@@ -41,6 +41,14 @@ MODELS = {
         "url": "https://github.com/opencv/opencv_zoo/raw/main/models/"
                "human_segmentation_pphumanseg/human_segmentation_pphumanseg_2023mar.onnx",
     },
+    "selfie_segmenter_landscape.onnx": {
+        "min_bytes": 100_000,
+        "why": "people-silhouette cutout (fast, crowd tiles)",
+        # Committed to the repo (converted from Google's TFLite file, see
+        # models/README.md); the download is that committed copy.
+        "url": "https://raw.githubusercontent.com/legofsalmon/facetrack/main/"
+               "models/selfie_segmenter_landscape.onnx",
+    },
     "modnet_portrait.onnx": {
         "min_bytes": 5_000_000,
         "why": "people matte (quality — MODNet)",
@@ -88,37 +96,49 @@ def check_packages() -> None:
         _report("ok", "All required packages installed")
     try:
         import onnxruntime as ort
+        from .runtime import (DEFAULT_PROVIDERS, make_session, provider_label)
         providers = ort.get_available_providers()
-        gpu = {"CUDAExecutionProvider", "TensorrtExecutionProvider"} & set(providers)
-        if not gpu:
-            _report("ok", "onnxruntime installed (no NVIDIA GPU here)",
-                    "The fast CPU detector (YuNet) will be used — normal on a Mac.")
+        wanted = [p for p in DEFAULT_PROVIDERS if p != "CPUExecutionProvider"]
+        listed = [p for p in wanted if p in providers]
+        if not listed:
+            if sys.platform == "win32":
+                _report("ok", "onnxruntime installed (CPU only)",
+                        "No GPU runtime: Setup installs onnxruntime-gpu on an "
+                        "NVIDIA machine and onnxruntime-directml on any other "
+                        "card. The CPU detector (YuNet) will be used.")
+            else:
+                _report("ok", "onnxruntime installed (CPU only)",
+                        "The fast CPU detector (YuNet) will be used.")
         else:
             # Listed is not the same as working: onnxruntime-gpu advertises
             # these on a machine with no CUDA, and only opening a session
             # finds out. Do that here — this is the check that is meant to
             # tell you the truth.
             from .detectors import CENTERFACE_MODEL
-            from .runtime import make_session
             try:
                 active = make_session(CENTERFACE_MODEL).get_providers()[0]
             except Exception as exc:                      # noqa: BLE001
                 active, err = "", exc
             if active and not active.startswith("CPU"):
-                _report("ok", f"NVIDIA GPU acceleration working ({active})",
-                        "The CenterFace detector will be used automatically.")
+                what = ("The CenterFace detector will be used automatically."
+                        if active.startswith(("CUDA", "Tensorrt")) else
+                        "The silhouette and matting models run there; the "
+                        "detector stays on the CPU (YuNet).")
+                _report("ok", f"GPU acceleration working: {provider_label(active)}", what)
             elif active:
-                _report("warn", "GPU providers are advertised but do not load",
+                _report("warn", f"{provider_label(listed[0])} is advertised but does not load",
                         "onnxruntime-gpu is installed without a matching CUDA "
                         "runtime, so it falls back to the CPU. Install the "
                         "CUDA 12 runtime and cuDNN, or use the CPU detector "
-                        "(YuNet) and ignore this.")
+                        "(YuNet) and ignore this." if listed[0].startswith("CUDA")
+                        else "Everything falls back to the CPU and keeps working.")
             else:
                 _report("warn", "onnxruntime cannot open a model at all",
                         f"{str(err).strip().splitlines()[0][:160]}")
     except ImportError:
         _report("warn", "onnxruntime not installed",
-                "Only needed for the GPU detector; fine to ignore on a Mac.")
+                "Needed for the Selfie and MODNet silhouettes and the GPU "
+                "detector; run Setup again.")
 
 
 def _download(url: str, dest: Path, label: str) -> None:

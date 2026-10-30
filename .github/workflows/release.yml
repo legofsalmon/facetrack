@@ -239,6 +239,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip install -r requirements-nvidia.txt   # the installer bundles the NVIDIA runtime
           pip install pyinstaller
 
       - name: Smoke tests

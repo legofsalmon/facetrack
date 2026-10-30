@@ -188,17 +188,26 @@ panel port, and prints the fix for anything broken.
 | Detection | YuNet (OpenCV, CPU) or CenterFace (ONNX Runtime, GPU-friendly) | auto-selected per machine, or pick one in the panel |
 | Tracking | SORT-style IoU + velocity tracker, with re-identification | a face lost and found again keeps its number; sub-ms for hundreds |
 | Expression | FER+ (8 classes), budgeted round-robin, off-thread | ~7.6 ms a face, none of it on the show loop |
-| Silhouette | PP-HumanSeg / MODNet / RVM, off-thread | the priciest stage, and none of it on the show loop either |
+| Silhouette | Selfie / PP-HumanSeg / MODNet / RVM, off-thread; crowd scene runs one crop per face | the priciest stage, and none of it on the show loop either |
 | Output | NDI via cyndilib (+ local preview window) | NDI runtime bundled |
 | Control | FastAPI + WebSocket panel on :8089 | settings persist in `settings.json` |
 
 ### Machine notes
 
 - **macOS (testing)**: YuNet on CPU — ~4-5 ms detection at 640 px on an
-  M2 Max; 100+ fps at 720p.
-- **Windows + NVIDIA (production, RTX 5080)**: `requirements.txt` installs
-  `onnxruntime-gpu`, so the **CenterFace** detector and the matting
-  models run on CUDA, falling back to the CPU when CUDA can't load.
+  M2 Max; 100+ fps at 720p. The silhouette and matting models go through
+  ONNX Runtime's CoreML provider, so on an M-series machine they run on
+  the Apple GPU / Neural Engine; the *AI accelerator* row in the panel's
+  Machine load card says what loaded, and *CPU only* turns it off.
+- **Windows + NVIDIA (production, RTX 5080)**: the launcher installs
+  `onnxruntime-gpu` when it finds an NVIDIA card, so the **CenterFace**
+  detector and the matting models run on CUDA, falling back to the CPU
+  when CUDA can't load.
+- **Windows + AMD or Intel**: the launcher installs `onnxruntime-directml`
+  instead, which runs the silhouette and matting models on any DirectX 12
+  card; the detector stays on the CPU (YuNet). The two runtimes cannot
+  coexist, so a machine gets one — delete `.venv` and run the launcher
+  again after swapping cards.
   CenterFace is fully convolutional, so raising *Search detail* to
   960/1280 costs little on the GPU and is where it pulls ahead of YuNet
   on distant faces. TensorRT is left out on purpose: it compiles an
@@ -214,7 +223,7 @@ identical controls — no more transport-specific options:
 |---|---|---|
 | Program | the picture (annotated, or clean with *Keep program clean* on) | panel shows connected-receiver count per NDI feed |
 | Overlay | graphics only, real alpha (premultiplied) | key it in vMix / Resolume / TriCaster / OBS+DistroAV |
-| Faces cutout | the picture only inside the cutout mask, transparent elsewhere | *Cutout shape*: rectangles, soft ovals, or a people silhouette; *Silhouette model* picks the engine — **Fast** (PP-HumanSeg), **Quality** (MODNet) or **Best** (RVM video matting); *Cutout margin* (face shapes) and *Silhouette margin* (people: grow for room, shrink to trim the background fringe matting models leave on hair and shoulders), plus edge softness and steadiness |
+| Faces cutout | the picture only inside the cutout mask, transparent elsewhere | *Cutout shape*: rectangles, soft ovals, or a people silhouette; *Scene* says how the silhouette model is applied — **Crowd** runs it once per tracked face on a body-sized crop (every engine is a portrait model, and given a whole crowd at once it finds one person or the floor), **Single person** runs it once on one region around everyone; *Silhouette model* picks the engine — **Auto** (chosen for this machine and scene), **Fast** (Selfie or PP-HumanSeg), **Quality** (MODNet) or **Best** (RVM video matting); *Cutout margin* (face shapes) and *Silhouette margin* (people: grow for room, shrink to trim the background fringe matting models leave on hair and shoulders), plus edge softness and steadiness |
 | Mask | the cutout's matte itself | *Mask style*: **White on black** (classic luma matte for external keying) or **White on alpha** (alpha-aware chains) |
 
 NDI feeds are named `<name>`, `<name> Overlay`, `<name> Faces`,
@@ -338,7 +347,7 @@ yewee/
   detectors.py           YuNet + CenterFace backends, live-tunable
   tracker.py             SORT-style multi-face tracker, with re-identification
   emotion.py             FER+ expression estimation (budgeted, off-thread)
-  segmenter.py           people-silhouette engines (PP-HumanSeg/MODNet/RVM)
+  segmenter.py           people-silhouette engines (Selfie/PP-HumanSeg/MODNet/RVM)
   overlay.py             boxes/labels/stats + alpha overlay rendering
   ndi_io.py              NDI output + NDI input (cyndilib)
   osc_out.py             OSC data output: face coordinates over UDP

@@ -51,7 +51,7 @@ is cheap on CUDA, and that is where it resolved a face YuNet missed.
 | | Internal build (repo) | Distribution build |
 |---|---|---|
 | `DISTRIBUTION` | `False` | `True` (set by packaging) |
-| Silhouette models | PP-HumanSeg, MODNet, **RVM** | PP-HumanSeg, MODNet |
+| Silhouette models | Selfie, PP-HumanSeg, MODNet, **RVM** | Selfie, PP-HumanSeg, MODNet |
 | RVM model file | present | excluded from the bundle |
 
 **RVM is GPL-3.0.** Shipping it would put the entire product under

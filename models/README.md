@@ -16,6 +16,7 @@ restores it, or run:
 | `centerface_dynamic.onnx` | face detection (GPU tier) | [CenterFace](https://github.com/Star-Clouds/CenterFace) | MIT | yes |
 | `emotion-ferplus-8.onnx` | expression estimation | [onnx/models](https://github.com/onnx/models) | MIT | yes |
 | `human_segmentation_pphumanseg_2023mar.onnx` | people silhouette (fast) | [opencv_zoo](https://github.com/opencv/opencv_zoo) | Apache-2.0 | yes |
+| `selfie_segmenter_landscape.onnx` | people silhouette (fast; crowd crops) | [MediaPipe selfie segmenter](https://developers.google.com/edge/mediapipe/solutions/vision/image_segmenter) (landscape, 144x256), Google | Apache-2.0 | yes |
 | `modnet_portrait.onnx` | people matte (quality) | [MODNet](https://github.com/ZHKKKe/MODNet) — repo states code **and models** are Apache-2.0 | Apache-2.0 | yes |
 | `rvm_mobilenetv3_fp32.onnx` | people matte (best) | [RobustVideoMatting](https://github.com/PeterL1n/RobustVideoMatting) | **GPL-3.0** | **no — internal builds only** |
 
@@ -27,6 +28,14 @@ restores it, or run:
   dynamic, so the detector can run at any resolution (and benefit from a
   GPU at large input sizes). MIT permits this; the modification is
   recorded here for attribution.
+- **`selfie_segmenter_landscape.onnx` is converted.** Google publishes
+  the model as a TFLite file. It was converted with tf2onnx 1.17.0 (opset
+  17), and its last layer, a MediaPipe custom op
+  (`Convolution2DTransposeBias`) the converter cannot express, was
+  rewritten as a standard `ConvTranspose` with the same weights and bias.
+  Checked bit-exact against MediaPipe's own runtime on the same pixels
+  (max difference 0.0000 on two test images). Apache-2.0 permits the
+  conversion; it is recorded here for attribution.
 - **RVM is deliberately excluded from distributed builds.** GPL-3.0
   would require shipping the whole product under GPL with source, which
   is incompatible with a paid closed-source licence. It stays available

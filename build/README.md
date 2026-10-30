@@ -30,7 +30,7 @@ don't survive packaging.
 |---|---|---|
 | Licensing | off, unrestricted | on, 72-hour trial |
 | RVM model | included | **excluded** (GPL-3.0) |
-| Silhouette models | Fast, Quality, Best | Fast, Quality |
+| Silhouette models | Auto, Fast (x2), Quality, Best | Auto, Fast (x2), Quality |
 
 The build fails if RVM ever ends up in a distribution bundle.
 

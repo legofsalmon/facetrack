@@ -986,7 +986,11 @@ def _():
             assert so.inter_op_num_threads == max(1, n // 2)
         runtime.limit_threads(False)
         assert runtime.budget() == 0, "unlimited = library default"
-        assert runtime.session_options() is None
+        so = runtime.session_options()
+        if so is not None:
+            # unlimited leaves the counts at the library default (0); the
+            # options still exist because spin-waiting is always off
+            assert so.intra_op_num_threads == 0 and so.inter_op_num_threads == 0
     finally:
         runtime.limit_threads(False)
         _cv.setNumThreads(default)
@@ -3022,6 +3026,171 @@ def _():
         pipe.stop()
         t.join(timeout=5)
         sock.close()
+
+
+@run("selfie segmenter: loads, masks the frame, tiles a crop, stays in the ROI")
+def _():
+    try:
+        import onnxruntime  # noqa: F401
+    except ImportError:
+        print("        (onnxruntime not installed — skipped)")
+        return
+    from yewee.segmenter import SelfieSegmenter
+    frame = _first_frame()
+    seg = SelfieSegmenter()
+    assert seg.soft is False and seg.tiles is True
+    m = seg.mask(frame)
+    assert m.shape == frame.shape[:2] and m.dtype == np.uint8
+    H, W = frame.shape[:2]
+    crop = frame[H // 4: 3 * H // 4, W // 4: 3 * W // 4]
+    t = seg.tile(crop)
+    assert t.shape == crop.shape[:2] and t.dtype == np.uint8, "a tile is the crop's own size"
+    roi = (W // 4, H // 4, 3 * W // 4, 3 * H // 4)
+    inside = seg.mask(frame, roi=roi)
+    outside = inside.copy()
+    outside[roi[1]:roi[3], roi[0]:roi[2]] = 0
+    assert outside.max() == 0, "mask must be empty outside the ROI"
+    assert seg.mask(frame, roi=(0, 0, 4, 4)).shape == frame.shape[:2]
+
+
+@run("auto silhouette model: resolved by scene and by the machine's provider")
+def _():
+    from yewee import segmenter
+    choices = [m["value"] for m in segmenter.available_people_models()]
+    assert choices[0] == "auto" and "selfie" in choices, choices
+    R = segmenter.resolve_people_model
+    assert R("modnet", "crowd", "CPUExecutionProvider") == "modnet", "an explicit pick is kept"
+    assert R("auto", "crowd", "CPUExecutionProvider") == "selfie"
+    assert R("auto", "single", "CPUExecutionProvider") == "selfie"
+    assert R("auto", "single", "CUDAExecutionProvider") == "modnet"
+    assert R("auto", "single", "CoreMLExecutionProvider") == "modnet"
+    assert R("auto", "single", "DmlExecutionProvider") == "modnet"
+    assert R("auto", "crowd", "CUDAExecutionProvider") == "selfie", \
+        "a crowd gets the crop-friendly engine even on a GPU"
+    # a pick this build cannot load falls to the next, never to nothing
+    orig = segmenter._usable
+    try:
+        segmenter._usable = lambda k: k == "pphumanseg"
+        assert R("auto", "single", "CUDAExecutionProvider") == "pphumanseg"
+    finally:
+        segmenter._usable = orig
+
+
+@run("crowd scene: one eased crop per face, capped, the rest merged")
+def _():
+    from yewee.tracker import Track
+    pipe, _params = _quiet_pipeline(cutout_shape="people")
+    try:
+        frame = np.zeros((1080, 1920, 3), np.uint8)
+        assert pipe._people_tiles_for(frame, []) is None, "no faces: whole frame"
+        tracks = [Track(i, np.array([100 + i * 80, 200, 40, 50], np.float32), 0.9)
+                  for i in range(20)]
+        tiles = pipe._people_tiles_for(frame, tracks)
+        assert len(tiles) == pipe.MAX_PEOPLE_TILES + 1, \
+            f"{len(tiles)} regions: expected the cap plus one merged remainder"
+        for x1, y1, x2, y2 in tiles:
+            assert 0 <= x1 < x2 <= 1920 and 0 <= y1 < y2 <= 1080, (x1, y1, x2, y2)
+        # a face's crop is body-shaped: wider than the face, much taller, below it
+        t = tracks[0]
+        x1, y1, x2, y2 = tiles[0]
+        assert x1 < t.bbox[0] and x2 > t.bbox[0] + t.bbox[2]
+        assert y1 < t.bbox[1] and y2 - y1 > 4 * t.bbox[3]
+        # the crop eases towards a moved face rather than jumping
+        tracks[0].bbox[0] += 400
+        moved = pipe._people_tiles_for(frame, tracks)[0]
+        assert x1 < moved[0] < x1 + 400, "eased, not snapped"
+        # a track that is gone takes its eased box with it
+        pipe._people_tiles_for(frame, tracks[:3])
+        assert set(pipe._people_tiles) == {0, 1, 2}
+    finally:
+        pipe.stop()
+
+
+@run("crowd scene: the worker masks inside the crops and reports what it ran")
+def _():
+    pipe, _params = _quiet_pipeline(cutout_shape="people", people_scene="crowd")
+    try:
+        frame = _first_frame()
+        H, W = frame.shape[:2]
+        tiles = [(0, 0, W // 3, H // 2), (W // 2, H // 4, W, H)]
+        got = pipe._people_mask(frame, None, 0.0, "pphumanseg", scene="crowd", tiles=tiles)
+        assert got is not None
+        mask, soft = got
+        assert mask.shape == (H, W) and soft is False
+        outside = mask.copy()
+        for x1, y1, x2, y2 in tiles:
+            outside[y1:y2, x1:x2] = 0
+        assert outside.max() == 0, "nothing keyed outside the crops"
+        active = pipe.get_stats if False else pipe._people_active
+        assert active["model"] == "pphumanseg" and active["tiles"] == 2 \
+            and active["scene"] == "crowd", active
+        assert active["provider"], "the panel needs to know where it ran"
+
+        # an engine that cannot crop runs the whole frame instead
+        class Whole:
+            soft, tiles, provider = True, False, "CPUExecutionProvider"
+            def mask(self, f, roi=None):
+                return np.full(f.shape[:2], 200, np.uint8)
+        pipe._people_models["rvm"] = Whole()
+        mask, _ = pipe._people_mask(frame, None, 0.0, "rvm", scene="crowd", tiles=tiles)
+        assert mask.min() == 200 and pipe._people_active["tiles"] == 0
+
+        # 'auto' resolves to a real engine and says which
+        got = pipe._people_mask(frame, None, 0.0, "auto", scene="crowd", tiles=tiles)
+        assert got is not None and pipe._people_active["model"] in ("selfie", "pphumanseg")
+    finally:
+        pipe.stop()
+
+
+@run("runtime: provider chain per platform, CPU-only switch, no spin-waiting")
+def _():
+    from yewee import runtime
+    assert runtime.platform_providers("darwin")[0] == "CoreMLExecutionProvider"
+    win = runtime.platform_providers("win32")
+    assert win.index("CUDAExecutionProvider") < win.index("DmlExecutionProvider") \
+        < win.index("CPUExecutionProvider"), win
+    assert runtime.platform_providers("linux")[-1] == "CPUExecutionProvider"
+    assert runtime.provider_label("DmlExecutionProvider") == "GPU (DirectML)"
+    try:
+        import onnxruntime  # noqa: F401
+    except ImportError:
+        print("        (onnxruntime not installed — skipped)")
+        return
+    from yewee.segmenter import SELFIE_PATH
+    so = runtime.session_options(threads=1)
+    assert so.intra_op_num_threads == 1
+    get = getattr(so, "get_session_config_entry", None)
+    if get is not None:
+        assert get("session.intra_op.allow_spinning") == "0", \
+            "idle worker threads must sleep, not spin beside the show loop"
+    runtime.set_accelerator("cpu")
+    try:
+        runtime.reset_probe()
+        sess = runtime.make_session(SELFIE_PATH)
+        assert runtime.active_provider(sess) == "CPUExecutionProvider"
+        assert runtime.probe_provider(SELFIE_PATH) == "CPUExecutionProvider"
+    finally:
+        runtime.set_accelerator("auto")
+        runtime.reset_probe()
+
+
+@run("params: scene and accelerator exist, are on the panel, and persist")
+def _():
+    from main import DEFAULTS
+    from yewee.params import LiveParams, SPEC
+    assert SPEC["people_scene"][1] == ("crowd", "single")
+    assert SPEC["accel"][1] == ("auto", "cpu")
+    assert DEFAULTS["people_scene"] == "crowd" and DEFAULTS["accel"] == "auto" \
+        and DEFAULTS["people_model"] == "auto"
+    p = LiveParams(**DEFAULTS)
+    p.set("people_scene", "single"); p.set("accel", "cpu")
+    snap = p.snapshot()
+    assert snap["people_scene"] == "single" and snap["accel"] == "cpu"
+    html = open(os.path.join(ROOT, "yewee", "static", "index.html"), encoding="utf-8").read()
+    for key in ("people_scene", "accel"):
+        assert f'id="{key}"' in html and f'"{key}"' in html, f"{key} missing from the panel"
+    from yewee import doctor
+    assert "selfie_segmenter_landscape.onnx" in doctor.MODELS
 
 
 if FAILURES:

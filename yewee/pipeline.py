@@ -152,6 +152,9 @@ class Pipeline:
         self._people_models: dict = {}  # lazy, keyed by people_model param
         self._people_soft = False       # whether the active mask is a true matte
         self._people_roi: tuple[float, float, float, float] | None = None
+        self._people_tiles: dict[int, tuple] = {}   # track id -> eased body box
+        self._people_active: dict = {}  # what the worker last ran (panel)
+        self._accel_applied: str | None = None
         # The silhouette runs on its own thread — see _dispatch_people_mask.
         self._seg_cond = threading.Condition()
         self._seg_job: tuple | None = None
@@ -538,9 +541,14 @@ class Pipeline:
     def _apply_cpu_limit(self, p: dict) -> None:
         """Track the limit_cpu param; reload models on change so their
         ONNX thread pools pick up the new budget."""
+        from .runtime import limit_threads, reset_probe, set_accelerator
+        if p["accel"] != self._accel_applied:
+            set_accelerator(p["accel"])
+            reset_probe()
+            self._accel_applied = p["accel"]
+            self._people_models.clear()
         if p["limit_cpu"] == self._cpu_limited:
             return
-        from .runtime import limit_threads
         limit_threads(p["limit_cpu"])
         self._cpu_limited = p["limit_cpu"]
         self._people_models.clear()
@@ -613,8 +621,59 @@ class Pipeline:
         self._people_roi = box
         return tuple(int(round(v)) for v in box)
 
+    #: Crowd scene: at most this many people get a crop of their own each
+    #: mask; the rest share one merged region. Linear cost, so it is
+    #: capped — a 1080p body tile is about 3 ms on a laptop CPU with the
+    #: Selfie engine, and the worker's lag is what grows past the cap.
+    MAX_PEOPLE_TILES = 16
+
+    def _people_tiles_for(self, frame, tracks) -> list | None:
+        """Crowd scene: one body-shaped box per tracked face, eased per
+        track so it doesn't breathe, largest faces first, capped at
+        MAX_PEOPLE_TILES with the remainder merged into one more region
+        through _people_roi_for. None = no faces, whole frame.
+
+        Why per person: every engine here is a portrait model. Fed the
+        whole frame, or one region holding a whole crowd, it sees people
+        a few pixels tall and keys one of them, or the floor. Fed a crop
+        that one person fills, it finds them (measured on a wide shot of
+        six: one found before, all found after)."""
+        H, W = frame.shape[:2]
+        if not tracks:
+            self._people_tiles.clear()
+            self._people_roi = None
+            return None
+        ordered = sorted(tracks, key=lambda t: t.bbox[2] * t.bbox[3], reverse=True)
+        head, rest = ordered[:self.MAX_PEOPLE_TILES], ordered[self.MAX_PEOPLE_TILES:]
+        seen = set()
+        tiles = []
+        for t in head:
+            x, y, w, h = (float(v) for v in t.bbox)
+            # a face is a head: room sideways for shoulders and arms, a
+            # little above, and the body below. Overlaps are fine (max).
+            box = (x - w * 1.5, y - h * 0.75, x + w * 2.5, y + h * 5.5)
+            prev = self._people_tiles.get(t.id)
+            if prev is not None:
+                a = 0.7
+                box = tuple(a * o + (1 - a) * n for o, n in zip(prev, box))
+            self._people_tiles[t.id] = box
+            seen.add(t.id)
+            x1, y1 = max(0, int(box[0])), max(0, int(box[1]))
+            x2, y2 = min(W, int(round(box[2]))), min(H, int(round(box[3])))
+            if x2 - x1 >= 16 and y2 - y1 >= 16:
+                tiles.append((x1, y1, x2, y2))
+        for tid in [k for k in self._people_tiles if k not in seen]:
+            del self._people_tiles[tid]
+        if rest:
+            merged = self._people_roi_for(frame, rest)
+            if merged is not None:
+                tiles.append(merged)
+        else:
+            self._people_roi = None
+        return tiles or None
+
     def _dispatch_people_mask(self, frame, tracks, steady: float,
-                              model_name: str) -> None:
+                              model_name: str, scene: str = "single") -> None:
         """Hand this frame's silhouette to the worker and return.
 
         Segmentation is the most expensive thing in the loop — PP-HumanSeg
@@ -634,8 +693,12 @@ class Pipeline:
         with self._seg_cond:
             if self._seg_busy:
                 return
-        roi = self._people_roi_for(frame, tracks)   # main-thread state
-        job = (frame.copy(), roi, steady, model_name)
+        # main-thread state: the regions ease over time per track
+        if scene == "crowd":
+            roi, tiles = None, self._people_tiles_for(frame, tracks)
+        else:
+            roi, tiles = self._people_roi_for(frame, tracks), None
+        job = (frame.copy(), roi, steady, model_name, scene, tiles)
         with self._seg_cond:
             self._seg_job = job
             self._seg_busy = True
@@ -671,12 +734,13 @@ class Pipeline:
                     lambda: self._seg_job is not None or self._seg_stop)
                 if self._seg_stop:
                     return
-                frame, roi, steady, model_name = self._seg_job
+                frame, roi, steady, model_name, scene, tiles = self._seg_job
                 self._seg_job = None
             t0 = time.perf_counter()
             result = None
             try:
-                result = self._people_mask(frame, roi, steady, model_name)
+                result = self._people_mask(frame, roi, steady, model_name,
+                                           scene=scene, tiles=tiles)
             except Exception as exc:                 # noqa: BLE001
                 self.last_error = f"People cutout failed: {exc}"
                 self._error_time = time.monotonic()
@@ -692,33 +756,55 @@ class Pipeline:
                     self._seg_busy = False
                     self._seg_cond.notify_all()
 
-    def _people_mask(self, frame, roi, steady: float, model_name: str):
+    def _people_mask(self, frame, roi, steady: float, model_name: str,
+                     scene: str = "single", tiles: list | None = None):
         """(mask, soft) from the selected silhouette model, loading it on
-        first use. Runs on the worker thread. Temporal smoothing happens
-        here in full-frame space (correct even while the ROI follows the
-        subject). Failures fall back: modnet/rvm -> pphumanseg -> oval
-        shape, always with a panel error — picking a broken model can't
-        take the feed down."""
-        model = self._people_models.get(model_name)
+        first use. Runs on the worker thread. 'auto' is resolved here,
+        against the provider this machine really loads models on and the
+        scene (see segmenter.resolve_people_model). In the crowd scene
+        the engine runs once per tile and the tiles are merged with a
+        max; an engine that cannot crop (RVM) runs the whole frame.
+        Temporal smoothing happens here in full-frame space (correct
+        even while the regions follow the subjects). Failures fall back:
+        modnet/rvm/selfie -> pphumanseg -> oval shape, always with a
+        panel error — picking a broken model can't take the feed down."""
+        from .segmenter import resolve_people_model, PEOPLE_MODELS
+        from .runtime import probe_provider, provider_label
+        key = model_name
+        if key == "auto":
+            key = resolve_people_model("auto", scene, probe_provider(self._probe_model()))
+        model = self._people_models.get(key)
         if model is None:
             try:
                 from .segmenter import create_people_model
-                model = create_people_model(model_name)
-                self._people_models[model_name] = model
+                model = create_people_model(key)
+                self._people_models[key] = model
             except Exception as exc:
-                if model_name != "pphumanseg":
+                if key != "pphumanseg":
                     self.params.set("people_model", "pphumanseg")
-                    self.last_error = f"'{model_name}' unavailable: {exc} — using Fast"
+                    self.last_error = f"'{key}' unavailable: {exc} — using Fast"
                 else:
                     self.params.set("cutout_shape", "oval")
                     self.last_error = f"People cutout unavailable: {exc}"
                 self._error_time = time.monotonic()
                 return None
         try:
-            mask = model.mask(frame, roi=roi)
+            if tiles and getattr(model, "tiles", False):
+                mask = np.zeros(frame.shape[:2], dtype=np.uint8)
+                for x1, y1, x2, y2 in tiles:
+                    part = model.tile(frame[y1:y2, x1:x2])
+                    np.maximum(mask[y1:y2, x1:x2], part, out=mask[y1:y2, x1:x2])
+            else:
+                mask = model.mask(frame, roi=roi)
             soft = model.soft
+            self._people_active = {
+                "model": key, "label": PEOPLE_MODELS[key]["label"],
+                "provider": provider_label(getattr(model, "provider", "CPU")),
+                "scene": scene,
+                "tiles": len(tiles) if tiles and getattr(model, "tiles", False) else 0}
         except Exception as exc:
-            self._people_models.pop(model_name, None)
+            self._people_models.pop(key, None)
+            model_name = key
             if model_name != "pphumanseg":
                 self.params.set("people_model", "pphumanseg")
                 self.last_error = f"'{model_name}' failed: {exc} — using Fast"
@@ -732,6 +818,13 @@ class Pipeline:
             mask = cv2.addWeighted(prev, steady, mask, 1 - steady, 0)
         self._seg_prev = mask
         return mask, soft
+
+    @staticmethod
+    def _probe_model():
+        """The small ONNX file used to find this machine's real provider
+        (Selfie, a quarter of a megabyte; MODNet if that one is missing)."""
+        from .segmenter import SELFIE_PATH, MODNET_PATH
+        return SELFIE_PATH if SELFIE_PATH.exists() else MODNET_PATH
 
     def _frame_failed(self, exc: BaseException) -> None:
         """One frame raised. Log it (in full the first time each distinct
@@ -977,7 +1070,7 @@ class Pipeline:
                             if not (self._relief and frame_idx % 2):
                                 self._dispatch_people_mask(
                                     frame, tracks, p["cutout_steady"],
-                                    p["people_model"])
+                                    p["people_model"], p["people_scene"])
                             laps["silhouette"] = (time.perf_counter() - t0) * 1000.0
                             people = self._people_now(frame.shape[:2])
                         t0 = time.perf_counter()
@@ -1156,6 +1249,11 @@ class Pipeline:
                             "cv_threads": _rt.cv_threads(),
                             "cpu_cores": _rt.cores(),
                             "people_models": _people_model_choices(),
+                            # what the worker actually runs: the resolved
+                            # engine, its provider, scene and tile count
+                            "people_engine": (dict(self._people_active)
+                                              if p["cutout_shape"] == "people"
+                                              else {}),
                             "licence": self.licence(),
                             "frame_errors": sum(self._failures_seen.values()),
                             "error": self.last_error,

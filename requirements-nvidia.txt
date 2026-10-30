@@ -1,0 +1,6 @@
+# Windows + NVIDIA (the RTX show machine). Installed by the launcher when
+# it finds an NVIDIA card, and by the release workflow for the installer.
+# Needs a CUDA 12.8+ capable build (>= 1.21) for Blackwell cards, plus the
+# NVIDIA CUDA 12 runtime and cuDNN installed separately — pip does not
+# bring those. Mutually exclusive with requirements-directml.txt.
+onnxruntime-gpu==1.30.0; sys_platform == "win32"

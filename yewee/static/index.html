@@ -4706,6 +4706,14 @@ select.ds-field {
           <span class="hint" id="cpu-hint">stop the AI models taking every core, so the machine stays responsive</span></div>
         <label class="ds-switch"><input type="checkbox" role="switch" id="limit_cpu"></label>
       </div>
+      <div class="row" id="accel-row">
+        <div class="lbl"><label for="accel">AI accelerator</label>
+          <span class="hint" id="accel-hint">auto uses the GPU this machine has (Apple, NVIDIA or DirectML) for the silhouette models</span></div>
+        <select class="ds-field" id="accel">
+          <option value="auto">Auto</option>
+          <option value="cpu">CPU only</option>
+        </select>
+      </div>
       <div class="row">
         <div class="lbl"><label for="auto_relief">Auto relief</label>
           <span class="hint">if it can't hold the frame rate, reduce quality automatically until it can</span></div>
@@ -4985,9 +4993,18 @@ select.ds-field {
           <option value="people">People silhouette</option>
         </select>
       </div>
+      <div class="row" id="people-scene-row"
+           title="Every silhouette model is a portrait model: given a whole crowd at once it finds one person, or the floor. Crowd runs it once per tracked face on a body-sized crop, so everyone is found; Single person runs it once on one region around everyone, which suits a presenter filling the frame.">
+        <div class="lbl"><label for="people_scene">Scene</label>
+          <span class="hint">crowd runs the model once per face · single person runs it once on the whole subject</span></div>
+        <select class="ds-field" id="people_scene">
+          <option value="crowd">Crowd</option>
+          <option value="single">Single person</option>
+        </select>
+      </div>
       <div class="row" id="people-model-row">
         <div class="lbl"><label for="people_model">Silhouette model</label>
-          <span class="hint">Fast runs anywhere · Quality &amp; Best shine on the GPU machine (fine to try on CPU)</span></div>
+          <span class="hint" id="people-model-hint">Auto picks for this machine and scene · Fast runs anywhere · Quality &amp; Best shine on a GPU</span></div>
         <select class="ds-field" id="people_model"></select>
       </div>
       <div class="row" id="cutout-margin-row">
@@ -5116,7 +5133,7 @@ select.ds-field {
                   "tex_program","tex_overlay","tex_faces","tex_mask","mask_style",
                   "flip_ndi","flip_tex",
                   "cutout_shape","cutout_margin","cutout_feather","cutout_grow","cutout_steady",
-                  "people_model","out_width",
+                  "people_model","people_scene","accel","out_width",
                   "osc_enabled","osc_host","osc_port","osc_slots","osc_rate","osc_units",
                   "limit_cpu","auto_relief",
                   "test_card","panel_preview","local_preview"];
@@ -5353,6 +5370,8 @@ select.ds-field {
     $("cutout_steady").disabled = !steadyOn;
     $("people-model-row").classList.toggle("dimmed", !steadyOn);
     $("people_model").disabled = !steadyOn;
+    $("people-scene-row").classList.toggle("dimmed", !steadyOn);
+    $("people_scene").disabled = !steadyOn;
     const oscOn = !!p.osc_enabled;
     $("osc-card").classList.toggle("off", !oscOn);
     ["osc-target-row","osc-slots-row","osc-rate-row","osc-units-row"].forEach((r) =>
@@ -5513,6 +5532,16 @@ select.ds-field {
         if (keep) sel.value = keep;
       }
     }
+
+    // what the silhouette worker actually runs (auto resolves on first use)
+    const pe = s.people_engine || {};
+    $("people-model-hint").textContent = pe.model
+      ? `running: ${pe.label} on ${pe.provider}`
+        + (pe.tiles ? ` · ${pe.tiles} crop${pe.tiles === 1 ? "" : "s"}, one per person` : " · one region")
+      : "Auto picks for this machine and scene · Fast runs anywhere · Quality & Best shine on a GPU";
+    $("accel-hint").textContent = pe.provider
+      ? `silhouette models on: ${pe.provider}`
+      : "auto uses the GPU this machine has (Apple, NVIDIA or DirectML) for the silhouette models";
 
     // which detector is actually running (auto resolves at launch)
     if (s.backend) {

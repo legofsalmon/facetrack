@@ -64,7 +64,9 @@ SPEC = {
     "cutout_feather": (int, 0, 60),       # mask edge softness, px
     "cutout_grow": (int, -30, 30),        # people mask: spread / choke, px
     "cutout_steady": (float, 0.0, 0.9),   # people-mask temporal smoothing
-    "people_model": (str, ("pphumanseg", "modnet", "rvm"), None),
+    "people_model": (str, ("auto", "pphumanseg", "selfie", "modnet", "rvm"), None),
+    "people_scene": (str, ("crowd", "single"), None),  # tiles per person, or one region
+    "accel": (str, ("auto", "cpu"), None),  # ONNX Runtime: platform GPU chain, or CPU only
     # Machine load guards
     "limit_cpu": (bool, None, None),      # cap ML threads to ~half the cores
     "auto_relief": (bool, None, None),    # shed quality when over budget

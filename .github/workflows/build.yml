@@ -40,6 +40,13 @@ jobs:
           # inside the binary that ships, so it is not a "latest" dependency
           pip install pyinstaller==6.22.3
 
+      # The Windows bundle ships the NVIDIA runtime (the show machine has
+      # an RTX card); a DirectML build would install requirements-directml.txt
+      # here instead. The launcher picks per machine for source installs.
+      - name: GPU runtime (Windows)
+        if: runner.os == 'Windows'
+        run: pip install -r requirements-nvidia.txt
+
       - name: Smoke tests
         run: python -m tests.smoke
 
